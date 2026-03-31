@@ -69,6 +69,7 @@ Your task is to:
 Do not hesitate to heavily reuse the same code and technical approach as Scrptly, but adapt it to fit the specific requirements and design of VideoFlow.
 
 
+
 ---
 
 ## Rendering Approach
@@ -271,3 +272,10 @@ const videoBuffer = await $.renderVideo({ // auto chooses the right renderer bas
 
 You should also provide a way to stop the rendering process in case it's taking too long or the user wants to cancel it. This can be done through an AbortController or a similar mechanism that allows the rendering function to be aborted (can be passed in the rendering options).
 
+
+
+
+Try as much as possible to reuse the same architecture, code structure, file organization, rendering techniques, and overall setup as Scrptly, but adapt it to fit the specific requirements and design of VideoFlow.
+Typescript should be used for API-facing code for better type safety and developer experience, but you can choose to implement the internal logic in either JS or TS as you see fit. Just make sure to provide type definitions for any public API if you choose to implement the internal logic in JS.
+
+Avoid introducing unnecessary complexity or features that are not present in Scrptly (unless necessary) to the core functionality of rendering videos from JSON.
