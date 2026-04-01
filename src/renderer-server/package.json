@@ -1,0 +1,27 @@
+{
+  "name": "@videoflow/renderer-server",
+  "version": "1.0.0",
+  "description": "Server-side video renderer for VideoFlow — renders JSON videos using Playwright + ffmpeg",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@videoflow/core": "^1.0.0",
+    "playwright": "^1.49.0",
+    "esbuild": "^0.24.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.0.0"
+  }
+}
