@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "composite": true,
+    "paths": {
+      "@videoflow/core": ["../core/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist"],
+  "references": [
+    { "path": "../core" }
+  ]
+}

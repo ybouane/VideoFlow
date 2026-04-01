@@ -1,0 +1,22 @@
+{
+  "name": "videoflow",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Render videos from JSON — in the browser or via API",
+  "license": "Apache-2.0",
+  "workspaces": [
+    "src/core",
+    "src/renderer-browser",
+    "src/renderer-server"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "build:core": "npm run build -w src/core",
+    "build:browser": "npm run build -w src/renderer-browser",
+    "build:server": "npm run build -w src/renderer-server"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "esbuild": "^0.24.0"
+  }
+}
