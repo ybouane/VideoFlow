@@ -9,8 +9,8 @@
  * timing data.  Inherits all typography styling from {@link TextualLayer}.
  */
 
-import TextualLayer, { TextualLayerProperties, TextualLayerSettings } from './TextualLayer';
-import type { PropertyDefinition } from '../types';
+import TextualLayer, { TextualLayerProperties, TextualLayerSettings } from './TextualLayer.js';
+import type { PropertyDefinition } from '../types.js';
 
 // ---------------------------------------------------------------------------
 //  Types

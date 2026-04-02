@@ -22,9 +22,9 @@
  * model to VideoFlow's JSON schema.
  */
 
-import type { VideoJSON, LayerJSON, RenderOptions, PropertyDefinition, Easing } from '@videoflow/core';
-import { audioBufferToWav, timeToFrames, parseTime } from '@videoflow/core';
-import RENDERER_CSS from './renderer.css';
+import type { VideoJSON, LayerJSON, RenderOptions, PropertyDefinition, Easing } from '@videoflow/core/types';
+import { audioBufferToWav, timeToFrames, parseTime } from '@videoflow/core/utils';
+import RENDERER_CSS from './renderer.css.js';
 import {
 	Output,
 	Mp4OutputFormat,

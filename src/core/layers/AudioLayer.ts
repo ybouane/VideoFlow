@@ -6,7 +6,7 @@
  * rendering pass.
  */
 
-import AuditoryLayer, { AuditoryLayerProperties, AuditoryLayerSettings } from './AuditoryLayer';
+import AuditoryLayer, { AuditoryLayerProperties, AuditoryLayerSettings } from './AuditoryLayer.js';
 
 // ---------------------------------------------------------------------------
 //  Types

@@ -11,8 +11,8 @@
  * ```
  */
 
-export { default } from './VideoFlow';
-export { default as VideoFlow } from './VideoFlow';
+export { default } from './VideoFlow.js';
+export { default as VideoFlow } from './VideoFlow.js';
 
 // Layer classes
 export {
@@ -26,7 +26,7 @@ export {
 	VideoLayer,
 	AuditoryLayer,
 	AudioLayer,
-} from './layers/index';
+} from './layers/index.js';
 
 // Layer setting / property types
 export type {
@@ -40,7 +40,7 @@ export type {
 	VideoLayerSettings, VideoLayerProperties,
 	AuditoryLayerSettings, AuditoryLayerProperties,
 	AudioLayerSettings, AudioLayerProperties,
-} from './layers/index';
+} from './layers/index.js';
 
 // Core types
 export type {
@@ -48,10 +48,10 @@ export type {
 	Action, AddLayerOptions,
 	VideoJSON, LayerJSON, LayerSettingsJSON,
 	PropertyDefinition, RenderOptions, ProjectSettings,
-} from './types';
+} from './types.js';
 
 // Utilities
 export {
 	parseTime, timeToFrames, framesToTime, formatTime,
 	audioBufferToWav, createDeferred, delay,
-} from './utils';
+} from './utils.js';
