@@ -6,7 +6,7 @@
  * and positions it within the project using the `fit` property.
  */
 
-import MediaLayer, { MediaLayerSettings, MediaLayerProperties } from './MediaLayer';
+import MediaLayer, { MediaLayerSettings, MediaLayerProperties } from './MediaLayer.js';
 
 // ---------------------------------------------------------------------------
 //  Types

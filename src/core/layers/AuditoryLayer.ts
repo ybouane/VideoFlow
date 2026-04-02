@@ -5,8 +5,8 @@
  * definitions.  The actual audio mixing is handled by the renderer packages.
  */
 
-import BaseLayer, { BaseLayerSettings, BaseLayerProperties } from './BaseLayer';
-import type { PropertyDefinition } from '../types';
+import BaseLayer, { BaseLayerSettings, BaseLayerProperties } from './BaseLayer.js';
+import type { PropertyDefinition } from '../types.js';
 
 // ---------------------------------------------------------------------------
 //  Types

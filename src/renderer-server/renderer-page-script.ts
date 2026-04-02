@@ -17,7 +17,7 @@
 
 // These imports will be resolved by esbuild at bundle time
 import { BrowserRenderer } from '@videoflow/renderer-browser';
-import { audioBufferToWav } from '@videoflow/core';
+import { audioBufferToWav } from '@videoflow/core/utils';
 
 declare global {
 	interface Window {

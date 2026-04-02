@@ -15,32 +15,32 @@
  *      └─ AudioLayer
  */
 
-export { default as BaseLayer } from './BaseLayer';
-export type { BaseLayerSettings, BaseLayerProperties } from './BaseLayer';
+export { default as BaseLayer } from './BaseLayer.js';
+export type { BaseLayerSettings, BaseLayerProperties } from './BaseLayer.js';
 
-export { default as VisualLayer } from './VisualLayer';
-export type { VisualLayerSettings, VisualLayerProperties } from './VisualLayer';
+export { default as VisualLayer } from './VisualLayer.js';
+export type { VisualLayerSettings, VisualLayerProperties } from './VisualLayer.js';
 
-export { default as TextualLayer } from './TextualLayer';
-export type { TextualLayerSettings, TextualLayerProperties } from './TextualLayer';
+export { default as TextualLayer } from './TextualLayer.js';
+export type { TextualLayerSettings, TextualLayerProperties } from './TextualLayer.js';
 
-export { default as TextLayer } from './TextLayer';
-export type { TextLayerSettings, TextLayerProperties } from './TextLayer';
+export { default as TextLayer } from './TextLayer.js';
+export type { TextLayerSettings, TextLayerProperties } from './TextLayer.js';
 
-export { default as CaptionsLayer } from './CaptionsLayer';
-export type { CaptionsLayerSettings, CaptionsLayerProperties, CaptionEntry } from './CaptionsLayer';
+export { default as CaptionsLayer } from './CaptionsLayer.js';
+export type { CaptionsLayerSettings, CaptionsLayerProperties, CaptionEntry } from './CaptionsLayer.js';
 
-export { default as MediaLayer } from './MediaLayer';
-export type { MediaLayerSettings, MediaLayerProperties } from './MediaLayer';
+export { default as MediaLayer } from './MediaLayer.js';
+export type { MediaLayerSettings, MediaLayerProperties } from './MediaLayer.js';
 
-export { default as ImageLayer } from './ImageLayer';
-export type { ImageLayerSettings, ImageLayerProperties } from './ImageLayer';
+export { default as ImageLayer } from './ImageLayer.js';
+export type { ImageLayerSettings, ImageLayerProperties } from './ImageLayer.js';
 
-export { default as VideoLayer } from './VideoLayer';
-export type { VideoLayerSettings, VideoLayerProperties } from './VideoLayer';
+export { default as VideoLayer } from './VideoLayer.js';
+export type { VideoLayerSettings, VideoLayerProperties } from './VideoLayer.js';
 
-export { default as AuditoryLayer } from './AuditoryLayer';
-export type { AuditoryLayerSettings, AuditoryLayerProperties } from './AuditoryLayer';
+export { default as AuditoryLayer } from './AuditoryLayer.js';
+export type { AuditoryLayerSettings, AuditoryLayerProperties } from './AuditoryLayer.js';
 
-export { default as AudioLayer } from './AudioLayer';
-export type { AudioLayerSettings, AudioLayerProperties } from './AudioLayer';
+export { default as AudioLayer } from './AudioLayer.js';
+export type { AudioLayerSettings, AudioLayerProperties } from './AudioLayer.js';

@@ -12,9 +12,16 @@
  * VideoFlow's time-in-seconds API with internal frame-based processing.
  */
 
-import { randomUUID } from 'crypto';
-import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON } from '../types';
-import { timeToFrames, parseTime } from '../utils';
+import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON } from '../types.js';
+import { timeToFrames, parseTime } from '../utils.js';
+
+function createLayerId(): Id {
+	if (typeof globalThis.crypto?.randomUUID === 'function') {
+		return globalThis.crypto.randomUUID();
+	}
+
+	return `vf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 // ---------------------------------------------------------------------------
 //  Settings & property types
@@ -67,7 +74,7 @@ export default class BaseLayer {
 	constructor(parent: any, properties: BaseLayerProperties = {}, settings: BaseLayerSettings = {}) {
 		this.parent = parent;
 		this.fps = parent?.settings?.fps ?? 30;
-		this.id = randomUUID();
+		this.id = createLayerId();
 		this.settings = {
 			...(this.constructor as typeof BaseLayer).defaultSettings,
 			...settings,

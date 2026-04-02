@@ -13,5 +13,5 @@
  * ```
  */
 
-export { default } from './ServerRenderer';
-export { default as ServerRenderer, closeSharedBrowser } from './ServerRenderer';
+export { default } from './ServerRenderer.js';
+export { default as ServerRenderer, closeSharedBrowser } from './ServerRenderer.js';

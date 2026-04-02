@@ -10,9 +10,9 @@
  * internal canvas.
  */
 
-import MediaLayer, { MediaLayerSettings, MediaLayerProperties } from './MediaLayer';
-import type { AuditoryLayerProperties } from './AuditoryLayer';
-import type { PropertyDefinition } from '../types';
+import MediaLayer, { MediaLayerSettings, MediaLayerProperties } from './MediaLayer.js';
+import type { AuditoryLayerProperties } from './AuditoryLayer.js';
+import type { PropertyDefinition } from '../types.js';
 
 // ---------------------------------------------------------------------------
 //  Types

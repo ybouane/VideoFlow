@@ -27,20 +27,20 @@
 import type {
 	Time, Action, Easing, AddLayerOptions,
 	VideoJSON, ProjectSettings,
-} from './types';
-import { parseTime, timeToFrames } from './utils';
+} from './types.js';
+import { parseTime, timeToFrames } from './utils.js';
 
-import BaseLayer from './layers/BaseLayer';
-import TextLayer from './layers/TextLayer';
-import type { TextLayerProperties, TextLayerSettings } from './layers/TextLayer';
-import ImageLayer from './layers/ImageLayer';
-import type { ImageLayerProperties, ImageLayerSettings } from './layers/ImageLayer';
-import VideoLayerClass from './layers/VideoLayer';
-import type { VideoLayerProperties, VideoLayerSettings } from './layers/VideoLayer';
-import AudioLayer from './layers/AudioLayer';
-import type { AudioLayerProperties, AudioLayerSettings } from './layers/AudioLayer';
-import CaptionsLayer from './layers/CaptionsLayer';
-import type { CaptionsLayerProperties, CaptionsLayerSettings } from './layers/CaptionsLayer';
+import BaseLayer from './layers/BaseLayer.js';
+import TextLayer from './layers/TextLayer.js';
+import type { TextLayerProperties, TextLayerSettings } from './layers/TextLayer.js';
+import ImageLayer from './layers/ImageLayer.js';
+import type { ImageLayerProperties, ImageLayerSettings } from './layers/ImageLayer.js';
+import VideoLayerClass from './layers/VideoLayer.js';
+import type { VideoLayerProperties, VideoLayerSettings } from './layers/VideoLayer.js';
+import AudioLayer from './layers/AudioLayer.js';
+import type { AudioLayerProperties, AudioLayerSettings } from './layers/AudioLayer.js';
+import CaptionsLayer from './layers/CaptionsLayer.js';
+import type { CaptionsLayerProperties, CaptionsLayerSettings } from './layers/CaptionsLayer.js';
 
 // ---------------------------------------------------------------------------
 //  Default project settings

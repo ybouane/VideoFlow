@@ -10,8 +10,8 @@
  * for VideoFlow's data model.
  */
 
-import BaseLayer, { BaseLayerSettings, BaseLayerProperties } from './BaseLayer';
-import type { Time, Easing, PropertyDefinition } from '../types';
+import BaseLayer, { BaseLayerSettings, BaseLayerProperties } from './BaseLayer.js';
+import type { Time, Easing, PropertyDefinition } from '../types.js';
 
 // ---------------------------------------------------------------------------
 //  Types

@@ -5,7 +5,7 @@
  * core and renderer packages.
  */
 
-import type { Time } from './types';
+import type { Time } from './types.js';
 
 // ---------------------------------------------------------------------------
 //  Time helpers

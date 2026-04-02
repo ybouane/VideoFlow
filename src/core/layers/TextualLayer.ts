@@ -6,8 +6,8 @@
  * {@link CaptionsLayer} extend this class.
  */
 
-import VisualLayer, { VisualLayerProperties, VisualLayerSettings } from './VisualLayer';
-import type { PropertyDefinition } from '../types';
+import VisualLayer, { VisualLayerProperties, VisualLayerSettings } from './VisualLayer.js';
+import type { PropertyDefinition } from '../types.js';
 
 // ---------------------------------------------------------------------------
 //  Types
