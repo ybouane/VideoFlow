@@ -487,8 +487,11 @@ export default class VideoFlow {
 	/**
 	 * Compile and render the video in one call.
 	 *
-	 * Automatically detects the environment and uses the appropriate renderer
-	 * (browser or server).  The renderer package must be installed separately.
+	 * Automatically detects the environment and uses the appropriate renderer:
+	 * - **Browser** (window/DOM present) → `@videoflow/renderer-browser`
+	 * - **Node.js** (no DOM, `process.versions.node` exists) → `@videoflow/renderer-server`
+	 *
+	 * The renderer package must be installed separately.
 	 *
 	 * @param options - Rendering options passed to the renderer.
 	 * @returns The rendered video output (Buffer, Blob, or file path depending on options).
@@ -496,17 +499,24 @@ export default class VideoFlow {
 	async renderVideo(options: Record<string, any> = {}): Promise<any> {
 		const json = await this.compile();
 
-		// Try browser renderer first, then server
-		try {
-			const { default: BrowserRenderer } = await import('@videoflow/renderer-browser' as string);
-			return await BrowserRenderer.render(json, options);
-		} catch {
+		const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+		if (isBrowser) {
+			try {
+				const { default: BrowserRenderer } = await import('@videoflow/renderer-browser' as string);
+				return await BrowserRenderer.render(json, options);
+			} catch {
+				throw new Error(
+					'Browser renderer not available. Install @videoflow/renderer-browser.'
+				);
+			}
+		} else {
 			try {
 				const { default: ServerRenderer } = await import('@videoflow/renderer-server' as string);
 				return await ServerRenderer.render(json, options);
 			} catch {
 				throw new Error(
-					'No renderer available. Install @videoflow/renderer-browser or @videoflow/renderer-server.'
+					'Server renderer not available. Install @videoflow/renderer-server.'
 				);
 			}
 		}
