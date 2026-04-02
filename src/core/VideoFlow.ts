@@ -51,7 +51,7 @@ const DEFAULT_SETTINGS: Required<Omit<ProjectSettings, 'verbose'>> & { verbose: 
 	width: 1920,
 	height: 1080,
 	fps: 30,
-	backgroundColor: '#00000000',
+	backgroundColor: '#000000',
 	verbose: false,
 	defaults: {
 		easing: 'easeInOut',
