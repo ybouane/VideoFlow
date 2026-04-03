@@ -279,7 +279,59 @@ export default class ServerRenderer {
 	}
 
 	// -----------------------------------------------------------------------
-	//  Audio rendering
+	//  Public instance methods — renderFrame / renderAudio
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Ensure the headless page is open and the project is loaded.
+	 * Subsequent calls are no-ops.
+	 */
+	private async ensurePage(): Promise<void> {
+		if (!this.page) await this.openPage();
+	}
+
+	/**
+	 * Render a single frame and return it as a JPEG screenshot Buffer.
+	 *
+	 * Opens the headless page on first call, then renders the requested frame
+	 * via the in-page BrowserRenderer.
+	 *
+	 * @param frame - The frame number to render.
+	 * @returns A Buffer containing the JPEG screenshot of the rendered frame.
+	 */
+	async renderFrame(frame: number): Promise<Buffer> {
+		await this.ensurePage();
+
+		await this.page!.evaluate(async (f: number) => {
+			await window.renderFrame(f);
+		}, frame);
+
+		return await this.page!.screenshot({ type: 'jpeg', quality: 95 });
+	}
+
+	/**
+	 * Render the full audio track and return it as a WAV Buffer.
+	 *
+	 * Opens the headless page on first call, then renders all audio layers
+	 * into a single WAV buffer via the in-page BrowserRenderer.
+	 *
+	 * @returns A Buffer containing WAV audio data, or `null` if there are no audio layers.
+	 */
+	async renderAudio(): Promise<Buffer | null> {
+		await this.ensurePage();
+
+		const audioData = await this.page!.evaluate(async () => {
+			const buf = await window.renderAudio();
+			if (!buf) return null;
+			return Array.from(buf);
+		});
+
+		if (!audioData) return null;
+		return Buffer.from(audioData);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Audio-to-file (used by the full render pipeline)
 	// -----------------------------------------------------------------------
 
 	/**
@@ -357,8 +409,8 @@ export default class ServerRenderer {
 
 		if (verbose) console.log('VideoFlow: Initializing renderer...');
 
-		// Open headless page
-		await this.openPage();
+		// Open headless page (no-op if already open)
+		await this.ensurePage();
 		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
 
 		if (verbose) console.log('VideoFlow: Project loaded successfully.');
