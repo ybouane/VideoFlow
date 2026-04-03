@@ -367,10 +367,11 @@ export default class ServerRenderer {
 	 * @param hasAudio - Whether to mux the rendered audio into the output.
 	 * @returns A tuple of [ffmpeg process, completion promise].
 	 */
-	private initFFmpeg(hasAudio: boolean): [ChildProcess, Promise<boolean>] {
+	private initFFmpeg(hasAudio: boolean, outputPath: string): [ChildProcess, Promise<string>] {
 		const ffmpeg = spawn('ffmpeg', [
 			'-y',
 			'-f', 'image2pipe',
+			'-c:v', 'mjpeg',
 			'-framerate', String(this.videoJSON.fps),
 			'-i', 'pipe:0',
 			...(hasAudio ? ['-i', this.audioFile] : []),
@@ -378,12 +379,19 @@ export default class ServerRenderer {
 			'-crf', '17',
 			...(hasAudio ? ['-c:a', 'aac'] : []),
 			'-pix_fmt', 'yuv420p',
-			this.videoFile,
+			outputPath,
 		]);
 
-		const onFinish = new Promise<boolean>((resolve) => {
-			ffmpeg.on('close', (code) => resolve(code === 0));
-			ffmpeg.once('error', () => resolve(false));
+		// Collect stderr for error reporting
+		let stderr = '';
+		ffmpeg.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+		const onFinish = new Promise<string>((resolve, reject) => {
+			ffmpeg.on('close', (code) => {
+				if (code === 0) resolve(stderr);
+				else reject(new Error(`ffmpeg exited with code ${code}:\n${stderr}`));
+			});
+			ffmpeg.once('error', (err) => reject(new Error(`ffmpeg failed to start: ${err.message}`)));
 		});
 
 		return [ffmpeg, onFinish];
@@ -421,12 +429,19 @@ export default class ServerRenderer {
 		if (!hasAudio && verbose) console.log('VideoFlow: No audio detected.');
 		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
 
+		// Determine output path — write directly to the final file when possible,
+		// otherwise use a temp file that will be read into a Buffer.
+		const writeToFile = options.outputType === 'file' && options.output;
+		const outputPath = writeToFile
+			? path.resolve(options.output!)
+			: this.videoFile;
+
 		// Set up ffmpeg
 		const nFrames = Math.round(this.videoJSON.duration * this.videoJSON.fps);
 		const durationStr = formatTime(this.videoJSON.duration);
 		if (verbose) console.log(`VideoFlow: Rendering ${durationStr} video (${nFrames} frames)...`);
 
-		const [ffmpeg, onFinish] = this.initFFmpeg(hasAudio);
+		const [ffmpeg, onFinish] = this.initFFmpeg(hasAudio, outputPath);
 
 		// Frame rendering loop
 		let lastTick = Date.now();
@@ -465,20 +480,15 @@ export default class ServerRenderer {
 			}
 		}
 
-		// Close ffmpeg and wait for output
+		// Close ffmpeg and wait for output (rejects on failure with stderr)
 		ffmpeg.stdin!.end();
-		const success = await onFinish;
-
-		if (!success) {
-			throw new Error('ffmpeg encoding failed.');
-		}
+		await onFinish;
 
 		if (verbose) console.log('VideoFlow: Render complete.');
 
 		// Return result
-		if (options.outputType === 'file' && options.output) {
-			await fs.copyFile(this.videoFile, options.output);
-			return options.output;
+		if (writeToFile) {
+			return options.output!;
 		}
 
 		const outputBuffer = await fs.readFile(this.videoFile);
