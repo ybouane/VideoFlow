@@ -122,6 +122,8 @@ const $ = new VideoFlow(settings?: ProjectSettings);
 - `$.parallel([...fns])` — run animation branches simultaneously
 - `$.compile()` — compile to `VideoJSON`
 - `$.renderVideo(options?)` — compile and render (auto-detects environment)
+- `$.renderFrame(frame)` — compile and render a single frame
+- `$.renderAudio()` — compile and render the full audio track
 
 ### Layer Methods
 
@@ -223,8 +225,9 @@ See the [examples/](examples/) folder:
 | [03-video-with-audio.ts](examples/03-video-with-audio.ts) | Video layer with background music ducking |
 | [04-captions.ts](examples/04-captions.ts) | Time-coded captions overlay |
 | [05-parallel-animations.ts](examples/05-parallel-animations.ts) | Staggered parallel animations |
-| [06-server-render.ts](examples/06-server-render.ts) | Server-side rendering to MP4 |
+| [06-server-render.ts](examples/06-server-render.ts) | Server-side rendering with renderFrame/renderAudio |
 | [07-abort-controller.ts](examples/07-abort-controller.ts) | Cancelling a render with AbortController |
+| [08-render-frame-and-audio.ts](examples/08-render-frame-and-audio.ts) | Render a single frame or audio track |
 
 Run any example with:
 

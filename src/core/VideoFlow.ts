@@ -485,6 +485,34 @@ export default class VideoFlow {
 	// -----------------------------------------------------------------------
 
 	/**
+	 * Resolve the renderer module for the current environment.
+	 *
+	 * @returns The renderer module (with `default` export being the renderer class).
+	 * @throws If the renderer package is not installed.
+	 */
+	private async _resolveRendererModule(): Promise<any> {
+		const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+		if (isBrowser) {
+			try {
+				return await import('@videoflow/renderer-browser' as string);
+			} catch {
+				throw new Error(
+					'Browser renderer not available. Install @videoflow/renderer-browser.'
+				);
+			}
+		} else {
+			try {
+				return await import('@videoflow/renderer-server' as string);
+			} catch {
+				throw new Error(
+					'Server renderer not available. Install @videoflow/renderer-server.'
+				);
+			}
+		}
+	}
+
+	/**
 	 * Compile and render the video in one call.
 	 *
 	 * Automatically detects the environment and uses the appropriate renderer:
@@ -497,28 +525,50 @@ export default class VideoFlow {
 	 * @returns The rendered video output (Buffer, Blob, or file path depending on options).
 	 */
 	async renderVideo(options: Record<string, any> = {}): Promise<any> {
+		const mod = await this._resolveRendererModule();
 		const json = await this.compile();
+		return await mod.default.render(json, options);
+	}
 
-		const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+	/**
+	 * Compile and render a single frame of the video.
+	 *
+	 * Automatically detects the environment and uses the appropriate renderer.
+	 * The renderer package must be installed separately.
+	 *
+	 * @param frame - The frame number to render.
+	 * @returns The rendered frame output — `OffscreenCanvas` (browser) or JPEG `Buffer` (server).
+	 */
+	async renderFrame(frame: number): Promise<any> {
+		const mod = await this._resolveRendererModule();
+		const json = await this.compile();
+		const renderer = new mod.default(json);
+		try {
+			return await renderer.renderFrame(frame);
+		} finally {
+			if (typeof renderer.destroy === 'function') renderer.destroy();
+			if (typeof renderer.cleanup === 'function') await renderer.cleanup();
+		}
+	}
 
-		if (isBrowser) {
-			try {
-				const { default: BrowserRenderer } = await import('@videoflow/renderer-browser' as string);
-				return await BrowserRenderer.render(json, options);
-			} catch {
-				throw new Error(
-					'Browser renderer not available. Install @videoflow/renderer-browser.'
-				);
-			}
-		} else {
-			try {
-				const { default: ServerRenderer } = await import('@videoflow/renderer-server' as string);
-				return await ServerRenderer.render(json, options);
-			} catch {
-				throw new Error(
-					'Server renderer not available. Install @videoflow/renderer-server.'
-				);
-			}
+	/**
+	 * Compile and render the full audio track of the video.
+	 *
+	 * Automatically detects the environment and uses the appropriate renderer.
+	 * The renderer package must be installed separately.
+	 *
+	 * @returns The rendered audio — `AudioBuffer` (browser) or WAV `Buffer` (server),
+	 *          or `null` if the video has no audio layers.
+	 */
+	async renderAudio(): Promise<any> {
+		const mod = await this._resolveRendererModule();
+		const json = await this.compile();
+		const renderer = new mod.default(json);
+		try {
+			return await renderer.renderAudio();
+		} finally {
+			if (typeof renderer.destroy === 'function') renderer.destroy();
+			if (typeof renderer.cleanup === 'function') await renderer.cleanup();
 		}
 	}
 }
