@@ -39,8 +39,19 @@ declare global {
 		const videoJSON = await window.loadProject();
 		window.projectLoading?.();
 
+		// Set the page background color to the project's background color
+		document.body.style.backgroundColor = videoJSON.backgroundColor || '#000000';
+
 		// Create the browser renderer with the video JSON
 		const renderer = new BrowserRenderer(videoJSON);
+
+		// Move the renderer canvas on-screen so Playwright screenshots capture it
+		const $canvas = document.querySelector('[data-renderer]') as HTMLElement;
+		if ($canvas) {
+			$canvas.style.position = 'absolute';
+			$canvas.style.left = '0';
+			$canvas.style.top = '0';
+		}
 
 		// Initialise all layers (load media, create DOM elements)
 		// The renderer's initLayers is private, but renderFrame calls it on first use

@@ -621,6 +621,7 @@ export default class BrowserRenderer {
 		this.$canvas.style.left = '-99999px';
 		this.$canvas.style.top = '-99999px';
 		this.$canvas.style.overflow = 'hidden';
+		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
 		document.body.appendChild(this.$canvas);
 
 		// Create runtime layers
@@ -843,6 +844,9 @@ export default class BrowserRenderer {
 		}
 		const ctx = this.renderCanvas.getContext('2d')!;
 		ctx.clearRect(0, 0, width, height);
+		// Fill with project background color before drawing the frame
+		ctx.fillStyle = this.videoJSON.backgroundColor || '#000000';
+		ctx.fillRect(0, 0, width, height);
 		ctx.drawImage(img, 0, 0, width, height);
 
 		return this.renderCanvas;

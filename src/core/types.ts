@@ -115,6 +115,7 @@ export type VideoJSON = {
 	width: number;
 	height: number;
 	fps: number;
+	backgroundColor: string;
 	layers: LayerJSON[];
 };
 

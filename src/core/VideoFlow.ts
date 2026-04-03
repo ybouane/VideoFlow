@@ -458,6 +458,7 @@ export default class VideoFlow {
 			width: this.settings.width,
 			height: this.settings.height,
 			fps,
+			backgroundColor: this.settings.backgroundColor,
 			layers,
 		};
 	}
