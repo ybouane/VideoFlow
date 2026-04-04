@@ -47,6 +47,10 @@ export default class CaptionsLayer extends TextualLayer {
 		super(parent, properties, settings);
 	}
 
+	static get settingsKeys(): string[] {
+		return [...super.settingsKeys, 'captions', 'maxCharsPerLine', 'maxLines'];
+	}
+
 	static get defaultSettings(): Partial<CaptionsLayerSettings> {
 		return {
 			...super.defaultSettings,

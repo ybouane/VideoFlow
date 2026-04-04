@@ -32,6 +32,10 @@ export default class AudioLayer extends AuditoryLayer {
 		super(parent, properties, settings);
 	}
 
+	static get settingsKeys(): string[] {
+		return [...super.settingsKeys, 'source'];
+	}
+
 	static get defaultSettings(): Partial<AudioLayerSettings> {
 		return { ...super.defaultSettings };
 	}

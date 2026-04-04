@@ -441,11 +441,12 @@ export default class VideoFlow {
 					...(comp.name ? { name: comp.name } : {}),
 					...(comp.speed !== 1 ? { speed: comp.speed } : {}),
 					...(comp.trimStart > 0 ? { trimStart: comp.trimStart / fps } : {}),
-					...(comp.settings?.source ? { source: comp.settings.source } : {}),
-					...(comp.settings?.captions ? { captions: comp.settings.captions } : {}),
-					...(comp.settings?.maxCharsPerLine ? { maxCharsPerLine: comp.settings.maxCharsPerLine } : {}),
-					...(comp.settings?.maxLines ? { maxLines: comp.settings.maxLines } : {}),
-					...(comp.settings?.fontFamily ? { fontFamily: comp.settings.fontFamily } : {}),
+					// Include layer-type-specific settings via settingsKeys
+					...Object.fromEntries(
+						((comp.layerObj.constructor as typeof BaseLayer).settingsKeys ?? [])
+							.filter(key => comp.settings?.[key] != null)
+							.map(key => [key, comp.settings[key]])
+					),
 				},
 				properties: {},
 				animations,

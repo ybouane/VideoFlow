@@ -89,6 +89,11 @@ export default class BaseLayer {
 	//  Static metadata
 	// -----------------------------------------------------------------------
 
+	/** Settings keys to include in the compiled JSON beyond the base keys. */
+	static get settingsKeys(): string[] {
+		return [];
+	}
+
 	/** Default settings for this layer type. */
 	static get defaultSettings(): Partial<BaseLayerSettings> {
 		return {
