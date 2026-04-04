@@ -43,6 +43,10 @@ export default class MediaLayer extends VisualLayer {
 		super(parent, properties, settings);
 	}
 
+	static get settingsKeys(): string[] {
+		return [...super.settingsKeys, 'source'];
+	}
+
 	static get defaultSettings(): Partial<MediaLayerSettings> {
 		return { ...super.defaultSettings };
 	}
