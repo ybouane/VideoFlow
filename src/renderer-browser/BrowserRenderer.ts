@@ -19,11 +19,12 @@
  *    an MP4 blob (H.264 + AAC) entirely client-side.
  *
  * The architecture closely follows Scrptly's renderer but adapts the data
- * model to VideoFlow's JSON schema.
+ * model to VideoFlow's JSON schema.  Layer-specific rendering behaviour is
+ * delegated to the runtime layer class hierarchy in `./layers/`.
  */
 
-import type { VideoJSON, LayerJSON, RenderOptions, PropertyDefinition, Easing } from '@videoflow/core/types';
-import { audioBufferToWav, timeToFrames, parseTime } from '@videoflow/core/utils';
+import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
+import { audioBufferToWav } from '@videoflow/core/utils';
 import RENDERER_CSS from './renderer.css.js';
 import {
 	Output,
@@ -34,561 +35,37 @@ import {
 	QUALITY_HIGH,
 } from 'mediabunny';
 
-// ---------------------------------------------------------------------------
-//  Filter name mapping (camelCase property → CSS filter function)
-// ---------------------------------------------------------------------------
-
-const FILTER_MAP: Record<string, string> = {
-	blur: 'blur',
-	brightness: 'brightness',
-	contrast: 'contrast',
-	grayscale: 'grayscale',
-	hueRotate: 'hue-rotate',
-	invert: 'invert',
-	opacity: 'opacity',
-	saturate: 'saturate',
-	sepia: 'sepia',
-};
+import { createRuntimeLayer, RuntimeBaseLayer, type ILayerRenderer } from './layers/index.js';
 
 // ---------------------------------------------------------------------------
-//  Runtime layer — wraps a LayerJSON with DOM state and metadata
+//  Property definition registry — built from core layer classes
 // ---------------------------------------------------------------------------
+
+import {
+	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer,
+} from '@videoflow/core';
 
 /**
- * Internal representation of a layer during rendering.
- *
- * Holds the DOM element, resolved media assets, dimension metadata,
- * and provides methods for property interpolation and frame rendering.
+ * Static registry mapping layer type → merged propertiesDefinition.
+ * Avoids re-computing on every property lookup.
  */
-class RuntimeLayer {
-	json: LayerJSON;
-	fps: number;
-	projectWidth: number;
-	projectHeight: number;
-	$element: HTMLElement | null = null;
-	ctx: CanvasRenderingContext2D | null = null;
-	internalMedia: HTMLImageElement | HTMLVideoElement | null = null;
-	dimensions: [number, number] = [0, 0];
-	duration: number = 0; // media duration in seconds
-	dataUrl: string | null = null;
-	dataBlob: Blob | null = null;
-	audioBuffer: AudioBuffer | null = null;
-	/** Reference to the parent renderer for font loading etc. */
-	renderer: BrowserRenderer;
-
-	constructor(json: LayerJSON, fps: number, width: number, height: number, renderer: BrowserRenderer) {
-		this.json = json;
-		this.fps = fps;
-		this.projectWidth = width;
-		this.projectHeight = height;
-		this.renderer = renderer;
-	}
-
-	// -- Timing helpers (convert time-based settings to frame numbers) ------
-
-	get startFrame(): number {
-		return Math.round((this.json.settings.startTime ?? 0) * this.fps);
-	}
-
-	get endFrame(): number {
-		return Math.round(((this.json.settings.startTime ?? 0) + (this.json.settings.duration ?? 0)) * this.fps);
-	}
-
-	get trimStartFrames(): number {
-		return Math.round((this.json.settings.trimStart ?? 0) * this.fps);
-	}
-
-	get actualStartFrame(): number {
-		return this.startFrame + this.trimStartFrames;
-	}
-
-	get speed(): number {
-		return this.json.settings.speed ?? 1;
-	}
-
-	/** Whether this layer type has audio output. */
-	get hasAudio(): boolean {
-		return ['audio', 'video'].includes(this.json.type);
-	}
-
-	/** Whether this layer type has visual output. */
-	get hasVisual(): boolean {
-		return ['text', 'image', 'video', 'captions'].includes(this.json.type);
-	}
-
-	// -- Retiming (speed adjustment) ----------------------------------------
-
-	/**
-	 * Convert an absolute frame number to the layer-local retimed frame,
-	 * accounting for speed and playback direction.
-	 */
-	retimeFrame(frame: number): number {
-		if (this.speed === 0) return 0;
-		if (this.speed < 0) return Math.abs(this.speed) * (this.endFrame - frame);
-		return this.speed * (frame - this.startFrame);
-	}
-
-	// -- Property interpolation at a given frame ----------------------------
-
-	/**
-	 * Get all animated property values for this layer at the given frame.
-	 *
-	 * Walks each animation's keyframes and interpolates between the surrounding
-	 * pair using the specified easing function.
-	 */
-	getPropertiesAtFrame(frame: number): Record<string, any> {
-		const retimedFrame = this.retimeFrame(frame);
-		const retimedTime = retimedFrame / this.fps;
-		const props: Record<string, any> = {};
-
-		for (const anim of this.json.animations) {
-			const kfs = anim.keyframes;
-			if (kfs.length === 0) continue;
-
-			// Find surrounding keyframes
-			let before = kfs[0];
-			let after: typeof before | null = null;
-			for (let i = 0; i < kfs.length; i++) {
-				if (kfs[i].time <= retimedTime) {
-					before = kfs[i];
-					after = kfs[i + 1] ?? null;
-				}
-			}
-
-			if (!after || before.time === retimedTime) {
-				props[anim.property] = before.value;
-			} else if (retimedTime < kfs[0].time) {
-				props[anim.property] = kfs[0].value;
-			} else {
-				// Interpolate
-				const t = (retimedTime - before.time) / (after.time - before.time);
-				const easing = before.easing ?? anim.easing ?? 'step';
-				props[anim.property] = this.interpolate(before.value, after.value, t, easing);
-			}
-		}
-
-		// Merge static properties
-		for (const [key, value] of Object.entries(this.json.properties)) {
-			if (!(key in props)) {
-				props[key] = value;
-			}
-		}
-
-		// For captions layers, overlay the active caption text
-		if (this.json.type === 'captions' && this.json.settings.captions) {
-			const timeSec = frame / this.fps;
-			const caption = (this.json.settings.captions as any[]).find(
-				(c: any) => c.startTime <= timeSec && c.endTime >= timeSec
-			);
-			props['text'] = caption?.caption ?? '';
-		}
-
-		return props;
-	}
-
-	/**
-	 * Interpolate between two values using the given easing.
-	 *
-	 * Handles numbers, arrays (component-wise), and falls back to `step`
-	 * for non-numeric values (colours, strings).
-	 */
-	interpolate(v1: any, v2: any, t: number, easing: string): any {
-		// Arrays: interpolate component-wise
-		if (Array.isArray(v1) || Array.isArray(v2)) {
-			const a1 = Array.isArray(v1) ? v1 : [v1];
-			const a2 = Array.isArray(v2) ? v2 : [v2];
-			const len = Math.max(a1.length, a2.length);
-			const result = [];
-			for (let i = 0; i < len; i++) {
-				result.push(this.interpolate(a1[i] ?? 0, a2[i] ?? 0, t, easing));
-			}
-			return result;
-		}
-
-		const n1 = typeof v1 === 'number' ? v1 : parseFloat(String(v1));
-		const n2 = typeof v2 === 'number' ? v2 : parseFloat(String(v2));
-
-		if (isNaN(n1) || isNaN(n2)) {
-			return v1; // Non-numeric → step
-		}
-
-		const easedT = this.applyEasing(t, easing);
-		const result = n1 + (n2 - n1) * easedT;
-
-		// Preserve unit suffix if present
-		if (typeof v1 === 'string') {
-			const unit = v1.replace(/^[\d.-]+/, '');
-			return result + unit;
-		}
-		return result;
-	}
-
-	/** Apply an easing curve to a normalised t ∈ [0, 1]. */
-	applyEasing(t: number, easing: string): number {
-		switch (easing) {
-			case 'step': return 0;
-			case 'linear': return t;
-			case 'easeIn': return t * t;
-			case 'easeOut': return t * (2 - t);
-			case 'easeInOut': return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-			default: return t;
-		}
-	}
-
-	// -- DOM element lifecycle ----------------------------------------------
-
-	/**
-	 * Create the DOM element for this layer.
-	 *
-	 * - Text / Captions → `<textual-layer>` custom element
-	 * - Image / Video   → `<canvas>` (media is drawn via 2D context)
-	 * - Audio           → no visual element (returns null)
-	 */
-	async generateElement(): Promise<HTMLElement | null> {
-		if (this.$element) return this.$element;
-
-		switch (this.json.type) {
-			case 'text':
-			case 'captions': {
-				this.$element = document.createElement('textual-layer');
-				break;
-			}
-			case 'image': {
-				this.$element = document.createElement('canvas');
-				break;
-			}
-			case 'video': {
-				this.$element = document.createElement('canvas');
-				break;
-			}
-			case 'audio':
-			default:
-				return null;
-		}
-
-		this.$element.setAttribute('data-element', this.json.type);
-		this.$element.setAttribute('data-id', this.json.id);
-		(this.$element as any).layerObject = this;
-		return this.$element;
-	}
-
-	/**
-	 * Initialise the layer's media assets.
-	 *
-	 * For images and videos this fetches the source, decodes it, and extracts
-	 * dimension / duration metadata.  For audio layers the audio file is
-	 * fetched.
-	 */
-	async initialize(): Promise<void> {
-		const source = this.json.settings.source;
-		if (!source) return;
-
-		switch (this.json.type) {
-			case 'image': {
-				await this.loadImage(source);
-				break;
-			}
-			case 'video': {
-				await this.loadVideo(source);
-				break;
-			}
-			case 'audio': {
-				// Audio is loaded lazily during audio rendering
-				break;
-			}
-		}
-	}
-
-	/** Fetch and decode an image, extracting its dimensions. */
-	private async loadImage(url: string): Promise<void> {
-		const response = await fetch(url, { cache: 'no-cache' });
-		if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-		this.dataBlob = await response.blob();
-		this.dataUrl = URL.createObjectURL(this.dataBlob);
-
-		this.internalMedia = document.createElement('img');
-		(this.internalMedia as HTMLImageElement).src = this.dataUrl;
-
-		await new Promise<void>((resolve, reject) => {
-			(this.internalMedia as HTMLImageElement).onload = () => {
-				this.dimensions = [
-					(this.internalMedia as HTMLImageElement).naturalWidth,
-					(this.internalMedia as HTMLImageElement).naturalHeight,
-				];
-				resolve();
-			};
-			(this.internalMedia as HTMLImageElement).onerror = () =>
-				reject(new Error(`Failed to load image: ${url}`));
-		});
-	}
-
-	/** Fetch and decode a video, extracting its dimensions and duration. */
-	private async loadVideo(url: string): Promise<void> {
-		const response = await fetch(url, { cache: 'no-cache' });
-		if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
-		this.dataBlob = await response.blob();
-		this.dataUrl = URL.createObjectURL(this.dataBlob);
-
-		this.internalMedia = document.createElement('video');
-		const vid = this.internalMedia as HTMLVideoElement;
-		vid.src = this.dataUrl;
-		vid.controls = false;
-		vid.autoplay = false;
-		vid.loop = false;
-		vid.muted = true;
-		vid.defaultMuted = true;
-		vid.playsInline = true;
-
-		await new Promise<void>((resolve, reject) => {
-			vid.oncanplay = () => {
-				this.dimensions = [vid.videoWidth, vid.videoHeight];
-				this.duration = vid.duration;
-				resolve();
-			};
-			vid.onerror = () => reject(new Error(`Failed to load video: ${url}`));
-		});
-	}
-
-	/**
-	 * Set up the canvas element after the layer's media has been loaded.
-	 * Draws the initial frame for images, sets up the 2D context for videos.
-	 */
-	setupCanvasElement(): void {
-		if (!this.$element || this.$element.tagName !== 'CANVAS') return;
-		const canvas = this.$element as HTMLCanvasElement;
-		canvas.width = this.dimensions[0] || this.projectWidth;
-		canvas.height = this.dimensions[1] || this.projectHeight;
-		if (!this.ctx) {
-			this.ctx = canvas.getContext('2d')!;
-			this.ctx.imageSmoothingEnabled = true;
-			this.ctx.imageSmoothingQuality = 'high';
-
-			if (this.json.type === 'image' && this.internalMedia) {
-				this.ctx.drawImage(
-					this.internalMedia as HTMLImageElement,
-					0, 0, this.dimensions[0], this.dimensions[1]
-				);
-			}
-		}
-	}
-
-	// -- Frame rendering (apply properties as CSS) --------------------------
-
-	/**
-	 * Render this layer's visual state at the given frame.
-	 *
-	 * Hides the element if the frame is outside the layer's time range,
-	 * otherwise computes interpolated property values and applies them.
-	 */
-	async renderFrame(frame: number): Promise<void> {
-		if (!this.$element) return;
-
-		// Visibility check
-		if (frame < this.actualStartFrame || frame >= this.endFrame || !this.json.settings.enabled) {
-			this.$element.style.display = 'none';
-			return;
-		}
-
-		const props = this.getPropertiesAtFrame(frame);
-		await this.applyProperties(props);
-		this.$element.style.display = '';
-
-		// For video layers, seek to the correct time and redraw
-		if (this.json.type === 'video' && this.internalMedia && this.ctx) {
-			const vid = this.internalMedia as HTMLVideoElement;
-			const targetTime = this.retimeFrame(frame) / this.fps;
-			vid.pause();
-
-			await new Promise<void>((resolve) => {
-				const timeout = setTimeout(() => resolve(), 2000);
-				vid.requestVideoFrameCallback(() => {
-					clearTimeout(timeout);
-					resolve();
-				});
-				vid.currentTime = targetTime;
-			});
-
-			this.ctx.clearRect(0, 0, this.dimensions[0], this.dimensions[1]);
-			this.ctx.drawImage(vid, 0, 0, this.dimensions[0], this.dimensions[1]);
-		}
-	}
-
-	/**
-	 * Apply a set of interpolated property values to the DOM element.
-	 *
-	 * Most properties are mapped to CSS custom properties or standard CSS
-	 * properties.  Special cases (text content, fit attribute, filters,
-	 * box-shadow) are handled individually.
-	 */
-	async applyProperties(props: Record<string, any>): Promise<void> {
-		if (!this.$element) return;
-
-		// Reset styles but keep display state
-		const wasHidden = this.$element.style.display === 'none';
-		this.$element.style.cssText = wasHidden ? 'display:none;' : '';
-
-		// z-index (layer ordering)
-		this.$element.style.setProperty('z-index', String(this.getLayerIndex() + 1));
-
-		// Image/video dimensions
-		if (this.json.type === 'image' || this.json.type === 'video') {
-			this.$element.style.setProperty('--object-width', String(this.dimensions[0]));
-			this.$element.style.setProperty('--object-height', String(this.dimensions[1]));
-		}
-
-		// Collect active filters
-		const activeFilters: string[] = [];
-
-		for (const [prop, value] of Object.entries(props)) {
-			// Handle special properties
-			if (prop === 'text') {
-				this.$element.textContent = value ?? '';
-				continue;
-			}
-			if (prop === 'visible') {
-				if (!value) this.$element.style.visibility = 'hidden';
-				continue;
-			}
-			if (prop === 'fit') {
-				this.$element.setAttribute('data-fit', value);
-				continue;
-			}
-			if (prop === 'boxShadow') {
-				if (value) {
-					this.$element.style.setProperty('box-shadow',
-						'var(--box-shadow-offset-0) var(--box-shadow-offset-1) var(--box-shadow-blur) var(--box-shadow-spread) var(--box-shadow-color)');
-				}
-				continue;
-			}
-			if (prop === 'textShadow') {
-				if (value) {
-					this.$element.style.setProperty('text-shadow',
-						'var(--text-shadow-offset-0) var(--text-shadow-offset-1) var(--text-shadow-blur) var(--text-shadow-color)');
-				}
-				continue;
-			}
-			if (prop === 'textStroke' || prop === 'mute' || prop === 'pitch') continue;
-			if (prop === 'outerBorder') {
-				if (value) this.$element.style.setProperty('box-sizing', 'content-box');
-				continue;
-			}
-			if (prop === 'fontFamily') {
-				await this.renderer.loadFont(value);
-				this.$element.style.setProperty('font-family', `"${value}", "Noto Sans", sans-serif`);
-				continue;
-			}
-
-			// Track active filters
-			if (prop.startsWith('filter')) {
-				const filterKey = prop.charAt(6).toLowerCase() + prop.slice(7);
-				if (filterKey in FILTER_MAP) {
-					activeFilters.push(filterKey);
-				}
-			}
-
-			// Map property name to CSS
-			const cssName = this.propToCss(prop);
-			if (cssName) {
-				if (Array.isArray(value) && cssName.startsWith('--')) {
-					for (let i = 0; i < value.length; i++) {
-						this.$element.style.setProperty(`${cssName}-${i}`, String(value[i]));
-					}
-				} else {
-					this.$element.style.setProperty(cssName, Array.isArray(value) ? value.join(' ') : String(value));
-				}
-			}
-		}
-
-		// Apply compound filter property
-		if (activeFilters.length > 0) {
-			this.$element.style.setProperty('filter',
-				activeFilters.map(f => `${FILTER_MAP[f]}(var(--filter-${FILTER_MAP[f]}))`).join(' '));
-		}
-	}
-
-	/** Convert a camelCase property name to its CSS equivalent. */
-	private propToCss(prop: string): string | null {
-		const map: Record<string, string> = {
-			opacity: 'opacity',
-			position: '--position',
-			scale: '--scale',
-			rotation: '--rotation',
-			anchor: '--anchor',
-			backgroundColor: 'background-color',
-			borderWidth: 'border-width',
-			borderStyle: 'border-style',
-			borderColor: 'border-color',
-			borderRadius: 'border-radius',
-			boxShadowBlur: '--box-shadow-blur',
-			boxShadowOffset: '--box-shadow-offset',
-			boxShadowSpread: '--box-shadow-spread',
-			boxShadowColor: '--box-shadow-color',
-			outlineWidth: 'outline-width',
-			outlineStyle: 'outline-style',
-			outlineColor: 'outline-color',
-			outlineOffset: 'outline-offset',
-			filterBlur: '--filter-blur',
-			filterBrightness: '--filter-brightness',
-			filterContrast: '--filter-contrast',
-			filterGrayscale: '--filter-grayscale',
-			filterSepia: '--filter-sepia',
-			filterInvert: '--filter-invert',
-			filterHueRotate: '--filter-hue-rotate',
-			filterSaturate: '--filter-saturate',
-			blendMode: 'mix-blend-mode',
-			perspective: '--perspective',
-			fontSize: 'font-size',
-			fontWeight: 'font-weight',
-			fontStyle: 'font-style',
-			fontStretch: 'font-stretch',
-			color: 'color',
-			textAlign: 'text-align',
-			verticalAlign: 'vertical-align',
-			padding: 'padding',
-			textStrokeWidth: '-webkit-text-stroke-width',
-			textStrokeColor: '-webkit-text-stroke-color',
-			textShadowColor: '--text-shadow-color',
-			textShadowOffset: '--text-shadow-offset',
-			textShadowBlur: '--text-shadow-blur',
-			letterSpacing: 'letter-spacing',
-			lineHeight: 'line-height',
-			textTransform: 'text-transform',
-			textDecoration: 'text-decoration',
-			wordSpacing: 'word-spacing',
-			textIndent: 'text-indent',
-			direction: 'direction',
-			// Audio properties don't have CSS equivalents
-			volume: null as any,
-			pan: null as any,
-		};
-		return map[prop] ?? null;
-	}
-
-	/** Get this layer's index in the parent layers array (for z-ordering). */
-	private getLayerIndex(): number {
-		return this.renderer.layers.indexOf(this);
-	}
-
-	// -- Cleanup ------------------------------------------------------------
-
-	/** Release object URLs and other resources. */
-	destroy(): void {
-		if (this.dataUrl) {
-			URL.revokeObjectURL(this.dataUrl);
-			this.dataUrl = null;
-		}
-	}
-}
+const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
+	text: TextLayer.propertiesDefinition,
+	captions: CaptionsLayer.propertiesDefinition,
+	image: ImageLayer.propertiesDefinition,
+	video: VideoLayer.propertiesDefinition,
+	audio: AudioLayer.propertiesDefinition,
+};
 
 // ---------------------------------------------------------------------------
 //  BrowserRenderer
 // ---------------------------------------------------------------------------
 
-export default class BrowserRenderer {
+export default class BrowserRenderer implements ILayerRenderer {
 	/** The compiled video JSON being rendered. */
 	private videoJSON: VideoJSON;
 	/** Runtime layer wrappers. */
-	layers: RuntimeLayer[] = [];
+	layers: RuntimeBaseLayer[] = [];
 	/** The container element for layer DOM elements. */
 	private $canvas: HTMLDivElement;
 	/** Track whether DOM elements have been set up. */
@@ -610,6 +87,15 @@ export default class BrowserRenderer {
 
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
+
+		// Inject renderer CSS into the page if not already present
+		if (!document.querySelector('style[data-videoflow-renderer]')) {
+			const style = document.createElement('style');
+			style.setAttribute('data-videoflow-renderer', '');
+			style.textContent = RENDERER_CSS;
+			document.head.appendChild(style);
+		}
+
 		// Create a hidden container element for rendering
 		this.$canvas = document.createElement('div');
 		this.$canvas.toggleAttribute('data-renderer', true);
@@ -624,10 +110,27 @@ export default class BrowserRenderer {
 		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
 		document.body.appendChild(this.$canvas);
 
-		// Create runtime layers
+		// Create runtime layers via the type registry
 		for (const layerJSON of videoJSON.layers) {
-			this.layers.push(new RuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this));
+			this.layers.push(createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this));
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	//  Property definition lookup
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Look up the full property definitions for a layer type, or a single property.
+	 * Used by runtime layers to determine CSS mapping and defaults.
+	 */
+	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined;
+	getPropertyDefinition(layerType: string, prop: string): PropertyDefinition | undefined;
+	getPropertyDefinition(layerType: string, prop?: string): Record<string, PropertyDefinition> | PropertyDefinition | undefined {
+		if (prop !== undefined) {
+			return PROPERTIES_BY_TYPE[layerType]?.[prop];
+		}
+		return PROPERTIES_BY_TYPE[layerType];
 	}
 
 	// -----------------------------------------------------------------------
@@ -668,14 +171,13 @@ export default class BrowserRenderer {
 		// Initialise each layer (fetch media, decode, extract metadata)
 		await Promise.all(this.layers.map(layer => layer.initialize()));
 
-		// Create DOM elements
+		// Create DOM elements (mirrors Scrptly's addElements)
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;
 			const $el = await layer.generateElement();
 			if ($el) {
 				this.$canvas.appendChild($el);
-				layer.setupCanvasElement();
 			}
 		}
 		this.elementsSetup = true;
@@ -705,7 +207,7 @@ export default class BrowserRenderer {
 
 			await Promise.all(
 				this.layers.map(async layer => {
-					if (layer.json.settings.enabled && layer.hasVisual) {
+					if (layer.json.settings.enabled) {
 						await layer.renderFrame(frame);
 					}
 				})
@@ -911,19 +413,34 @@ export default class BrowserRenderer {
 	 * Creates a buffer source from the layer's audio data, applies volume
 	 * and pan keyframes, and schedules playback.
 	 */
-	private async generateLayerAudio(layer: RuntimeLayer, audioCtx: OfflineAudioContext): Promise<void> {
-		const source = layer.json.settings.source;
+	private async generateLayerAudio(layer: RuntimeBaseLayer, audioCtx: OfflineAudioContext): Promise<void> {
+		// Prefer audioSource (pre-extracted WAV from server renderer) over
+		// source (original container) — headless Chromium's decodeAudioData
+		// may not support all container formats (e.g. MP4 video).
+		const audioSource = layer.json.settings.audioSource;
+		const source = audioSource || layer.json.settings.source;
 		if (!source) return;
 
-		// Decode audio data
+		// Decode audio data — try the layer's cached blob first, then fetch.
+		// Skip the cached blob if an explicit audioSource was provided (it
+		// points to a pre-extracted WAV which is more reliable to decode).
 		let arrayBuffer: ArrayBuffer;
-		if (layer.dataBlob) {
-			arrayBuffer = await layer.dataBlob.arrayBuffer();
+		const blob = !audioSource ? (layer as any).dataBlob as Blob | null : null;
+		if (blob) {
+			arrayBuffer = await blob.arrayBuffer();
 		} else {
 			const res = await fetch(source);
 			arrayBuffer = await res.arrayBuffer();
 		}
-		const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+		let audioBuffer: AudioBuffer;
+		try {
+			audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+		} catch (e) {
+			// Audio decoding failed — this layer has no decodable audio
+			// (e.g., video with no audio track, or unsupported format)
+			return;
+		}
 
 		const bufferSource = audioCtx.createBufferSource();
 		const speed = layer.speed;
@@ -967,7 +484,7 @@ export default class BrowserRenderer {
 	 * Apply keyframe automation to an AudioParam from the layer's animations.
 	 */
 	private applyAudioKeyframes(
-		layer: RuntimeLayer,
+		layer: RuntimeBaseLayer,
 		property: string,
 		param: AudioParam,
 		audioCtx: OfflineAudioContext
