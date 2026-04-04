@@ -25,6 +25,18 @@ const FILTER_MAP: Record<string, string> = {
 	sepia: 'sepia',
 };
 
+const FILTER_DEFAULTS: Record<string, number> = {
+	blur: 0,
+	brightness: 1,
+	contrast: 1,
+	grayscale: 0,
+	sepia: 0,
+	invert: 0,
+	hueRotate: 0,
+	saturate: 1,
+	opacity: 1,
+};
+
 export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 	get hasVisual(): boolean { return true; }
 
@@ -44,10 +56,16 @@ export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 		}
 
 		// Build filter array from individual filter* properties
-		if (Object.keys(props).some(p => p.startsWith('filter'))) {
-			props.filter = Object.keys(FILTER_MAP).filter(
-				p => Object.hasOwn(props, `filter${p.charAt(0).toUpperCase()}${p.slice(1)}`)
-			);
+		// Only include filters with non-default values
+		const nonDefaultFilters = Object.keys(FILTER_MAP).filter(p => {
+			const propKey = `filter${p.charAt(0).toUpperCase()}${p.slice(1)}`;
+			if (!Object.hasOwn(props, propKey)) return false;
+			return props[propKey] !== FILTER_DEFAULTS[p];
+		});
+		if (nonDefaultFilters.length > 0) {
+			props.filter = nonDefaultFilters;
+		} else {
+			delete props.filter;
 		}
 
 		return super.applyProperties(props);
