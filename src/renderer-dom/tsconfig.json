@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "declaration": true,
+    "declarationMap": true,
+    "composite": true,
+    "paths": {
+      "@videoflow/core": ["../core/index.ts"],
+      "@videoflow/core/utils": ["../core/utils.ts"],
+      "@videoflow/core/types": ["../core/types.ts"],
+      "@videoflow/renderer-browser": ["../renderer-browser/index.ts"]
+    }
+  },
+  "include": ["./**/*.ts"],
+  "exclude": ["node_modules", "dist"],
+  "references": [
+    { "path": "../core" },
+    { "path": "../renderer-browser" }
+  ]
+}
