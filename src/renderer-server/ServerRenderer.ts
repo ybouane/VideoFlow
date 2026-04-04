@@ -18,6 +18,7 @@
 
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import { spawn, type ChildProcess } from 'child_process';
+import crypto from 'crypto';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
@@ -108,6 +109,7 @@ async function buildRendererBundle(): Promise<string> {
 		target: 'esnext',
 		minify: true,
 		sourcemap: false,
+		external: ['@videoflow/renderer-server'],
 		define: {
 			'process.env.mode': '"browser"',
 		},
@@ -125,11 +127,26 @@ async function buildRendererBundle(): Promise<string> {
 //  ServerRenderer class
 // ---------------------------------------------------------------------------
 
+/** MIME type lookup by file extension. */
+const MIME_TYPES: Record<string, string> = {
+	'.mp4': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
+	'.avi': 'video/x-msvideo', '.mkv': 'video/x-matroska',
+	'.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
+	'.aac': 'audio/aac', '.flac': 'audio/flac', '.m4a': 'audio/mp4',
+	'.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+	'.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+	'.bmp': 'image/bmp', '.avif': 'image/avif',
+};
+
 export default class ServerRenderer {
 	private videoJSON: VideoJSON;
 	private context: BrowserContext | null = null;
 	private page: Page | null = null;
 	private renderId: string;
+	/** Map of UUID → local file path for serving local assets to the browser. */
+	private localFileMap: Map<string, string> = new Map();
+	/** Temporary files to clean up on destroy. */
+	private tempFiles: string[] = [];
 
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
@@ -144,6 +161,54 @@ export default class ServerRenderer {
 	/** Path for the temporary output MP4 file. */
 	private get videoFile(): string {
 		return path.join(TMP_DIR, `videoflow-video-${this.renderId}.mp4`);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Local file handling
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Check whether a source string refers to a local file (not a URL).
+	 */
+	private isLocalFile(source: string): boolean {
+		if (!source) return false;
+		if (/^https?:\/\//i.test(source)) return false;
+		if (/^data:/i.test(source)) return false;
+		if (/^blob:/i.test(source)) return false;
+		return true;
+	}
+
+	/**
+	 * Scan the VideoJSON for local file references in layer settings.source,
+	 * assign each a UUID, and rewrite the source to a URL that the route
+	 * handler can serve.  Also checks that the files exist.
+	 *
+	 * For audio-bearing layers (audio, video), also extracts audio to WAV
+	 * using ffmpeg so that the browser's decodeAudioData can reliably decode
+	 * it — headless Chromium may not support all container formats (e.g. MP4).
+	 */
+	private async rewriteLocalSources(): Promise<void> {
+		const audioTypes = new Set(['audio', 'video']);
+
+		for (const layer of this.videoJSON.layers) {
+			const source = layer.settings.source;
+			if (typeof source !== 'string') continue;
+
+			const isLocal = this.isLocalFile(source);
+
+			if (isLocal) {
+				const absPath = path.resolve(source);
+				try {
+					await fs.access(absPath);
+				} catch {
+					throw new Error(`Local file not found: ${absPath} (layer ${layer.id})`);
+				}
+
+				const uuid = crypto.randomUUID();
+				this.localFileMap.set(uuid, absPath);
+				layer.settings.source = `https://videoflow.local/file/${uuid}`;
+			}
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -189,12 +254,25 @@ export default class ServerRenderer {
 		});
 		await this.page.setDefaultTimeout(60_000);
 
-		// Error logging bridge
+		// Forward browser console messages to the server console
 		this.page.on('console', msg => {
-			if (msg.type() === 'error') {
-				console.error('Headless page error:', msg.text());
+			const type = msg.type();
+			if (type === 'error') {
+				console.error('[Browser]', msg.text());
+			} else if (type === 'warning') {
+				console.warn('[Browser]', msg.text());
+			} else {
+				console.log('[Browser]', msg.text());
 			}
 		});
+
+		// Capture unhandled page errors (exceptions, promise rejections)
+		this.page.on('pageerror', error => {
+			console.error('[Browser Error]', error.message);
+		});
+
+		// Rewrite local file paths to servable URLs before passing to browser
+		await this.rewriteLocalSources();
 
 		// Build the renderer bundle
 		const bundle = await buildRendererBundle();
@@ -237,6 +315,27 @@ export default class ServerRenderer {
 					body: bundle,
 					contentType: 'application/javascript',
 				});
+			}
+
+			// Serve local files mapped by UUID
+			const fileMatch = url.match(/\/file\/([0-9a-f-]{36})$/);
+			if (fileMatch) {
+				const filePath = this.localFileMap.get(fileMatch[1]);
+				if (filePath) {
+					try {
+						const body = await fs.readFile(filePath);
+						const ext = path.extname(filePath).toLowerCase();
+						const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+						return route.fulfill({
+							body,
+							contentType,
+							headers: { 'Access-Control-Allow-Origin': '*' },
+						});
+					} catch (e) {
+						console.error(`Failed to read local file: ${filePath}`, e);
+						return route.fulfill({ status: 404, body: 'File not found' });
+					}
+				}
 			}
 
 			// Pass through external requests (fonts, media assets)
@@ -511,6 +610,7 @@ export default class ServerRenderer {
 			await Promise.all([
 				fs.unlink(this.videoFile).catch(() => {}),
 				fs.unlink(this.audioFile).catch(() => {}),
+				...this.tempFiles.map(f => fs.unlink(f).catch(() => {})),
 			]);
 		} catch { /* ignore */ }
 	}
