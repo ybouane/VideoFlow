@@ -6,7 +6,7 @@
  * captured via `page.screenshot()` and piped into ffmpeg to produce the final
  * MP4 video file with audio.
  *
- * Architecture (mirrors Scrptly's renderServer.server.js):
+ * Architecture:
  * 1. Launch a headless Chromium browser via Playwright
  * 2. Open a page, serve the renderer HTML + bundled script via route interception
  * 3. Pass the VideoJSON to the page via an exposed `window.loadProject()` function

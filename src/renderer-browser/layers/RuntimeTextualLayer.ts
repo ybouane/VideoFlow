@@ -1,7 +1,7 @@
 /**
  * RuntimeTextualLayer — runtime class for text-bearing layers.
  *
- * Mirrors Scrptly's TextualLayer renderer class. Adds:
+ * Provides text-bearing layer rendering with:
  * - Text stroke / text shadow pre-processing
  * - text-align → CSS left/right positioning
  * - vertical-align → CSS top/bottom positioning
@@ -25,8 +25,7 @@ export default class RuntimeTextualLayer extends RuntimeVisualLayer {
 	}
 
 	/**
-	 * Override applyProperties to pre-process text props.
-	 * Mirrors Scrptly's TextualLayer.applyProperties:
+	 * Override applyProperties to pre-process text props:
 	 * - Remove textStroke sub-props if textStroke is false
 	 * - Remove textShadow sub-props if textShadow is false
 	 */
@@ -45,18 +44,17 @@ export default class RuntimeTextualLayer extends RuntimeVisualLayer {
 
 	/**
 	 * Override applyCSSProperty for text-specific CSS handling.
-	 * Mirrors Scrptly's TextualLayer.applyCSSProperty.
 	 */
 	async applyCSSProperty(prop: string, value: any, definition?: PropertyDefinition): Promise<void> {
 		if (prop === 'text-align') {
-			// text-align also affects horizontal positioning (mirrors Scrptly)
+			// text-align also affects horizontal positioning
 			if (value === 'left' || value === 'justify') {
 				await super.applyCSSProperty('left', '50%', { units: ['%'], default: 0 } as PropertyDefinition);
 			} else if (value === 'right') {
 				await super.applyCSSProperty('right', '50%', { units: ['%'], default: 0 } as PropertyDefinition);
 			}
 		} else if (prop === 'vertical-align') {
-			// vertical-align maps to top/bottom CSS position (mirrors Scrptly)
+			// vertical-align maps to top/bottom CSS position
 			if (value === 'top') {
 				return super.applyCSSProperty('top', '50%', { units: ['%'], default: 0 } as PropertyDefinition);
 			} else if (value === 'bottom') {

@@ -1,7 +1,6 @@
 /**
  * RuntimeVideoLayer — runtime class for video layers.
  *
- * Mirrors Scrptly's VideoLayer renderer class.
  * Loads a video, seeks to the correct time per frame, redraws the video
  * frame onto the canvas, and declares audio output.
  */
@@ -68,7 +67,6 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 
 	/**
 	 * Override generateElement to set canvas dimensions and context.
-	 * Mirrors Scrptly's VideoLayer.generateElement.
 	 */
 	async generateElement(): Promise<HTMLElement | null> {
 		const $ele = await super.generateElement();
@@ -86,7 +84,6 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 
 	/**
 	 * Override resetCSSProperties to set object dimensions for fit calculations.
-	 * Mirrors Scrptly's VideoLayer.resetCSSProperties.
 	 */
 	resetCSSProperties(): void {
 		super.resetCSSProperties();
@@ -116,8 +113,7 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 	 * Decode-ahead buffering: maintain two video elements that ping-pong.
 	 * While rendering frame N, frame N+1 is being decoded on the other element.
 	 *
-	 * Mirrors Scrptly's VideoLayer.renderFrame — seeks first, then
-	 * calls super.renderFrame() for property application.
+	 * Seeks first, then calls super.renderFrame() for property application.
 	 */
 	async renderFrame(frame: number): Promise<void> {
 		if (this.$element && this.vidA && this.vidB &&

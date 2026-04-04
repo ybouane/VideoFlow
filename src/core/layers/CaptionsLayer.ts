@@ -1,9 +1,8 @@
 /**
  * CaptionsLayer — displays time-coded captions over the video.
  *
- * Unlike Scrptly's CaptionsLayer which generates captions from an audio
- * source via AI, VideoFlow's CaptionsLayer accepts captions directly as a
- * setting: an array of `{ caption, startTime, endTime }` objects.
+ * Accepts captions directly as a setting: an array of
+ * `{ caption, startTime, endTime }` objects.
  *
  * The renderer shows the active caption text at each frame based on the
  * timing data.  Inherits all typography styling from {@link TextualLayer}.

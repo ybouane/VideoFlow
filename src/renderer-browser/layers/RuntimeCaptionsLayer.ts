@@ -1,7 +1,6 @@
 /**
  * RuntimeCaptionsLayer — runtime class for time-coded captions.
  *
- * Mirrors Scrptly's CaptionsLayer renderer class.
  * Overrides getPropertiesAtFrame to inject the active caption text,
  * and handles the `text` non-CSS property.
  */
