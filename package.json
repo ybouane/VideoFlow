@@ -8,13 +8,15 @@
   "workspaces": [
     "src/core",
     "src/renderer-browser",
-    "src/renderer-server"
+    "src/renderer-server",
+    "src/renderer-dom"
   ],
   "scripts": {
     "build": "npm run build --workspaces",
     "build:core": "npm run build -w src/core",
     "build:browser": "npm run build -w src/renderer-browser",
-    "build:server": "npm run build -w src/renderer-server"
+    "build:server": "npm run build -w src/renderer-server",
+    "build:dom": "npm run build -w src/renderer-dom"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
