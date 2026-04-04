@@ -1,7 +1,7 @@
 /**
  * RuntimeVisualLayer — runtime class for all layers with visible output.
  *
- * Mirrors Scrptly's VisualLayer renderer class. Adds:
+ * Provides visual rendering features:
  * - Filter composition (individual filter props → CSS filter string)
  * - Box shadow handling
  * - Border radius calculation
@@ -42,7 +42,7 @@ export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 
 	/**
 	 * Override applyProperties to pre-process visual props before CSS application.
-	 * Mirrors Scrptly's VisualLayer.applyProperties:
+	 *
 	 * - Remove boxShadow sub-props if boxShadow is false
 	 * - Build filter array from individual filter* props
 	 */
@@ -73,7 +73,6 @@ export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 
 	/**
 	 * Override applyCSSProperty for visual-specific CSS handling.
-	 * Mirrors Scrptly's VisualLayer.applyCSSProperty.
 	 */
 	async applyCSSProperty(prop: string, value: any, definition?: PropertyDefinition): Promise<void> {
 		if (prop === 'boxShadow') {
@@ -99,7 +98,7 @@ export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 		}
 
 		if (prop === 'border-radius') {
-			// Scale border-radius relative to object dimensions (mirrors Scrptly)
+			// Scale border-radius relative to object dimensions
 			let vals = Array.isArray(value) ? value : [value];
 			vals = vals.map(v => {
 				if (typeof v === 'number' || (typeof v === 'string' && /^[0-9.]+$/.test(v))) {

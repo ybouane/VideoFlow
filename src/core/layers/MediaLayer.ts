@@ -5,8 +5,7 @@
  * Adds the `source` setting and the `fit` visual property (contain / cover)
  * on top of {@link VisualLayer}.
  *
- * Unlike Scrptly, VideoFlow does not support AI-generated media; the `source`
- * must always be a URL or file path.
+ * The `source` must always be a URL or file path.
  */
 
 import VisualLayer, { VisualLayerProperties, VisualLayerSettings } from './VisualLayer.js';

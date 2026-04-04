@@ -1,7 +1,7 @@
 /**
  * RuntimeBaseLayer — the root runtime class for all layer types in the renderer.
  *
- * Mirrors Scrptly's BaseLayer renderer class. Provides:
+ * Provides:
  * - Timing helpers (startFrame, endFrame, retimeFrame, etc.)
  * - Keyframe interpolation with easing and unit handling
  * - Overridable property application pipeline:
@@ -93,8 +93,8 @@ export default class RuntimeBaseLayer {
 	/**
 	 * Get all animated property values for this layer at the given frame.
 	 *
-	 * Mirrors Scrptly's getPropertiesAtFrame: iterates the layer's set
-	 * properties and interpolates each one at the retimed frame.
+	 * Iterates the layer's set properties and interpolates each one at the
+	 * retimed frame.
 	 */
 	getPropertiesAtFrame(frame: number): Record<string, any> {
 		const retimedFrame = this.retimeFrame(frame);
@@ -120,7 +120,6 @@ export default class RuntimeBaseLayer {
 
 		// Fill in defaults from propertiesDefinition for any properties
 		// that are not set in animations or static properties.
-		// This mirrors Scrptly where this.properties always contains defaults.
 		const allDefs = this.getPropertiesDefinition();
 		for (const [key, def] of Object.entries(allDefs)) {
 			if (!(key in props) && def.default !== undefined) {
@@ -133,7 +132,6 @@ export default class RuntimeBaseLayer {
 
 	/**
 	 * Interpolate keyframes for a property at a given time.
-	 * Mirrors Scrptly's interpolateKeyframes.
 	 */
 	interpolateKeyframes(
 		property: string,
@@ -172,7 +170,7 @@ export default class RuntimeBaseLayer {
 		return this.interpolate(kf2.value, kf1.value, t, kf2.easing ?? 'step', definition);
 	}
 
-	// -- Unit handling (mirrors Scrptly) ------------------------------------
+	// -- Unit handling --
 
 	/** Ensure a value has the correct unit from the property definition. */
 	ensureUnit(value: any, definition?: PropertyDefinition): any {
@@ -220,7 +218,7 @@ export default class RuntimeBaseLayer {
 		return [n1, u1, n2, u2];
 	}
 
-	/** Match array sizes for interpolation (mirrors Scrptly). */
+	/** Match array sizes for interpolation. */
 	matchArraySizes(v1: any, v2: any, cssProperty?: string): [any[], any[]] {
 		const a1 = Array.isArray(v1) ? v1 : [v1];
 		const a2 = Array.isArray(v2) ? v2 : [v2];
@@ -237,7 +235,7 @@ export default class RuntimeBaseLayer {
 		return [a1, a2];
 	}
 
-	// -- Interpolation (mirrors Scrptly) ------------------------------------
+	// -- Interpolation --
 
 	/** Interpolate between two values with easing. */
 	interpolate(v1: any, v2: any, t: number, easing: string, definition?: PropertyDefinition): any {
@@ -325,9 +323,9 @@ export default class RuntimeBaseLayer {
 
 	/**
 	 * Create the DOM element for this layer.
-	 * Mirrors Scrptly's generateElement — uses the static elementTag from
-	 * the constructor, sets data-element and data-id attributes.
-	 * Returns `null` for layers with no visual output (no elementTag).
+	 *
+	 * Uses the static elementTag from the constructor and sets data-element and
+	 * data-id attributes. Returns `null` for layers with no visual output.
 	 */
 	async generateElement(): Promise<HTMLElement | null> {
 		if (!this.hasVisual) return null;
@@ -339,8 +337,8 @@ export default class RuntimeBaseLayer {
 
 	/**
 	 * Render this layer's visual state at the given frame.
-	 * Mirrors Scrptly's BaseLayer.renderFrame exactly:
-	 * hides if out of range, gets properties, applies them, shows.
+	 *
+	 * Hides if out of range, gets properties, applies them, shows.
 	 */
 	async renderFrame(frame: number): Promise<void> {
 		if (!this.$element) return;
@@ -355,7 +353,7 @@ export default class RuntimeBaseLayer {
 		this.$element.style.display = '';
 	}
 
-	// -- Property application (mirrors Scrptly's pipeline) ------------------
+	// -- Property application --
 
 	/**
 	 * Reset CSS on the element before applying new properties.
@@ -372,7 +370,6 @@ export default class RuntimeBaseLayer {
 	/**
 	 * Apply interpolated property values to the DOM element.
 	 *
-	 * Mirrors Scrptly's BaseLayer.applyProperties:
 	 * 1. Reset CSS
 	 * 2. Set z-index
 	 * 3. For each property:

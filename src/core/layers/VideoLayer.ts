@@ -45,7 +45,7 @@ export default class VideoLayer extends MediaLayer {
 
 	/**
 	 * Video layers merge visual and auditory property definitions.
-	 * The default `fit` is overridden to `'cover'` (matching Scrptly).
+	 * The default `fit` is overridden to `'cover'`.
 	 */
 	static get propertiesDefinition(): Record<string, PropertyDefinition> {
 		const base = super.propertiesDefinition;

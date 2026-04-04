@@ -18,9 +18,8 @@
  * 4. **Video encoding** — frames and audio are fed into MediaBunny to produce
  *    an MP4 blob (H.264 + AAC) entirely client-side.
  *
- * The architecture closely follows Scrptly's renderer but adapts the data
- * model to VideoFlow's JSON schema.  Layer-specific rendering behaviour is
- * delegated to the runtime layer class hierarchy in `./layers/`.
+ * Layer-specific rendering behaviour is delegated to the runtime layer class
+ * hierarchy in `./layers/`.
  */
 
 import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
@@ -171,7 +170,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Initialise each layer (fetch media, decode, extract metadata)
 		await Promise.all(this.layers.map(layer => layer.initialize()));
 
-		// Create DOM elements (mirrors Scrptly's addElements)
+		// Create DOM elements
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;

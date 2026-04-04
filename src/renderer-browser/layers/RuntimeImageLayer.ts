@@ -1,7 +1,6 @@
 /**
  * RuntimeImageLayer — runtime class for static image layers.
  *
- * Mirrors Scrptly's ImageLayer renderer class.
  * Loads an image, draws it onto the canvas, and sets object dimensions
  * for CSS fit calculations.
  */
@@ -36,7 +35,6 @@ export default class RuntimeImageLayer extends RuntimeMediaLayer {
 
 	/**
 	 * Override generateElement to set canvas dimensions and draw initial image.
-	 * Mirrors Scrptly's ImageLayer.generateElement.
 	 */
 	async generateElement(): Promise<HTMLElement | null> {
 		const $ele = await super.generateElement();
@@ -61,7 +59,6 @@ export default class RuntimeImageLayer extends RuntimeMediaLayer {
 
 	/**
 	 * Override resetCSSProperties to set object dimensions for fit calculations.
-	 * Mirrors Scrptly's ImageLayer.resetCSSProperties.
 	 */
 	resetCSSProperties(): void {
 		super.resetCSSProperties();

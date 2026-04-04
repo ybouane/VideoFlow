@@ -1,7 +1,6 @@
 /**
  * RuntimeTextLayer — runtime class for static text layers.
  *
- * Mirrors Scrptly's TextLayer renderer class.
  * Handles the `text` non-CSS property by setting element text content.
  */
 

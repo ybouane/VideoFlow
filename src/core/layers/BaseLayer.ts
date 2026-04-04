@@ -8,8 +8,8 @@
  * - Time ↔ frame conversions via the project's fps
  * - Serialisation to/from the VideoFlow JSON model
  *
- * The class mirrors Scrptly's BaseLayer but adapts the data model to
- * VideoFlow's time-in-seconds API with internal frame-based processing.
+ * Adapts the layer model to VideoFlow's time-in-seconds API with internal
+ * frame-based processing.
  */
 
 import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON } from '../types.js';

@@ -6,8 +6,7 @@
  * Each property maps to a CSS custom property or standard CSS property so the
  * rendering system can apply it directly via SVG `foreignObject` → canvas.
  *
- * The property definitions here mirror Scrptly's VisualLayer but are adapted
- * for VideoFlow's data model.
+ * The property definitions are adapted for VideoFlow's data model.
  */
 
 import BaseLayer, { BaseLayerSettings, BaseLayerProperties } from './BaseLayer.js';

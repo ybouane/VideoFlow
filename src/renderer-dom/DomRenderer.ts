@@ -18,9 +18,8 @@
  * injects the renderer CSS there for style isolation. Layer DOM elements
  * are appended inside the shadow root — no global CSS or DOM pollution.
  *
- * Audio sync during playback mirrors Scrptly's approach: render audio to
- * WAV, play via an HTML Audio element, and adjust playback rate to keep
- * video and audio in sync.
+ * Audio sync during playback: render audio to WAV, play via an HTML Audio
+ * element, and adjust playback rate to keep video and audio in sync.
  */
 
 import type { VideoJSON, PropertyDefinition } from '@videoflow/core/types';
@@ -192,8 +191,8 @@ export default class DomRenderer implements ILayerRenderer {
 	/**
 	 * Render a specific frame to the DOM.
 	 *
-	 * Mirrors BrowserRenderer.renderFrame — skips if already at that frame
-	 * (unless forced), queues if a render is already in progress.
+	 * Skips if already at that frame (unless forced), queues if a render is
+	 * already in progress.
 	 *
 	 * @param frame - Frame number to render.
 	 * @param force - Render even if already at this frame.
@@ -260,9 +259,9 @@ export default class DomRenderer implements ILayerRenderer {
 	/**
 	 * Start real-time playback from the current frame with audio sync.
 	 *
-	 * Mirrors Scrptly's play() approach: render audio to WAV, create an
-	 * Audio element, and use requestAnimationFrame to advance frames while
-	 * adjusting playback rate for A/V sync.
+	 * Render audio to WAV, create an Audio element, and use
+	 * requestAnimationFrame to advance frames while adjusting playback rate
+	 * for A/V sync.
 	 *
 	 * @param callback - Optional event callback (e.g. for FPS display).
 	 */
@@ -291,7 +290,7 @@ export default class DomRenderer implements ILayerRenderer {
 				this.audio.play();
 			}
 
-			// Playback loop (mirrors Scrptly's play loop exactly)
+			// Playback loop
 			while (this.playing) {
 				const renderStart = performance.now();
 				const elapsed = (Date.now() - startTime) / 1000;

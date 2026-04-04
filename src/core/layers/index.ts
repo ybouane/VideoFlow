@@ -1,7 +1,7 @@
 /**
  * Re-exports for all VideoFlow layer types.
  *
- * The layer hierarchy mirrors Scrptly:
+ * The layer hierarchy:
  *
  *   BaseLayer
  *   ├─ VisualLayer

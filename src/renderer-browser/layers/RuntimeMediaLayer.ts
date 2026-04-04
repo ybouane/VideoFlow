@@ -2,8 +2,8 @@
  * RuntimeMediaLayer — runtime base class for canvas-based media layers
  * (image, video).
  *
- * Mirrors Scrptly's MediaLayer renderer class. Creates a `<canvas>` element,
- * stores decoded media and dimensions, and handles the `fit` property.
+ * Creates a `<canvas>` element, stores decoded media and dimensions, and
+ * handles the `fit` property.
  */
 
 import type { PropertyDefinition } from '@videoflow/core/types';
@@ -28,7 +28,6 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 
 	/**
 	 * Override resetCSSProperties to clear data-fit and set object dimensions.
-	 * Mirrors Scrptly's MediaLayer.resetCSSProperties.
 	 */
 	resetCSSProperties(): void {
 		super.resetCSSProperties();
@@ -39,7 +38,6 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 
 	/**
 	 * Override applyProperties to ensure fit is always set.
-	 * Mirrors Scrptly's MediaLayer.applyProperties.
 	 */
 	async applyProperties(props: Record<string, any>): Promise<void> {
 		if (!props.fit) {
@@ -51,7 +49,6 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 
 	/**
 	 * Override applyCSSProperty to handle the `fit` property via data attribute.
-	 * Mirrors Scrptly's MediaLayer.applyCSSProperty.
 	 */
 	async applyCSSProperty(prop: string, value: any, definition?: PropertyDefinition): Promise<void> {
 		if (prop === 'fit') {
