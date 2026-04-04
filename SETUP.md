@@ -223,7 +223,7 @@ const $ = new VideoFlow({
 	width: 1920,
 	height: 1080,
 	fps: 30,
-	verbose: true, // whether to log the rendering process in detail (using listr2)
+	verbose: true, // whether to log the rendering process in detail
 });
 
 const bg = $.addImage(

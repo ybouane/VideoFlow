@@ -23,9 +23,6 @@
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
-  "dependencies": {
-    "listr2": "^8.0.0"
-  },
   "devDependencies": {
     "typescript": "^5.7.0"
   }
