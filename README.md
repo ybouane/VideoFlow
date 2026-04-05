@@ -242,9 +242,8 @@ See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) fol
 | [03-video-with-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/03-video-with-audio.ts) | Video layer with background music ducking |
 | [04-captions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/04-captions.ts) | Time-coded captions overlay |
 | [05-parallel-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/05-parallel-animations.ts) | Staggered parallel animations |
-| [06-server-render.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-server-render.ts) | Server-side rendering with renderFrame/renderAudio |
+| [06-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-render-frame-and-audio.ts) | Render a single frame or audio track |
 | [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
-| [08-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-render-frame-and-audio.ts) | Render a single frame or audio track |
 
 Run any example with:
 
