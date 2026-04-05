@@ -1,13 +1,12 @@
 # VideoFlow
 
-An open-source TypeScript library for building and rendering videos programmatically. Define videos as structured JSON and render them in the browser or on the server.
+An open-source TypeScript library for generating videos programmatically. Define videos with a fluent API, compile to a portable JSON format, and render to MP4 — in the browser or on the server.
 
 ## Features
 
-- **Flow API** — build videos with a sequential, fluent TypeScript interface
-- **JSON model** — compile to a portable JSON format that any renderer can consume
-- **Browser rendering** — render entirely client-side using SVG foreignObject + Canvas + MediaBunny
-- **Server rendering** — render on Node.js with Playwright + ffmpeg
+- **Fluent API** — build videos with a sequential, chainable TypeScript interface
+- **JSON video format** — compile to a portable JSON model that any renderer can consume
+- **Browser & server rendering** — render to MP4 client-side or server-side
 - **Layer types** — Text, Image, Video, Audio, Captions
 - **Keyframe animations** — animate any visual/auditory property with multiple easing functions
 - **Parallel timelines** — run animation branches simultaneously
@@ -17,13 +16,12 @@ An open-source TypeScript library for building and rendering videos programmatic
 
 ## Packages
 
-VideoFlow is a monorepo with three packages:
-
 | Package | Description |
 | --- | --- |
-| `@videoflow/core` | Flow API, layer classes, JSON compiler, utilities |
-| `@videoflow/renderer-browser` | Browser-side renderer (SVG + Canvas + MediaBunny) |
-| `@videoflow/renderer-server` | Server-side renderer (Playwright + ffmpeg) |
+| [`@videoflow/core`](https://github.com/ybouane/VideoFlow/tree/main/src/core) | Define and compose videos programmatically using the fluent API |
+| [`@videoflow/renderer-dom`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-dom) | Play back and preview VideoFlow videos interactively in the browser |
+| [`@videoflow/renderer-browser`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-browser) | Render VideoFlow videos to MP4 files in the browser |
+| [`@videoflow/renderer-server`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-server) | Render VideoFlow videos to MP4 files on the server (Node.js) |
 
 ## Installation
 
@@ -31,13 +29,16 @@ VideoFlow is a monorepo with three packages:
 npm install @videoflow/core
 ```
 
-For rendering:
+Then install a renderer for your target environment:
 
 ```bash
-# Browser rendering (client-side)
+# Render in the browser
 npm install @videoflow/renderer-browser
 
-# Server rendering (Node.js)
+# Preview/play back in the browser
+npm install @videoflow/renderer-dom
+
+# Render on the server (Node.js)
 npm install @videoflow/renderer-server
 npx playwright install chromium
 ```
@@ -66,7 +67,7 @@ $.wait('3s');
 title.fadeOut('1s');
 $.wait('500ms');
 
-// Auto-detects environment (browser vs Node.js) and renders
+// Auto-detects environment and renders to MP4
 await $.renderVideo({
   outputType: 'file',
   output: './output.mp4',
@@ -74,23 +75,24 @@ await $.renderVideo({
 });
 ```
 
-### Compile to JSON only
+### Compile to JSON
+
+You can compile your video to a portable JSON object without rendering. This JSON can be stored, transferred, and rendered later by any VideoFlow renderer.
 
 ```ts
 const json = await $.compile();
 console.log(JSON.stringify(json, null, 2));
 ```
 
-### Render with explicit renderer
+### Render with a specific renderer
 
 ```ts
-// Server-side (Playwright + ffmpeg)
-import VideoRenderer, { closeSharedBrowser } from '@videoflow/renderer-server';
+// Server
+import VideoRenderer from '@videoflow/renderer-server';
 const json = await $.compile();
 await VideoRenderer.render(json, { outputType: 'file', output: './output.mp4' });
-await closeSharedBrowser();
 
-// Browser-side (SVG + Canvas + MediaBunny)
+// Browser
 import VideoRenderer from '@videoflow/renderer-browser';
 const json = await $.compile();
 const blob = await VideoRenderer.render(json);
@@ -156,6 +158,21 @@ All time parameters accept flexible formats:
 
 `'step'`, `'linear'`, `'easeIn'`, `'easeOut'`, `'easeInOut'`
 
+### Visual Properties
+
+All visual layers (text, image, video, captions) share these transform properties:
+
+| Property | Type | Default | Description |
+| --- | --- | --- | --- |
+| `position` | `[x, y]` | `[0.5, 0.5]` | Normalized 0–1. `[0, 0]` = top-left, `[0.5, 0.5]` = center, `[1, 1]` = bottom-right |
+| `scale` | `number` or `[x, y]` | `1` | Multiplier. `1` = natural size, `0.5` = half, `2` = double |
+| `rotation` | `number` or `[x, y, z]` | `0` | Degrees, clockwise. Use `[x, y, z]` for 3D rotation |
+| `anchor` | `[x, y]` | `[0.5, 0.5]` | Normalized 0–1 within the element. Point around which position, scale, and rotation are applied |
+| `opacity` | `number` | `1` | 0 (transparent) to 1 (opaque) |
+| `perspective` | `number` | `2000` | Distance in pixels for 3D transforms |
+
+See [`@videoflow/core` README](https://github.com/ybouane/VideoFlow/tree/main/src/core) for the full list of visual properties (filters, borders, shadows, etc.).
+
 ## Layer Types
 
 ### Text
@@ -203,7 +220,7 @@ const audio = $.addAudio(
 
 ```ts
 const caps = $.addCaptions(
-  { fontSize: 2, color: '#fff', position: [50, 85] },
+  { fontSize: 2, color: '#fff', position: [0.5, 0.85] },
   {
     captions: [
       { caption: 'First line.',  startTime: 0, endTime: 2.5 },
@@ -216,18 +233,18 @@ const caps = $.addCaptions(
 
 ## Examples
 
-See the [examples/](examples/) folder:
+See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) folder:
 
 | Example | Description |
 | --- | --- |
-| [01-basic-text.ts](examples/01-basic-text.ts) | Simple text with fade in/out animation |
-| [02-image-background.ts](examples/02-image-background.ts) | Background image with blur animation |
-| [03-video-with-audio.ts](examples/03-video-with-audio.ts) | Video layer with background music ducking |
-| [04-captions.ts](examples/04-captions.ts) | Time-coded captions overlay |
-| [05-parallel-animations.ts](examples/05-parallel-animations.ts) | Staggered parallel animations |
-| [06-server-render.ts](examples/06-server-render.ts) | Server-side rendering with renderFrame/renderAudio |
-| [07-abort-controller.ts](examples/07-abort-controller.ts) | Cancelling a render with AbortController |
-| [08-render-frame-and-audio.ts](examples/08-render-frame-and-audio.ts) | Render a single frame or audio track |
+| [01-basic-text.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/01-basic-text.ts) | Simple text with fade in/out animation |
+| [02-image-background.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/02-image-background.ts) | Background image with blur animation |
+| [03-video-with-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/03-video-with-audio.ts) | Video layer with background music ducking |
+| [04-captions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/04-captions.ts) | Time-coded captions overlay |
+| [05-parallel-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/05-parallel-animations.ts) | Staggered parallel animations |
+| [06-server-render.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-server-render.ts) | Server-side rendering with renderFrame/renderAudio |
+| [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
+| [08-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-render-frame-and-audio.ts) | Render a single frame or audio track |
 
 Run any example with:
 
@@ -238,7 +255,7 @@ npx tsx examples/01-basic-text.ts
 ## Building from Source
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/ybouane/VideoFlow.git
 cd VideoFlow
 npm install
 npm run build
