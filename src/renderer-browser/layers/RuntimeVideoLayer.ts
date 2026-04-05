@@ -128,19 +128,16 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 			// Step 1: Determine which video to draw from
 			// If vidA is already targeted at this time, use it
 			if (this.vidATargetTime === targetTime) {
-				console.log(`Frame ${frame}: Using vidA (already targeted)`);
 				await this.vidAReady;
 				drawFromVid = this.vidA;
 			}
 			// Else if vidB is already targeted at this time, use it
 			else if (this.vidBTargetTime === targetTime) {
-				console.log(`Frame ${frame}: Using vidB (already targeted)`);
 				await this.vidBReady;
 				drawFromVid = this.vidB;
 			}
 			// Neither is primed — pick the closer one and seek it
 			else {
-				console.log(`Frame ${frame}: Seeking video (not already targeted)`);
 				const diffA = Math.abs(this.vidATargetTime - targetTime);
 				const diffB = Math.abs(this.vidBTargetTime - targetTime);
 
