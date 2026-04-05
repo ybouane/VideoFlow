@@ -1,7 +1,7 @@
 {
   "name": "videoflow",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Render videos from JSON — in the browser or via API",
   "license": "Apache-2.0",
   "type": "module",
