@@ -517,6 +517,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const fps = this.videoJSON.fps;
 		const nFrames = Math.round(this.videoJSON.duration * fps);
 		const signal = options.signal;
+		const onProgress = options.onProgress;
 
 		// Initialise layers
 		await this.initLayers();
@@ -559,6 +560,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 
 			await this.captureFrame(frame);
 			await videoSource.add(frame / fps, 1 / fps);
+			onProgress?.((frame + 1) / nFrames);
 		}
 		videoSource.close();
 
