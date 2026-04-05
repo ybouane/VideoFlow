@@ -6,6 +6,7 @@
  */
 
 import DomRenderer from '@videoflow/renderer-dom';
+import BrowserRenderer from '@videoflow/renderer-browser';
 
 import { createProject as basicText } from '../01-basic-text.js';
 import { createProject as imageBackground } from '../02-image-background.js';
@@ -29,8 +30,15 @@ const $seek = document.getElementById('seek') as HTMLInputElement;
 const $time = document.getElementById('time')!;
 const $fps = document.getElementById('fps-display')!;
 const $select = document.getElementById('example-select') as HTMLSelectElement;
+const $btnDownload = document.getElementById('btn-download') as HTMLButtonElement;
+const $exportModal = document.getElementById('export-modal')!;
+const $exportTitle = document.getElementById('export-title')!;
+const $exportProgressBar = document.getElementById('export-progress-bar')!;
+const $exportProgressText = document.getElementById('export-progress-text')!;
+const $exportCancel = document.getElementById('export-cancel')!;
 
 let renderer: DomRenderer | null = null;
+let currentVideoJSON: any = null;
 
 // -----------------------------------------------------------------------
 //  Load a project into the renderer
@@ -54,6 +62,7 @@ async function loadExample(name: string) {
 		$status.textContent = 'Compiling...';
 		const $ = factory();
 		const videoJSON = await $.compile();
+		currentVideoJSON = videoJSON;
 
 		$status.textContent = 'Loading...';
 		renderer = new DomRenderer($player);
@@ -127,6 +136,81 @@ $seek.addEventListener('input', () => {
 $seek.addEventListener('change', () => { seeking = false; });
 
 $select.addEventListener('change', () => { loadExample($select.value); });
+
+// -----------------------------------------------------------------------
+//  Export / Download
+// -----------------------------------------------------------------------
+
+let exportAbortController: AbortController | null = null;
+
+$btnDownload.addEventListener('click', startExport);
+$exportCancel.addEventListener('click', cancelExport);
+
+// Close modal on overlay click (outside the modal box)
+$exportModal.addEventListener('click', (e) => {
+	if (e.target === $exportModal) cancelExport();
+});
+
+async function startExport() {
+	if (!currentVideoJSON) return;
+
+	// Pause playback if running
+	if (renderer?.playing) {
+		renderer.stop();
+		$btnPlay.textContent = 'Play';
+		$btnPlay.classList.remove('active');
+	}
+
+	// Show modal
+	exportAbortController = new AbortController();
+	$exportModal.hidden = false;
+	$exportTitle.textContent = 'Exporting video\u2026';
+	$exportProgressBar.style.width = '0%';
+	$exportProgressText.textContent = '0%';
+	$exportCancel.textContent = 'Cancel';
+
+	try {
+		const blob = await BrowserRenderer.render(currentVideoJSON, {
+			signal: exportAbortController.signal,
+			onProgress: (progress: number) => {
+				const pct = Math.round(progress * 100);
+				$exportProgressBar.style.width = `${pct}%`;
+				$exportProgressText.textContent = `${pct}%`;
+			},
+		});
+
+		// Download the file
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `${$select.value.replace(/[^a-zA-Z0-9-_ ]/g, '')}.mp4`;
+		a.click();
+		URL.revokeObjectURL(url);
+
+		// Show success briefly
+		$exportTitle.textContent = 'Export complete!';
+		$exportProgressBar.style.width = '100%';
+		$exportProgressText.textContent = '100%';
+		$exportCancel.textContent = 'Close';
+	} catch (err: any) {
+		if (err.name === 'AbortError' || exportAbortController.signal.aborted) {
+			// User cancelled — modal already closing
+			return;
+		}
+		$exportTitle.textContent = 'Export failed';
+		$exportProgressText.textContent = String(err.message || err);
+		$exportCancel.textContent = 'Close';
+		console.error('Export error:', err);
+	}
+}
+
+function cancelExport() {
+	if (exportAbortController) {
+		exportAbortController.abort();
+		exportAbortController = null;
+	}
+	$exportModal.hidden = true;
+}
 
 // -----------------------------------------------------------------------
 //  Helpers

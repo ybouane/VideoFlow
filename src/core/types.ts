@@ -172,6 +172,8 @@ export type RenderOptions = {
 	signal?: AbortSignal;
 	/** Whether to log detailed rendering progress. */
 	verbose?: boolean;
+	/** Progress callback — called with a value from 0 to 1 as rendering advances. */
+	onProgress?: (progress: number) => void;
 };
 
 /**
