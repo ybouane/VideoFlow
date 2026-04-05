@@ -123,7 +123,7 @@ export default class RuntimeBaseLayer {
 		const allDefs = this.getPropertiesDefinition();
 		for (const [key, def] of Object.entries(allDefs)) {
 			if (!(key in props) && def.default !== undefined) {
-				props[key] = def.default;
+				props[key] = this.ensureUnit(def.default, def);
 			}
 		}
 
