@@ -466,7 +466,7 @@ export default class ServerRenderer {
 	 * @param hasAudio - Whether to mux the rendered audio into the output.
 	 * @returns A tuple of [ffmpeg process, completion promise].
 	 */
-	private initFFmpeg(hasAudio: boolean, outputPath: string): [ChildProcess, Promise<string>] {
+	private initFFmpeg(hasAudio: boolean, outputPath: string): [ChildProcess, Promise<string>, () => void] {
 		const ffmpeg = spawn('ffmpeg', [
 			'-y',
 			'-f', 'image2pipe',
@@ -485,15 +485,22 @@ export default class ServerRenderer {
 		let stderr = '';
 		ffmpeg.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
 
+		// Track intentional kills so the promise doesn't reject on abort
+		let killed = false;
+		const kill = () => { killed = true; ffmpeg.kill('SIGKILL'); };
+
 		const onFinish = new Promise<string>((resolve, reject) => {
 			ffmpeg.on('close', (code) => {
-				if (code === 0) resolve(stderr);
+				if (killed) resolve(stderr);
+				else if (code === 0) resolve(stderr);
 				else reject(new Error(`ffmpeg exited with code ${code}:\n${stderr}`));
 			});
-			ffmpeg.once('error', (err) => reject(new Error(`ffmpeg failed to start: ${err.message}`)));
+			ffmpeg.once('error', (err) => {
+				if (!killed) reject(new Error(`ffmpeg failed to start: ${err.message}`));
+			});
 		});
 
-		return [ffmpeg, onFinish];
+		return [ffmpeg, onFinish, kill];
 	}
 
 	// -----------------------------------------------------------------------
@@ -513,6 +520,7 @@ export default class ServerRenderer {
 	private async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
 		const signal = options.signal;
 		const verbose = options.verbose ?? false;
+		const onProgress = options.onProgress;
 
 		if (verbose) console.log('VideoFlow: Initializing renderer...');
 
@@ -540,19 +548,21 @@ export default class ServerRenderer {
 		const durationStr = formatTime(this.videoJSON.duration);
 		if (verbose) console.log(`VideoFlow: Rendering ${durationStr} video (${nFrames} frames)...`);
 
-		const [ffmpeg, onFinish] = this.initFFmpeg(hasAudio, outputPath);
+		const [ffmpeg, onFinish, killFfmpeg] = this.initFFmpeg(hasAudio, outputPath);
 
 		// Frame rendering loop
 		let lastTick = Date.now();
 		for (let i = 0; i < nFrames; i++) {
 			if (signal?.aborted) {
-				ffmpeg.kill('SIGKILL');
+				killFfmpeg();
+				await onFinish;
 				throw new DOMException('Render aborted', 'AbortError');
 			}
 
 			// Stall detection
 			if (Date.now() - lastTick > 120_000) {
-				ffmpeg.kill('SIGKILL');
+				killFfmpeg();
+				await onFinish;
 				throw new Error('Rendering stalled — no progress for 120 seconds.');
 			}
 
@@ -572,6 +582,8 @@ export default class ServerRenderer {
 			}
 
 			lastTick = Date.now();
+
+			onProgress?.((i + 1) / nFrames);
 
 			if (verbose && (i % 30 === 0 || i === nFrames - 1)) {
 				const pct = ((i + 1) / nFrames * 100).toFixed(1);
@@ -598,7 +610,7 @@ export default class ServerRenderer {
 	//  Cleanup
 	// -----------------------------------------------------------------------
 
-	/** Release all resources: browser context, temporary files. */
+	/** Release all resources: browser context, temporary files, and shared browser. */
 	async cleanup(): Promise<void> {
 		try {
 			await this.page?.close();
@@ -613,5 +625,6 @@ export default class ServerRenderer {
 				...this.tempFiles.map(f => fs.unlink(f).catch(() => {})),
 			]);
 		} catch { /* ignore */ }
+		await closeSharedBrowser();
 	}
 }
