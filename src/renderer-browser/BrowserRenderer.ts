@@ -319,6 +319,11 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Clone DOM and generate SVG
 		const node = await this.cloneWithInlineStyles();
 		node.id = '';
+		// Strip the offscreen positioning used to hide the live container —
+		// inside the foreignObject the content must sit at the origin.
+		node.style.removeProperty('position');
+		node.style.removeProperty('left');
+		node.style.removeProperty('top');
 		const width = this.videoJSON.width;
 		const height = this.videoJSON.height;
 
