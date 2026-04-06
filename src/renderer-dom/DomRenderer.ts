@@ -77,6 +77,12 @@ export default class DomRenderer implements ILayerRenderer {
 	/** Whether playback is active. */
 	playing = false;
 
+	/**
+	 * Optional callback fired whenever a new frame is rendered. Set this
+	 * externally to keep a UI (seek bar, time label, …) in sync with playback.
+	 */
+	onFrame: ((frame: number) => void) | null = null;
+
 	/** Audio element for playback sync. */
 	private audio: HTMLAudioElement | null = null;
 	/** Object URL for the audio blob (for cleanup). */
@@ -217,6 +223,7 @@ export default class DomRenderer implements ILayerRenderer {
 
 			this.currentFrame = frame;
 			await document.fonts.ready;
+			this.onFrame?.(frame);
 		} catch (e) {
 			if (e !== 'STOP_RENDERING') throw e;
 		} finally {
@@ -259,9 +266,16 @@ export default class DomRenderer implements ILayerRenderer {
 	 * requestAnimationFrame to advance frames while adjusting playback rate
 	 * for A/V sync.
 	 *
-	 * @param callback - Optional event callback (e.g. for FPS display).
+	 * @param options - Optional callbacks:
+	 *   - `fpsCallback(fps)` — fired every animation frame with the current
+	 *     measured render FPS, useful for a HUD/diagnostic display.
+	 *
+	 * To track frame changes, set the public {@link onFrame} property.
 	 */
-	async play(callback?: DomRendererCallback): Promise<void> {
+	async play(options: {
+		fpsCallback?: (fps: number) => void;
+	} = {}): Promise<void> {
+		const { fpsCallback } = options;
 		if (!this.videoJSON) throw new Error('No video loaded. Call loadVideo() first.');
 		if (this.playing) return;
 		this.playing = true;
@@ -310,7 +324,7 @@ export default class DomRenderer implements ILayerRenderer {
 				}
 
 				const frameFps = 1000 / (performance.now() - renderStart);
-				callback?.('fps', frameFps);
+				fpsCallback?.(frameFps);
 
 				await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 			}

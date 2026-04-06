@@ -54,10 +54,31 @@ await player.loadVideo(videoJSON);
 
 ### play
 
-Start playback.
+Start playback. Optionally accepts a `fpsCallback` for diagnostics:
 
 ```typescript
 await player.play();
+
+// Or with an FPS HUD:
+await player.play({
+  fpsCallback: (fps) => console.log('render fps:', fps.toFixed(1)),
+});
+```
+
+### onFrame
+
+Public property — assign a function to be notified every time a new frame is
+rendered (during playback **or** after a seek/`renderFrame` call). Useful for
+keeping a UI (seek bar, time label, …) in sync with playback:
+
+```typescript
+player.onFrame = (frame) => {
+  timeline.value = String((frame / player.totalFrames) * 100);
+  timeLabel.textContent = (frame / player.fps).toFixed(2) + 's';
+};
+
+// Clear it later by assigning null:
+player.onFrame = null;
 ```
 
 ### stop
