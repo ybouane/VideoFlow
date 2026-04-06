@@ -59,208 +59,348 @@ const $ = new VideoFlow(options?: {
 });
 ```
 
-## Layer Methods
+## Layer Hierarchy
 
-### addText
+Layers inherit their properties and settings through a class hierarchy. When you use `addText`, `addImage`, etc., your layer gets everything from every parent class:
 
-Create a text layer.
+```
+BaseLayer              → id, timing (startTime, duration, speed, trimStart), enabled
+ ├── VisualLayer       → opacity, position, scale, rotation, anchor, borders, filters, shadows, perspective
+ │    ├── MediaLayer   → source, fit
+ │    │    ├── ImageLayer
+ │    │    └── VideoLayer (+ volume, pan, pitch, mute)
+ │    └── TextualLayer → font*, color, text stroke / shadow, letterSpacing, lineHeight, …
+ │         ├── TextLayer     (+ text)
+ │         └── CaptionsLayer (+ captions[], maxCharsPerLine, maxLines)
+ └── AuditoryLayer     → volume, pan, pitch, mute
+      └── AudioLayer   → source
+```
+
+The samples below list **every** property and setting available on each layer type (including inherited ones), with defaults and inline comments.
+
+### Common Settings (all layers)
+
+These settings are accepted by every `add*` call:
 
 ```typescript
-$.addText(
-  properties: {
-    text: string;          // Text content (default: 'Type your text here')
-    fontSize?: number;     // In em or px (default: 1.0)
-    fontFamily?: string;   // Font name (default: 'Noto Sans')
-    fontWeight?: number;   // Weight (default: 600)
-    fontStyle?: 'normal' | 'italic'; // (default: 'normal')
-    color?: string;        // Hex color (default: '#FFFFFF')
-    textAlign?: 'left' | 'right' | 'center' | 'justify'; // (default: 'center')
-    verticalAlign?: 'top' | 'middle' | 'bottom'; // (default: 'middle')
-    // Plus all visual properties (position, scale, opacity, etc.)
+{
+  name?: string,          // Human-readable name, optional (not persisted if unset)
+  enabled?: boolean,      // Whether the layer renders at all. Default: true
+  startTime?: Time,       // When the layer enters the timeline. Default: 0
+  duration?: Time,        // How long it stays. Default: undefined (runs to end of timeline)
+  speed?: number,         // Playback rate multiplier (media layers). Default: 1
+  trimStart?: Time,       // Offset into the source before playback starts. Default: 0
+}
+```
+
+`Time` accepts numbers (seconds) or strings like `'2s'`, `'500ms'`, `'60f'`, `'01:30'`. See [Time Format](#time-format).
+
+### addLayer options
+
+All `add*` methods take an optional third argument:
+
+```typescript
+{
+  waitFor?: Time | 'finish',  // After adding, advance the flow pointer by this much.
+                              // 'finish' = wait for the layer's full duration.
+  index?: number,             // Insert position in the layer stack (z-order).
+}
+```
+
+---
+
+### addText — text layer
+
+Renders animated text. Inherits from `TextualLayer` → `VisualLayer` → `BaseLayer`.
+
+```typescript
+const title = $.addText(
+  {
+    // --- TextLayer ---
+    text: 'Hello, VideoFlow!',   // Text content. Default: 'Type your text here'
+
+    // --- TextualLayer (typography) ---
+    fontSize: 1.0,               // In em (relative to canvas) or px. Default: 1.0
+    fontFamily: 'Noto Sans',     // Google Font name, auto-loaded. Default: 'Noto Sans'
+    fontWeight: 600,             // 100–900 or string. Default: 600
+    fontStyle: 'normal',         // 'normal' | 'italic'. Default: 'normal'
+    fontStretch: 100,            // In %. Default: 100
+    color: '#FFFFFF',            // Text color. Default: '#FFFFFF'
+    textAlign: 'center',         // 'left' | 'right' | 'center' | 'justify'. Default: 'center'
+    verticalAlign: 'middle',     // 'top' | 'middle' | 'bottom'. Default: 'middle'
+    padding: 0,                  // In px, or [top, right, bottom, left]. Default: 0
+
+    textStroke: false,           // Enable stroke outline around glyphs. Default: false
+    textStrokeWidth: 0,          // Stroke width in px. Default: 0
+    textStrokeColor: '#000000',  // Stroke color. Default: '#000000'
+
+    textShadow: false,           // Enable text shadow. Default: false
+    textShadowColor: '#000000',  // Shadow color. Default: '#000000'
+    textShadowOffset: [0, 0],    // [x, y] in px. Default: [0, 0]
+    textShadowBlur: 0,           // Blur radius in px. Default: 0
+
+    letterSpacing: '0em',        // In em or px. Default: '0em'
+    lineHeight: 1,               // Unitless multiplier, or em/px. Default: 1
+    wordSpacing: 0,              // In em or px. Default: 0
+    textIndent: 0,               // First-line indent. Default: 0
+    textTransform: 'none',       // 'none' | 'capitalize' | 'uppercase' | 'lowercase'. Default: 'none'
+    textDecoration: 'none',      // 'none' | 'underline' | 'overline' | 'line-through'. Default: 'none'
+    direction: 'ltr',            // 'ltr' | 'rtl'. Default: 'ltr'
+
+    // --- VisualLayer (see "Visual Properties" below for full list) ---
+    visible: true,               // Default: true
+    opacity: 1,                  // 0–1. Default: 1
+    position: [0.5, 0.5],        // Normalized [x, y]. Default: [0.5, 0.5] (centered)
+    scale: 1,                    // Default: 1
+    rotation: 0,                 // Degrees. Default: 0
+    anchor: [0.5, 0.5],          // Normalized anchor point. Default: [0.5, 0.5]
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
   },
-  settings?: {
-    // Layer timing
-    startTime?: number;
-    duration?: number;
-    speed?: number;
-    trimStart?: number;
-    enabled?: boolean;
+  {
+    // --- Common settings (see above) ---
+    startTime: 0,                // Default: 0
+    duration: '3s',              // Default: undefined (runs to end)
+    enabled: true,               // Default: true
   }
 );
 ```
 
-### addImage
+---
 
-Create an image layer.
+### addImage — image layer
+
+Displays a static image. Inherits from `MediaLayer` → `VisualLayer` → `BaseLayer`.
 
 ```typescript
-$.addImage(
-  properties: {
-    fit?: 'contain' | 'cover'; // (default: 'contain')
-    // Plus all visual properties (position, scale, opacity, etc.)
+const photo = $.addImage(
+  {
+    // --- MediaLayer ---
+    fit: 'contain',              // 'contain' | 'cover'. Default: 'contain'
+
+    // --- VisualLayer (inherited) ---
+    visible: true,               // Default: true
+    opacity: 1,                  // 0–1. Default: 1
+    position: [0.5, 0.5],        // Normalized [x, y]. Default: centered
+    scale: 1,                    // Default: 1
+    rotation: 0,                 // Degrees. Default: 0
+    anchor: [0.5, 0.5],          // Default: centered
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
   },
-  settings: {
-    source: string; // Image URL or path (required)
-    // Plus common layer settings
+  {
+    source: 'https://example.com/image.jpg', // REQUIRED: URL or file path
+    startTime: 0,                // Default: 0
+    duration: '5s',              // Default: undefined
   }
 );
 ```
 
-### addVideo
+---
 
-Create a video layer.
+### addVideo — video layer
+
+Plays a video clip with synced audio. Inherits from `MediaLayer` → `VisualLayer` plus auditory properties (`volume`, `pan`, `pitch`, `mute`).
 
 ```typescript
-$.addVideo(
-  properties: {
-    fit?: 'contain' | 'cover'; // (default: 'contain')
-    volume?: number; // 0-1 (default: 1)
-    // Plus all visual properties
+const clip = $.addVideo(
+  {
+    // --- MediaLayer ---
+    fit: 'cover',                // 'contain' | 'cover'. Default for video: 'cover'
+
+    // --- Auditory properties ---
+    volume: 1,                   // 0 = silent, 1 = full. Default: 1
+    pan: 0,                      // -1 = left, 0 = center, 1 = right. Default: 0
+    pitch: 1,                    // Pitch multiplier. Default: 1
+    mute: false,                 // Silence without affecting volume value. Default: false
+
+    // --- VisualLayer (inherited) ---
+    visible: true,               // Default: true
+    opacity: 1,                  // Default: 1
+    position: [0.5, 0.5],        // Default: centered
+    scale: 1,                    // Default: 1
+    rotation: 0,                 // Default: 0
+    anchor: [0.5, 0.5],          // Default: centered
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
   },
-  settings: {
-    source: string;  // Video URL (required)
-    duration?: string; // Max duration
-    // Plus common layer settings
+  {
+    source: './clip.mp4',        // REQUIRED: URL or file path
+    startTime: 0,                // Default: 0
+    duration: '10s',             // Default: undefined (plays to end of video)
+    speed: 1,                    // Playback rate. Default: 1
+    trimStart: 0,                // Skip first N seconds of source. Default: 0
   },
-  options?: {
-    waitFor?: 'finish' | 'none'; // Wait for video to end before continuing timeline
+  {
+    waitFor: 'finish',           // Advance flow pointer by the full clip duration
   }
 );
 ```
 
-### addAudio
+---
 
-Create an audio layer.
+### addAudio — audio layer
+
+Plays an audio track. No visual output. Inherits from `AuditoryLayer` → `BaseLayer`.
 
 ```typescript
-$.addAudio(
-  properties: {
-    volume?: number; // 0-1 (default: 1)
-    pan?: number;    // -1 to 1 (default: 0)
+const music = $.addAudio(
+  {
+    volume: 1,                   // 0–1. Default: 1
+    pan: 0,                      // -1 to 1. Default: 0
+    pitch: 1,                    // Pitch multiplier. Default: 1
+    mute: false,                 // Default: false
   },
-  settings: {
-    source: string; // Audio URL (required)
-    // Plus common layer settings
+  {
+    source: './music.mp3',       // REQUIRED: URL or file path
+    startTime: 0,                // Default: 0
+    duration: '30s',             // Default: undefined
+    speed: 1,                    // Default: 1
+    trimStart: 0,                // Default: 0
   }
 );
 ```
 
-### addCaptions
+---
 
-Create a captions/subtitles layer.
+### addCaptions — captions / subtitles layer
+
+Displays timed caption entries from a pre-built array. Inherits from `TextualLayer` → `VisualLayer` → `BaseLayer`, so **all** typography and visual properties from `addText` also apply here.
 
 ```typescript
-$.addCaptions(
-  properties: {
-    fontSize?: number;
-    fontFamily?: string;
-    color?: string;
-    // Plus all visual properties
+const subs = $.addCaptions(
+  {
+    // --- Typography (same as addText, see TextualLayer properties above) ---
+    fontSize: 1.2,
+    fontFamily: 'Inter',
+    fontWeight: 700,
+    color: '#FFFFFF',
+    textStroke: true,            // Common for readable captions
+    textStrokeWidth: 4,
+    textStrokeColor: '#000000',
+
+    // --- Visual / transform ---
+    position: [0.5, 0.85],       // Centered horizontally, near bottom
+    // …plus everything from VisualLayer
   },
-  settings: {
-    captions: Array<{
-      caption: string;    // Text content
-      startTime: number;  // Start time in seconds
-      endTime: number;    // End time in seconds
-    }>;
-    maxCharsPerLine?: number; // Word wrap length
-    maxLines?: number; // Max lines per caption
-    duration?: string;
-    // Plus common layer settings
+  {
+    // --- CaptionsLayer-specific settings ---
+    captions: [
+      { caption: 'Hello world',   startTime: 0,   endTime: 2 },
+      { caption: 'From VideoFlow', startTime: 2,   endTime: 4 },
+    ],                           // REQUIRED. Times are in seconds.
+    maxCharsPerLine: 32,         // Wrap captions at this width. Default: 32
+    maxLines: 2,                 // Max simultaneous lines. Default: 2
+
+    // --- Common settings ---
+    startTime: 0,                // Default: 0
+    duration: '4s',              // Default: undefined
   }
 );
 ```
 
-## Visual Properties (All Layers)
+---
 
-Available on all visual layers (text, image, video, captions):
+## Visual Properties Reference
 
-### Position, Scale, Rotation & Anchor
+Every visual layer (text, image, video, captions) inherits the following from `VisualLayer`. All of these can be passed at creation or via `.set()` / `.animate()`. Most are animatable.
 
-These are the core transform properties. They use **normalized coordinates** — values from `0` to `1` represent relative positions within the canvas or element.
+### Transform — position, scale, rotation, anchor
+
+Transforms use **normalized 0–1 coordinates** — not pixels. `[0.5, 0.5]` is always the center.
 
 ```typescript
 layer.set({
-  // Position — [x, y] normalized to the canvas dimensions
-  // [0, 0] = top-left corner, [0.5, 0.5] = center, [1, 1] = bottom-right
-  position: [0.5, 0.5],  // default: centered
+  // Position of the anchor point within the canvas.
+  // [0, 0] = top-left, [0.5, 0.5] = center, [1, 1] = bottom-right.
+  // Third value (z) is in px for 3D depth. Animatable.
+  position: [0.5, 0.5],        // Default: [0.5, 0.5]
 
-  // Scale — multiplier relative to the element's natural size
-  // For images/videos: 1 = sized to fill the canvas width (respecting fit mode)
-  // For text: 1 = normal size, 2 = double size
-  // Can also be [x, y] or [x, y, z] for per-axis scaling
-  scale: 1,              // default: 1
+  // Scale multiplier relative to the element's natural size.
+  // Can be a number (uniform) or [x, y] / [x, y, z]. Animatable.
+  scale: 1,                    // Default: 1
 
-  // Rotation — in degrees, clockwise
-  // Can also be [x, y, z] for 3D rotation (rotateX, rotateY, rotateZ)
-  rotation: 0,           // default: 0
+  // Rotation in degrees, clockwise. Can be [x, y, z] for 3D rotation. Animatable.
+  rotation: 0,                 // Default: 0
 
-  // Anchor — [x, y] normalized to the element's own dimensions
-  // Determines the point around which the element is positioned, scaled, and rotated
-  // [0, 0] = top-left of element, [0.5, 0.5] = center, [1, 1] = bottom-right
-  anchor: [0.5, 0.5],   // default: centered
+  // Which point on the element maps to `position`.
+  // [0, 0] = top-left of element, [0.5, 0.5] = center, [1, 1] = bottom-right. Animatable.
+  anchor: [0.5, 0.5],          // Default: [0.5, 0.5]
 
-  // Perspective — distance from the viewer for 3D transforms, in pixels
-  perspective: 2000,     // default: 2000 (px)
+  // 3D perspective distance in px (how strong 3D rotations look). Animatable.
+  perspective: 2000,           // Default: 2000
 });
 ```
 
 **Position examples:**
 
 ```typescript
-layer.set({ position: [0.5, 0.5] });   // Centered (default)
+layer.set({ position: [0.5, 0.5] });   // Centered
 layer.set({ position: [0, 0] });       // Top-left corner
 layer.set({ position: [1, 1] });       // Bottom-right corner
-layer.set({ position: [0.5, 0.85] });  // Centered horizontally, near bottom (good for captions)
-layer.set({ position: [0.25, 0.5] });  // Left quarter, vertically centered
+layer.set({ position: [0.5, 0.85] });  // Bottom-center (good for captions)
 ```
 
-**Scale examples:**
+### Opacity & visibility
 
 ```typescript
-layer.set({ scale: 1 });               // Normal size (default)
-layer.set({ scale: 0.5 });             // Half size
-layer.set({ scale: 2 });               // Double size
-layer.set({ scale: [1.5, 1] });        // Stretched horizontally
+layer.animate(
+  { opacity: 0, visible: true },
+  { opacity: 1 },
+  { duration: '1s' }
+);
+// opacity: 0–1, default 1, animatable
+// visible: boolean, default true, NOT animatable (flips instantly)
 ```
 
-### Other Visual Properties
+### Background, border, border-radius
 
 ```typescript
-layer.animate({
-  // Opacity & Visibility
-  opacity?: number;             // 0–1, default 1
-  visible?: boolean;            // default true
-
-  // Background
-  backgroundColor?: string;     // Hex color, default 'transparent'
-
-  // Border
-  borderWidth?: number;         // Pixels, default 0
-  borderStyle?: string;         // CSS border style, default 'solid'
-  borderColor?: string;         // Hex color, default '#000000'
-  borderRadius?: number;        // Pixels (or %), default 0
-
-  // Box Shadow
-  boxShadow?: boolean;          // Enable/disable shadow
-  boxShadowColor?: string;      // Hex color, default '#000000'
-  boxShadowOffset?: [number, number]; // [x, y] in pixels, default [0, 0]
-  boxShadowBlur?: number;       // Pixels, default 0
-  boxShadowSpread?: number;     // Pixels, default 0
-
-  // Filters
-  filterBlur?: number;          // Pixels, default 0
-  filterBrightness?: number;    // Multiplier (1 = normal), default 1
-  filterContrast?: number;      // Multiplier (1 = normal), default 1
-  filterGrayscale?: number;     // 0–1, default 0
-  filterSepia?: number;         // 0–1, default 0
-  filterInvert?: number;        // 0–1, default 0
-  filterHueRotate?: number;     // Degrees, default 0
-  filterSaturate?: number;      // Multiplier (1 = normal), default 1
-}, {
-  duration: '1s',
-  easing?: 'linear' | 'easeIn' | 'easeOut' | 'easeInOut' | 'step',
+layer.set({
+  backgroundColor: 'transparent', // Default: 'transparent'. Animatable.
+  borderWidth: 0,                 // In px, or [top, right, bottom, left]. Default: 0. Animatable.
+  borderStyle: 'solid',           // 'none'|'solid'|'dashed'|'dotted'|'double'|'groove'|'ridge'|'inset'|'outset'. Default: 'solid'
+  borderColor: '#000000',         // Default: '#000000'. Animatable.
+  outerBorder: false,             // Draw border outside instead of inside. Default: false
+  borderRadius: 0,                // In px or %, or 4-corner array. Default: 0. Animatable.
 });
+```
+
+### Box shadow
+
+```typescript
+layer.set({
+  boxShadow: true,                // Must be true to render shadow. Default: false
+  boxShadowColor: '#000000',      // Default: '#000000'. Animatable.
+  boxShadowOffset: [0, 0],        // [x, y] in px. Default: [0, 0]. Animatable.
+  boxShadowBlur: 0,               // In px. Default: 0. Animatable.
+  boxShadowSpread: 0,             // In px. Default: 0. Animatable.
+});
+```
+
+### Outline
+
+```typescript
+layer.set({
+  outlineWidth: 0,                // In px. Default: 0. Animatable.
+  outlineStyle: 'none',           // Same enum as borderStyle. Default: 'none'
+  outlineColor: '#000000',        // Default: '#000000'. Animatable.
+  outlineOffset: 0,               // In px. Default: 0. Animatable.
+});
+```
+
+### Filters (CSS filter functions)
+
+All filters are animatable:
+
+```typescript
+layer.animate({ filterBlur: 0 }, { filterBlur: 20 }, { duration: '2s' });
+
+// filterBlur:       px,              default 0
+// filterBrightness: multiplier,      default 1 (>1 brighter, <1 darker)
+// filterContrast:   multiplier,      default 1
+// filterGrayscale:  0–1,             default 0
+// filterSepia:      0–1,             default 0
+// filterInvert:     0–1,             default 0
+// filterHueRotate:  degrees,         default 0
+// filterSaturate:   multiplier,      default 1
 ```
 
 ## Timeline Methods
