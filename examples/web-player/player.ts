@@ -66,6 +66,12 @@ async function loadExample(name: string) {
 
 		$status.textContent = 'Loading...';
 		renderer = new DomRenderer($player);
+		renderer.onFrame = () => {
+			if (!seeking) {
+				$seek.value = String(renderer!.currentFrame);
+				updateTimeDisplay();
+			}
+		};
 		await renderer.loadVideo(videoJSON);
 
 		$seek.max = String(renderer.totalFrames - 1);
@@ -95,12 +101,10 @@ async function togglePlayback() {
 	} else {
 		$btnPlay.textContent = 'Pause';
 		$btnPlay.classList.add('active');
-		await renderer.play((_event, data) => {
-			$fps.textContent = `${Math.min(60, Math.round(data))} fps`;
-			if (!seeking) {
-				$seek.value = String(renderer!.currentFrame);
-				updateTimeDisplay();
-			}
+		await renderer.play({
+			fpsCallback: (fps) => {
+				$fps.textContent = `${Math.min(60, Math.round(fps))} fps`;
+			},
 		});
 		$btnPlay.textContent = 'Play';
 		$btnPlay.classList.remove('active');
@@ -126,6 +130,15 @@ document.addEventListener('keydown', (e) => {
 	}
 });
 
+let wasPlayingBeforeSeek = false;
+
+$seek.addEventListener('pointerdown', () => {
+	if (!renderer) return;
+	seeking = true;
+	wasPlayingBeforeSeek = renderer.playing;
+	if (wasPlayingBeforeSeek) renderer.stop();
+});
+
 $seek.addEventListener('input', () => {
 	if (!renderer) return;
 	seeking = true;
@@ -133,7 +146,17 @@ $seek.addEventListener('input', () => {
 	updateTimeDisplay();
 });
 
-$seek.addEventListener('change', () => { seeking = false; });
+$seek.addEventListener('change', () => {
+	seeking = false;
+	if (wasPlayingBeforeSeek && renderer && !renderer.playing) {
+		wasPlayingBeforeSeek = false;
+		renderer.play({
+			fpsCallback: (fps) => {
+				$fps.textContent = `${Math.min(60, Math.round(fps))} fps`;
+			},
+		});
+	}
+});
 
 $select.addEventListener('change', () => { loadExample($select.value); });
 
