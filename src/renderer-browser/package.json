@@ -1,6 +1,6 @@
 {
   "name": "@videoflow/renderer-browser",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Browser-side video renderer for VideoFlow — renders JSON videos using SVG foreignObject + canvas + MediaBunny",
   "license": "Apache-2.0",
   "type": "module",
@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@videoflow/core": "^1.0.7",
+    "@videoflow/core": "^1.0.8",
     "mediabunny": "^1.40.0"
   },
   "devDependencies": {
