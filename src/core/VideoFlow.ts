@@ -495,22 +495,21 @@ export default class VideoFlow {
 	private async _resolveRendererModule(): Promise<any> {
 		const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
-		if (isBrowser) {
-			try {
-				return await import('@videoflow/renderer-browser' as string);
-			} catch {
-				throw new Error(
-					'Browser renderer not available. Install @videoflow/renderer-browser.'
-				);
-			}
-		} else {
-			try {
-				return await import('@videoflow/renderer-server' as string);
-			} catch {
-				throw new Error(
-					'Server renderer not available. Install @videoflow/renderer-server.'
-				);
-			}
+		// Build the package name at runtime so bundlers (Vite, webpack,
+		// esbuild, …) cannot statically analyse the dynamic import and try
+		// to resolve the "other" renderer the consumer hasn't installed.
+		// The /* @vite-ignore */ + /* webpackIgnore */ comments are belt-and-braces.
+		const pkg = isBrowser
+			? ['@videoflow', 'renderer-browser'].join('/')
+			: ['@videoflow', 'renderer-server'].join('/');
+		try {
+			return await import(/* @vite-ignore */ /* webpackIgnore: true */ pkg);
+		} catch {
+			throw new Error(
+				isBrowser
+					? 'Browser renderer not available. Install @videoflow/renderer-browser.'
+					: 'Server renderer not available. Install @videoflow/renderer-server.'
+			);
 		}
 	}
 
