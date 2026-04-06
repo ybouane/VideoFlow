@@ -7,7 +7,7 @@
  */
 
 export { default } from './BrowserRenderer.js';
-export { default as BrowserRenderer } from './BrowserRenderer.js';
+export { default as BrowserRenderer, RENDERER_CSS } from './BrowserRenderer.js';
 
 export {
 	createRuntimeLayer,

@@ -25,6 +25,7 @@
 import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
 import RENDERER_CSS from './renderer.css.js';
+export { RENDERER_CSS };
 import {
 	Output,
 	Mp4OutputFormat,
@@ -100,14 +101,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		this.$canvas.toggleAttribute('data-renderer', true);
 		this.$canvas.style.setProperty('--project-width', String(videoJSON.width));
 		this.$canvas.style.setProperty('--project-height', String(videoJSON.height));
-		this.$canvas.style.width = videoJSON.width + 'px';
-		this.$canvas.style.height = videoJSON.height + 'px';
-		this.$canvas.style.position = 'absolute';
-		this.$canvas.style.left = '-99999px';
-		this.$canvas.style.top = '-99999px';
-		this.$canvas.style.overflow = 'hidden';
-		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
-		document.body.appendChild(this.$canvas);
+		//document.body.appendChild(this.$canvas);
 
 		// Create runtime layers via the type registry
 		for (const layerJSON of videoJSON.layers) {
