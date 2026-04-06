@@ -23,7 +23,7 @@ const EXAMPLES: Record<string, () => any> = {
 };
 
 const $status = document.getElementById('status')!;
-const $player = document.getElementById('player-inner')!;
+const $player = document.getElementById('player')!;
 const $btnPlay = document.getElementById('btn-play') as HTMLButtonElement;
 const $btnStop = document.getElementById('btn-stop') as HTMLButtonElement;
 const $seek = document.getElementById('seek') as HTMLInputElement;

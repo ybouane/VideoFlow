@@ -38,11 +38,6 @@ h1 {
 	aspect-ratio: 16 / 9;
 	width: 100%;
 	overflow:hidden;
-	container-type: inline-size;
-	#player-inner {
-		transform:scale(calc(100cqw / 1920px));
-		transform-origin: top left;
-	}
 }
 
 .controls {
@@ -215,7 +210,7 @@ h1 {
 </div>
 
 <div id="player-container">
-	<div id="player"><div id="player-inner"></div></div>
+	<div id="player"></div>
 	<div class="controls">
 		<button id="btn-play">Play</button>
 		<button id="btn-stop">Stop</button>
