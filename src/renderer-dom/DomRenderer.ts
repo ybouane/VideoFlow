@@ -170,12 +170,8 @@ export default class DomRenderer implements ILayerRenderer {
 		// Create the canvas container
 		this.$canvas = document.createElement('div');
 		this.$canvas.toggleAttribute('data-renderer', true);
-		this.$canvas.style.setProperty('--project-width', String(videoJSON.width));
-		this.$canvas.style.setProperty('--project-height', String(videoJSON.height));
-		this.$canvas.style.width = videoJSON.width + 'px';
-		this.$canvas.style.height = videoJSON.height + 'px';
-		this.$canvas.style.position = 'relative';
-		this.$canvas.style.overflow = 'hidden';
+		this.$canvas.style.setProperty('--project-width-target', String(videoJSON.width));
+		this.$canvas.style.setProperty('--project-height-target', String(videoJSON.height));
 		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
 		this.shadow.appendChild(this.$canvas);
 
