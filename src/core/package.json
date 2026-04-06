@@ -1,9 +1,10 @@
 {
   "name": "@videoflow/core",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Core library for VideoFlow — data model, layers, flow API, and video JSON compilation",
   "license": "Apache-2.0",
   "type": "module",
+  "files": ["dist"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
