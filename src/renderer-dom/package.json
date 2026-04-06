@@ -1,6 +1,6 @@
 {
   "name": "@videoflow/renderer-dom",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "DOM-based live video renderer for VideoFlow — renders video frames directly to a DOM element using Shadow DOM",
   "license": "Apache-2.0",
   "type": "module",
@@ -17,8 +17,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@videoflow/core": "^1.0.5",
-    "@videoflow/renderer-browser": "^1.0.5"
+    "@videoflow/core": "^1.0.6",
+    "@videoflow/renderer-browser": "^1.0.6"
   },
   "devDependencies": {
     "typescript": "^5.7.0"
