@@ -62,6 +62,7 @@ async function loadExample(name: string) {
 		$status.textContent = 'Compiling...';
 		const $ = factory();
 		const videoJSON = await $.compile();
+		console.log('Compiled VideoJSON:', videoJSON);
 		currentVideoJSON = videoJSON;
 
 		$status.textContent = 'Loading...';
