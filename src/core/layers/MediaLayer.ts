@@ -43,7 +43,7 @@ export default class MediaLayer extends VisualLayer {
 	}
 
 	static get settingsKeys(): string[] {
-		return [...super.settingsKeys, 'source'];
+		return [...super.settingsKeys, 'source', 'durationMedia', 'trimEnd'];
 	}
 
 	static get defaultSettings(): Partial<MediaLayerSettings> {

@@ -35,6 +35,19 @@ export type BaseLayerSettings = {
 	duration?: Time;
 	speed?: number;
 	trimStart?: Time;
+	/**
+	 * Intrinsic length of the source media (video/audio only). When provided
+	 * the system uses it directly to derive `duration` (together with
+	 * `trimStart` and `trimEnd`); otherwise it can be auto-detected at compile
+	 * time when `autoDetectDurations` is enabled on the project.
+	 */
+	durationMedia?: Time;
+	/**
+	 * Trim N seconds (or other Time format) from the END of the source. This
+	 * is a convenience hint that gets resolved into `duration` as soon as
+	 * `durationMedia` is known. Default: `0`.
+	 */
+	trimEnd?: Time;
 };
 
 /** Properties shared by every layer type (empty at this level). */
@@ -102,6 +115,7 @@ export default class BaseLayer {
 			duration: undefined,
 			speed: 1,
 			trimStart: 0,
+			trimEnd: 0,
 		};
 	}
 

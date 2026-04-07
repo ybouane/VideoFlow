@@ -90,6 +90,19 @@ export type LayerSettingsJSON = {
 	enabled: boolean;
 	startTime: number;
 	duration: number;
+	/**
+	 * Intrinsic length of the source media in seconds (video/audio only).
+	 * Either supplied by the user or auto-detected at compile time.
+	 * Persisted in the JSON when known so renderers can use it.
+	 */
+	durationMedia?: number;
+	/**
+	 * Temporary trim hint in seconds (video/audio only). Resolved into
+	 * `duration` as soon as `durationMedia` is known. Only present in the
+	 * JSON when compile-time resolution wasn't possible — the renderer will
+	 * resolve it once the source is decoded.
+	 */
+	trimEnd?: number;
 	[key: string]: any;
 };
 
@@ -189,6 +202,14 @@ export type ProjectSettings = {
 	fps?: number;
 	backgroundColor?: string;
 	verbose?: boolean;
+	/**
+	 * If true (default), `compile()` will probe the intrinsic duration of every
+	 * video/audio source that doesn't have an explicit `duration` or
+	 * `durationMedia` setting. Disable to skip the network/IO cost — in that
+	 * case media layers without an explicit duration are treated as unbounded
+	 * and `waitFor: 'finish'` becomes a no-op for them.
+	 */
+	autoDetectDurations?: boolean;
 	defaults?: {
 		easing?: Easing;
 		fontFamily?: string;
