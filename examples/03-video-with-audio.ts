@@ -46,8 +46,7 @@ export function createProject() {
 	const video = $.addVideo(
 		{ fit: 'cover', volume: 1 },
 		{
-			source: 'sample.mp4',
-			duration: '10s',
+			source: 'sample.mp4'
 		},
 		{ waitFor: 'finish' },
 	);

@@ -164,6 +164,12 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Initialise each layer (fetch media, decode, extract metadata)
 		await Promise.all(this.layers.map(layer => layer.initialize()));
 
+		// Resolve any deferred trimEnd → duration now that intrinsic media
+		// durations are known. Must run before any frame is rendered.
+		for (const layer of this.layers) {
+			layer.resolveMediaTimings();
+		}
+
 		// Create DOM elements
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {

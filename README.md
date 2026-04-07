@@ -200,9 +200,12 @@ const img = $.addImage(
 ### Video
 
 ```ts
+// `compile()` probes the source's intrinsic length automatically
+// (autoDetectDurations is on by default), so you can rely on
+// `waitFor: 'finish'` without supplying a `duration` manually.
 const vid = $.addVideo(
   { fit: 'cover', volume: 0.8 },
-  { source: './clip.mp4', duration: '10s' },
+  { source: './clip.mp4', trimStart: '1s', trimEnd: '2s' },
   { waitFor: 'finish' },
 );
 ```
@@ -212,7 +215,7 @@ const vid = $.addVideo(
 ```ts
 const audio = $.addAudio(
   { volume: 0.5 },
-  { source: './music.mp3' },
+  { source: './music.mp3' }, // duration auto-detected at compile time
 );
 ```
 

@@ -218,3 +218,96 @@ export function createDeferred<T = void>(): Promise<T> & { resolve: (value: T) =
 export function delay(ms: number): Promise<void> {
 	return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+// ---------------------------------------------------------------------------
+//  Media metadata probing
+// ---------------------------------------------------------------------------
+
+/**
+ * Probe the intrinsic duration of a media source (in seconds).
+ *
+ * Environment-aware:
+ * - **Browser**: spins up a transient `<video>` or `<audio>` element, waits
+ *   for `loadedmetadata`, reads `.duration`, then disposes of the element.
+ * - **Node**: dynamically imports `child_process` and spawns `ffprobe -v error
+ *   -of json -show_format <source>`, parsing `format.duration` from the JSON.
+ *   Requires `ffprobe` to be installed and available on PATH (the same binary
+ *   `@videoflow/renderer-server` already depends on).
+ *
+ * Throws on any failure (missing binary, network error, decode failure).
+ * Callers should catch and decide whether to fall back to "unknown duration".
+ *
+ * @param source - URL or filesystem path to the media file.
+ * @param kind   - `'video'` or `'audio'` (only matters for the browser path).
+ */
+export async function probeMediaDuration(
+	source: string,
+	kind: 'video' | 'audio'
+): Promise<number> {
+	const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
+
+	if (isBrowser) {
+		return await new Promise<number>((resolve, reject) => {
+			const el = document.createElement(kind) as HTMLMediaElement;
+			el.preload = 'metadata';
+			el.muted = true;
+			(el as HTMLVideoElement).playsInline = true;
+			const cleanup = () => {
+				el.removeAttribute('src');
+				try { el.load(); } catch {}
+			};
+			el.onloadedmetadata = () => {
+				const d = el.duration;
+				cleanup();
+				if (Number.isFinite(d) && d > 0) resolve(d);
+				else reject(new Error(`probeMediaDuration: invalid duration for "${source}"`));
+			};
+			el.onerror = () => {
+				cleanup();
+				reject(new Error(`probeMediaDuration: failed to load "${source}"`));
+			};
+			el.src = source;
+		});
+	}
+
+	// Node path — ffprobe via child_process. Built at runtime so bundlers
+	// (Vite, webpack) cannot statically analyse the dynamic import.
+	const cpName = ['child', 'process'].join('_');
+	const { spawn } = await import(/* @vite-ignore */ /* webpackIgnore: true */ cpName);
+
+	return await new Promise<number>((resolve, reject) => {
+		let stdout = '';
+		let stderr = '';
+		let proc;
+		try {
+			proc = spawn('ffprobe', [
+				'-v', 'error',
+				'-of', 'json',
+				'-show_format',
+				source,
+			]);
+		} catch (e: any) {
+			reject(new Error(`probeMediaDuration: failed to spawn ffprobe (${e?.message ?? e})`));
+			return;
+		}
+		proc.stdout.on('data', (chunk: any) => { stdout += chunk.toString(); });
+		proc.stderr.on('data', (chunk: any) => { stderr += chunk.toString(); });
+		proc.on('error', (err: any) => {
+			reject(new Error(`probeMediaDuration: ffprobe error for "${source}": ${err?.message ?? err}`));
+		});
+		proc.on('close', (code: number) => {
+			if (code !== 0) {
+				reject(new Error(`probeMediaDuration: ffprobe exited ${code} for "${source}": ${stderr.trim()}`));
+				return;
+			}
+			try {
+				const parsed = JSON.parse(stdout);
+				const d = parseFloat(parsed?.format?.duration);
+				if (Number.isFinite(d) && d > 0) resolve(d);
+				else reject(new Error(`probeMediaDuration: no duration in ffprobe output for "${source}"`));
+			} catch (e: any) {
+				reject(new Error(`probeMediaDuration: failed to parse ffprobe JSON for "${source}": ${e?.message ?? e}`));
+			}
+		});
+	});
+}

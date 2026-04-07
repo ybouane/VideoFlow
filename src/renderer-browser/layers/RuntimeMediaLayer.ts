@@ -17,6 +17,10 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 	dataUrl: string | null = null;
 	dataBlob: Blob | null = null;
 
+	get intrinsicDuration(): number | undefined {
+		return this.duration > 0 ? this.duration : undefined;
+	}
+
 	async generateElement(): Promise<HTMLElement | null> {
 		if (this.$element) return this.$element;
 		this.$element = document.createElement('canvas');

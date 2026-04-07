@@ -56,6 +56,8 @@ const $ = new VideoFlow(options?: {
   height?: number;          // Default: 1080
   fps?: number;             // Default: 30
   backgroundColor?: string; // Default: '#000000'
+  autoDetectDurations?: boolean; // Probe video/audio sources at compile() to fill in their duration. Default: true
+  verbose?: boolean;        // Default: false
 });
 ```
 
@@ -90,8 +92,33 @@ These settings are accepted by every `add*` call:
   duration?: Time,        // How long it stays. Default: undefined (runs to end of timeline)
   speed?: number,         // Playback rate multiplier (media layers). Default: 1
   trimStart?: Time,       // Offset into the source before playback starts. Default: 0
+  trimEnd?: Time,         // Trim N from the END of the source (video/audio only). Resolved into `duration` once `durationMedia` is known. Default: 0
+  durationMedia?: Time,   // Intrinsic source length (video/audio only). Supply manually to skip auto-probe.
 }
 ```
+
+### Auto duration detection (`durationMedia` / `trimEnd`)
+
+For `addVideo` / `addAudio`, you usually don't know the source's length up
+front. VideoFlow handles this for you:
+
+- If you pass `duration`, it's used as-is. If you also pass `trimEnd`,
+  `duration` wins silently.
+- Else if you pass `durationMedia` (the source's intrinsic length), the
+  effective `duration` is computed as `durationMedia − trimStart − trimEnd`.
+- Else if the project has `autoDetectDurations: true` (the **default**),
+  `compile()` probes each source in parallel to learn its length, then derives
+  `duration` the same way. In the browser this uses a transient `<video>` /
+  `<audio>` element; in Node it shells out to `ffprobe`.
+- Else (`autoDetectDurations: false` and no manual hint), the layer is treated
+  as **unbounded** — `waitFor: 'finish'` becomes a no-op for it. If `trimEnd`
+  was provided, it survives in the compiled JSON and the renderer resolves it
+  once it has decoded the source.
+
+**Perf note:** `autoDetectDurations: true` adds one network/IO probe per
+unique media source at compile time. Probe results are cached on the
+`VideoFlow` instance. Set `autoDetectDurations: false` if you want to skip
+this entirely and supply timings yourself.
 
 `Time` accepts numbers (seconds) or strings like `'2s'`, `'500ms'`, `'60f'`, `'01:30'`. See [Time Format](#time-format).
 

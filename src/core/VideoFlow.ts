@@ -28,7 +28,7 @@ import type {
 	Time, Action, Easing, AddLayerOptions,
 	VideoJSON, ProjectSettings,
 } from './types.js';
-import { parseTime, timeToFrames } from './utils.js';
+import { parseTime, timeToFrames, probeMediaDuration } from './utils.js';
 
 import BaseLayer from './layers/BaseLayer.js';
 import TextLayer from './layers/TextLayer.js';
@@ -46,13 +46,14 @@ import type { CaptionsLayerProperties, CaptionsLayerSettings } from './layers/Ca
 //  Default project settings
 // ---------------------------------------------------------------------------
 
-const DEFAULT_SETTINGS: Required<Omit<ProjectSettings, 'verbose'>> & { verbose: boolean } = {
+const DEFAULT_SETTINGS: Required<ProjectSettings> = {
 	name: 'Untitled Video',
 	width: 1920,
 	height: 1080,
 	fps: 30,
 	backgroundColor: '#000000',
 	verbose: false,
+	autoDetectDurations: true,
 	defaults: {
 		easing: 'easeInOut',
 		fontFamily: 'Noto Sans',
@@ -65,7 +66,13 @@ const DEFAULT_SETTINGS: Required<Omit<ProjectSettings, 'verbose'>> & { verbose: 
 
 export default class VideoFlow {
 	/** Project settings (dimensions, fps, defaults). */
-	settings: Required<Omit<ProjectSettings, 'verbose'>> & { verbose: boolean };
+	settings: Required<ProjectSettings>;
+
+	/**
+	 * Cache of media-duration probes keyed by source URL/path.
+	 * Stores promises so concurrent compiles share the same in-flight probe.
+	 */
+	private mediaDurationCache = new Map<string, Promise<number>>();
 
 	/**
 	 * All layers created through the flow API.
@@ -242,10 +249,112 @@ export default class VideoFlow {
 			properties: Record<string, any[]>; // property → keyframe array
 			index: number;
 			layerObj: BaseLayer;
+			/** Intrinsic source duration in seconds, when known. */
+			durationMedia?: number;
+			/** Unresolved trimEnd in seconds (only when probe failed / disabled). */
+			trimEndUnresolved?: number;
 		};
 
 		const compiled: Map<string, CompiledLayer> = new Map();
 		const indexes: Record<string, number> = {};
+
+		// ------------------------------------------------------------------
+		//  Pre-pass: kick off duration probes for media layers in parallel
+		// ------------------------------------------------------------------
+		const collectMediaActions = (actions: Action[]): void => {
+			for (const action of actions) {
+				if (action.statement === 'parallel') {
+					for (const branch of action.actions) collectMediaActions(branch);
+				} else if (action.statement === 'addLayer') {
+					if (action.type !== 'video' && action.type !== 'audio') continue;
+					const s = action.settings || {};
+					if (s.duration != null) continue;
+					if (s.durationMedia != null) continue;
+					if (!this.settings.autoDetectDurations) continue;
+					const source = s.source;
+					if (!source || typeof source !== 'string') continue;
+					if (this.mediaDurationCache.has(source)) continue;
+					const kind = action.type === 'audio' ? 'audio' : 'video';
+					this.mediaDurationCache.set(
+						source,
+						probeMediaDuration(source, kind).catch((err) => {
+							if (this.settings.verbose) {
+								console.warn(`[VideoFlow] probeMediaDuration failed for "${source}":`, err?.message ?? err);
+							}
+							return NaN;
+						})
+					);
+				}
+			}
+		};
+		collectMediaActions(this.flow);
+
+		/**
+		 * Resolve duration / durationMedia / trimEnd for an addLayer action.
+		 * Returns frames-based values that the action loop can apply directly.
+		 */
+		const resolveMediaTimings = async (
+			action: Extract<Action, { statement: 'addLayer' }>
+		): Promise<{
+			durationFrames: number | null;
+			durationMediaSec: number | undefined;
+			trimEndUnresolvedSec: number | undefined;
+		}> => {
+			const isMedia = action.type === 'video' || action.type === 'audio';
+			const s = action.settings || {};
+			const trimStartSec = s.trimStart != null ? parseTime(s.trimStart, fps) : 0;
+			const trimEndSec = s.trimEnd != null ? parseTime(s.trimEnd, fps) : 0;
+
+			// 1. Explicit duration always wins (silently overrides trimEnd).
+			if (s.duration != null) {
+				let durationMediaSec: number | undefined;
+				if (s.durationMedia != null) {
+					durationMediaSec = parseTime(s.durationMedia, fps);
+				}
+				return {
+					durationFrames: timeToFrames(s.duration, fps),
+					durationMediaSec,
+					trimEndUnresolvedSec: undefined,
+				};
+			}
+
+			if (!isMedia) {
+				return { durationFrames: null, durationMediaSec: undefined, trimEndUnresolvedSec: undefined };
+			}
+
+			// 2. Explicit durationMedia.
+			if (s.durationMedia != null) {
+				const dm = parseTime(s.durationMedia, fps);
+				const dur = Math.max(0, dm - trimStartSec - trimEndSec);
+				return {
+					durationFrames: Math.round(dur * fps),
+					durationMediaSec: dm,
+					trimEndUnresolvedSec: undefined,
+				};
+			}
+
+			// 3. Probe (if enabled and source available).
+			const source = typeof s.source === 'string' ? s.source : undefined;
+			if (source && this.mediaDurationCache.has(source)) {
+				const probed = await this.mediaDurationCache.get(source)!;
+				if (Number.isFinite(probed) && probed > 0) {
+					const dur = Math.max(0, probed - trimStartSec - trimEndSec);
+					return {
+						durationFrames: Math.round(dur * fps),
+						durationMediaSec: probed,
+						trimEndUnresolvedSec: undefined,
+					};
+				}
+			}
+
+			// 4. Unbounded — leave duration unknown. If user passed trimEnd we keep
+			//    it in the JSON for the renderer to resolve later.
+			return {
+				durationFrames: null,
+				durationMediaSec: undefined,
+				trimEndUnresolvedSec: s.trimEnd != null ? trimEndSec : undefined,
+			};
+		};
 
 		/**
 		 * Parse a series of flow actions, advancing the time pointer `t`.
@@ -278,9 +387,10 @@ export default class VideoFlow {
 							startTime = timeToFrames(action.settings.startTime, fps) - trimStart;
 						}
 
+						const timings = await resolveMediaTimings(action);
 						let endTime: number | false = false;
-						if (action.settings?.duration != null) {
-							endTime = t + timeToFrames(action.settings.duration, fps);
+						if (timings.durationFrames != null) {
+							endTime = t + timings.durationFrames;
 						}
 
 						const comp: CompiledLayer = {
@@ -296,6 +406,8 @@ export default class VideoFlow {
 							properties: {},
 							index: action.options?.index ?? 0,
 							layerObj,
+							durationMedia: timings.durationMediaSec,
+							trimEndUnresolved: timings.trimEndUnresolvedSec,
 						};
 						compiled.set(action.id, comp);
 						indexes[action.id] = action.options?.index ?? 0;
@@ -441,9 +553,13 @@ export default class VideoFlow {
 					...(comp.name ? { name: comp.name } : {}),
 					...(comp.speed !== 1 ? { speed: comp.speed } : {}),
 					...(comp.trimStart > 0 ? { trimStart: comp.trimStart / fps } : {}),
+					...(comp.durationMedia != null ? { durationMedia: comp.durationMedia } : {}),
+					...(comp.trimEndUnresolved != null ? { trimEnd: comp.trimEndUnresolved } : {}),
 					// Include layer-type-specific settings via settingsKeys
+					// (durationMedia / trimEnd are handled explicitly above)
 					...Object.fromEntries(
 						((comp.layerObj.constructor as typeof BaseLayer).settingsKeys ?? [])
+							.filter(key => key !== 'durationMedia' && key !== 'trimEnd')
 							.filter(key => comp.settings?.[key] != null)
 							.map(key => [key, comp.settings[key]])
 					),

@@ -322,6 +322,32 @@ export default class RuntimeBaseLayer {
 	async initialize(): Promise<void> {}
 
 	/**
+	 * Intrinsic source duration in seconds, when known by this runtime layer.
+	 * Subclasses (RuntimeMediaLayer / RuntimeAudioLayer) override.
+	 */
+	get intrinsicDuration(): number | undefined {
+		return undefined;
+	}
+
+	/**
+	 * Resolve a deferred `trimEnd` setting into a concrete `duration` once the
+	 * runtime layer's intrinsic media duration is known. Called by the renderer
+	 * after `initialize()` and before any frame is rendered. No-op when there is
+	 * no `trimEnd` to resolve, or when the intrinsic duration is unknown.
+	 */
+	resolveMediaTimings(): void {
+		const s = this.json.settings as any;
+		if (s.trimEnd == null) return;
+		const intrinsic = this.intrinsicDuration;
+		if (intrinsic == null || !Number.isFinite(intrinsic) || intrinsic <= 0) return;
+		const trimStart = s.trimStart ?? 0;
+		const duration = Math.max(0, intrinsic - trimStart - s.trimEnd);
+		s.duration = duration;
+		s.durationMedia = intrinsic;
+		delete s.trimEnd;
+	}
+
+	/**
 	 * Create the DOM element for this layer.
 	 *
 	 * Uses the static elementTag from the constructor and sets data-element and
