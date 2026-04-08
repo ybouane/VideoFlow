@@ -55,8 +55,11 @@ export type AddLayerOptions = {
 /**
  * An animation keyframe.
  *
- * The `time` field is always in *seconds* in the public JSON model, but
- * internally it is converted to frames once the project compiles.
+ * The `time` field is always in *seconds*, expressed in **source media time**
+ * (i.e. an absolute position inside the source clip, measured from the start
+ * of the source). For non-media layers (text, captions, …) source time
+ * collapses to "elapsed seconds since the layer started" because there is no
+ * external source.
  */
 export type Keyframe = {
 	time: number;
@@ -83,26 +86,45 @@ export type Animation = {
 /**
  * Settings block for a layer inside the compiled JSON.
  *
+ * VideoFlow distinguishes three time contexts:
+ *
+ * 1. **Source media time** — absolute time inside the source clip
+ *    (`[0, mediaDuration]`). `sourceStart`, `sourceEnd`, `mediaDuration` and
+ *    keyframe `time` values all live here.
+ * 2. **Source segment time** — time within the playable segment
+ *    (`[0, sourceDuration]`). Derived as `sourceTime − sourceStart`.
+ * 3. **Timeline time** — wall-clock time on the project timeline
+ *    (`[0, projectDuration]`). `startTime`, `endTime` and the playback head
+ *    live here.
+ *
+ * `speed` stretches the segment in the timeline:
+ * `timelineDuration = sourceDuration / speed`. So `speed = 2` plays the
+ * segment twice as fast and occupies half as much timeline.
+ *
  * Different layer types extend this with additional keys (e.g. `source` for
  * media layers, `captions` for the captions layer).
  */
 export type LayerSettingsJSON = {
 	enabled: boolean;
+	/** Timeline-time (seconds) at which the playable segment starts. */
 	startTime: number;
-	duration: number;
+	/** Length of the playable segment expressed in **source seconds**. */
+	sourceDuration: number;
+	/** Offset (source seconds) into the source where the playable segment begins. */
+	sourceStart?: number;
 	/**
 	 * Intrinsic length of the source media in seconds (video/audio only).
 	 * Either supplied by the user or auto-detected at compile time.
 	 * Persisted in the JSON when known so renderers can use it.
 	 */
-	durationMedia?: number;
+	mediaDuration?: number;
 	/**
 	 * Temporary trim hint in seconds (video/audio only). Resolved into
-	 * `duration` as soon as `durationMedia` is known. Only present in the
-	 * JSON when compile-time resolution wasn't possible — the renderer will
-	 * resolve it once the source is decoded.
+	 * `sourceDuration` as soon as `mediaDuration` is known. Only present in
+	 * the JSON when compile-time resolution wasn't possible — the renderer
+	 * will resolve it once the source is decoded.
 	 */
-	trimEnd?: number;
+	sourceEnd?: number;
 	[key: string]: any;
 };
 
@@ -204,8 +226,8 @@ export type ProjectSettings = {
 	verbose?: boolean;
 	/**
 	 * If true (default), `compile()` will probe the intrinsic duration of every
-	 * video/audio source that doesn't have an explicit `duration` or
-	 * `durationMedia` setting. Disable to skip the network/IO cost — in that
+	 * video/audio source that doesn't have an explicit `sourceDuration` or
+	 * `mediaDuration` setting. Disable to skip the network/IO cost — in that
 	 * case media layers without an explicit duration are treated as unbounded
 	 * and `waitFor: 'finish'` becomes a no-op for them.
 	 */

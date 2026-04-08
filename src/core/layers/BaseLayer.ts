@@ -3,13 +3,19 @@
  *
  * Every layer type ultimately extends BaseLayer, which provides:
  * - A unique `id` (UUID v4)
- * - Common settings (enabled, startTime, duration, speed, trimStart)
+ * - Common settings (enabled, startTime, sourceDuration, speed, sourceStart)
  * - A property system with keyframe animation support
  * - Time ↔ frame conversions via the project's fps
  * - Serialisation to/from the VideoFlow JSON model
  *
- * Adapts the layer model to VideoFlow's time-in-seconds API with internal
- * frame-based processing.
+ * VideoFlow distinguishes three time contexts:
+ * 1. **Source media time** — absolute time inside the source clip
+ * 2. **Source segment time** — time within the playable segment (sourceTime − sourceStart)
+ * 3. **Timeline time** — time on the project timeline
+ *
+ * `startTime` lives on the timeline; `sourceStart`/`sourceEnd`/`sourceDuration`
+ * live in source time; `speed` stretches the segment in the timeline so that
+ * `timelineDuration = sourceDuration / speed`.
  */
 
 import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON } from '../types.js';
@@ -31,23 +37,40 @@ function createLayerId(): Id {
 export type BaseLayerSettings = {
 	name?: string;
 	enabled?: boolean;
+	/**
+	 * Timeline-time at which the playable segment starts. The visible
+	 * (already-trimmed) segment begins at exactly this point — `startTime`
+	 * does NOT compensate for `sourceStart`.
+	 */
 	startTime?: Time;
-	duration?: Time;
+	/**
+	 * Length of the playable segment, expressed in **source seconds**.
+	 * The actual timeline footprint is `sourceDuration / speed`.
+	 */
+	sourceDuration?: Time;
+	/**
+	 * Time-stretch factor applied at the timeline level. Higher = faster.
+	 * `timelineDuration = sourceDuration / speed`.
+	 */
 	speed?: number;
-	trimStart?: Time;
+	/**
+	 * Offset (in source-time) into the source where the playable segment
+	 * begins. Default: `0`.
+	 */
+	sourceStart?: Time;
 	/**
 	 * Intrinsic length of the source media (video/audio only). When provided
-	 * the system uses it directly to derive `duration` (together with
-	 * `trimStart` and `trimEnd`); otherwise it can be auto-detected at compile
-	 * time when `autoDetectDurations` is enabled on the project.
+	 * the system uses it directly to derive `sourceDuration` (together with
+	 * `sourceStart` and `sourceEnd`); otherwise it can be auto-detected at
+	 * compile time when `autoDetectDurations` is enabled on the project.
 	 */
-	durationMedia?: Time;
+	mediaDuration?: Time;
 	/**
 	 * Trim N seconds (or other Time format) from the END of the source. This
-	 * is a convenience hint that gets resolved into `duration` as soon as
-	 * `durationMedia` is known. Default: `0`.
+	 * is a convenience hint that gets resolved into `sourceDuration` as soon
+	 * as `mediaDuration` is known. Default: `0`.
 	 */
-	trimEnd?: Time;
+	sourceEnd?: Time;
 };
 
 /** Properties shared by every layer type (empty at this level). */
@@ -112,10 +135,10 @@ export default class BaseLayer {
 		return {
 			enabled: true,
 			startTime: 0,
-			duration: undefined,
+			sourceDuration: undefined,
 			speed: 1,
-			trimStart: 0,
-			trimEnd: 0,
+			sourceStart: 0,
+			sourceEnd: 0,
 		};
 	}
 
@@ -141,45 +164,53 @@ export default class BaseLayer {
 	}
 
 	// -----------------------------------------------------------------------
-	//  Frame getters — convert time-based settings into frame numbers
+	//  Time getters — derived values useful for inspection
 	// -----------------------------------------------------------------------
 
-	/** The frame at which this layer starts (after accounting for trimStart). */
+	/** Timeline-time (frames) at which the playable segment starts. */
 	get startFrame(): number {
-		return timeToFrames(this.settings.startTime ?? 0, this.fps) +
-		       timeToFrames(this.settings.trimStart ?? 0, this.fps);
-	}
-
-	/** The frame at which this layer ends. */
-	get endFrame(): number {
-		const start = timeToFrames(this.settings.startTime ?? 0, this.fps);
-		const dur = this.settings.duration != null
-			? timeToFrames(this.settings.duration, this.fps)
-			: 0;
-		return start + dur;
-	}
-
-	/** The raw start time in frames (before trim). */
-	get startTimeFrames(): number {
 		return timeToFrames(this.settings.startTime ?? 0, this.fps);
 	}
 
-	/** Trim offset in frames. */
-	get trimStartFrames(): number {
-		return timeToFrames(this.settings.trimStart ?? 0, this.fps);
+	/** Source-time offset (frames) into the source where the segment begins. */
+	get sourceStartFrames(): number {
+		return timeToFrames(this.settings.sourceStart ?? 0, this.fps);
 	}
 
-	/** Duration of this layer in frames. */
-	get durationFrames(): number {
-		if (this.settings.duration != null) {
-			return timeToFrames(this.settings.duration, this.fps);
+	/** Length of the playable segment expressed in source-time frames. */
+	get sourceDurationFrames(): number {
+		if (this.settings.sourceDuration != null) {
+			return timeToFrames(this.settings.sourceDuration, this.fps);
 		}
 		return 0;
 	}
 
-	/** Duration of the layer visible in the timeline (after trim & speed). */
-	get actualDuration(): number {
-		return this.endFrame - this.startFrame;
+	/**
+	 * Length of the layer's footprint on the timeline, in seconds.
+	 * `timelineDuration = sourceDuration / |speed|`.
+	 */
+	get timelineDuration(): number {
+		const speed = Math.abs(this.settings.speed ?? 1);
+		if (speed === 0) return 0;
+		const sourceDur = this.settings.sourceDuration != null
+			? parseTime(this.settings.sourceDuration, this.fps)
+			: 0;
+		return sourceDur / speed;
+	}
+
+	/** Length of the layer's footprint on the timeline, in frames. */
+	get timelineDurationFrames(): number {
+		return Math.round(this.timelineDuration * this.fps);
+	}
+
+	/** Timeline-time (frames) at which the layer's footprint ends. */
+	get endFrame(): number {
+		return this.startFrame + this.timelineDurationFrames;
+	}
+
+	/** Timeline-time (seconds) at which the layer's footprint ends. */
+	get endTime(): number {
+		return parseTime(this.settings.startTime ?? 0, this.fps) + this.timelineDuration;
 	}
 
 	// -----------------------------------------------------------------------
@@ -298,9 +329,10 @@ export default class BaseLayer {
 		}
 
 		const startTimeSec = parseTime(this.settings.startTime ?? 0, this.fps);
-		const durationSec = this.settings.duration != null
-			? parseTime(this.settings.duration, this.fps)
+		const sourceDurationSec = this.settings.sourceDuration != null
+			? parseTime(this.settings.sourceDuration, this.fps)
 			: 0;
+		const sourceStartSec = parseTime(this.settings.sourceStart ?? 0, this.fps);
 
 		return {
 			id: this.id,
@@ -308,10 +340,10 @@ export default class BaseLayer {
 			settings: {
 				enabled: this.settings.enabled ?? true,
 				startTime: startTimeSec,
-				duration: durationSec,
+				sourceDuration: sourceDurationSec,
 				...(this.settings.name ? { name: this.settings.name } : {}),
 				...(this.settings.speed !== undefined && this.settings.speed !== 1 ? { speed: this.settings.speed } : {}),
-				...(parseTime(this.settings.trimStart ?? 0, this.fps) > 0 ? { trimStart: parseTime(this.settings.trimStart ?? 0, this.fps) } : {}),
+				...(sourceStartSec > 0 ? { sourceStart: sourceStartSec } : {}),
 			},
 			properties: staticProps,
 			animations,

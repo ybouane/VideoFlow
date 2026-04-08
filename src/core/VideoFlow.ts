@@ -241,26 +241,30 @@ export default class VideoFlow {
 
 		/**
 		 * Internal representation of a compiled layer.
-		 * Maintains the layer's settings, properties (as keyframe arrays),
-		 * and tracks the add-order index for z-ordering.
+		 *
+		 * `startTimeFrames` / `endTimeFrames` are timeline-time frames; the
+		 * delta between them is `timelineDuration * fps`. Source-time fields
+		 * (`sourceStartSec`) live in source-seconds. Keyframes are stored on
+		 * `properties[prop][i].time` in **source seconds** (absolute position
+		 * inside the source media).
 		 */
 		type CompiledLayer = {
 			id: string;
 			type: string;
-			startTime: number;   // frames
-			endTime: number | false; // frames, or false if unbounded
+			startTimeFrames: number;        // timeline frames
+			endTimeFrames: number | false;  // timeline frames, false = unbounded
 			speed: number;
-			trimStart: number;   // frames
+			sourceStartSec: number;         // source seconds
 			name?: string;
 			enabled: boolean;
 			settings: Record<string, any>; // raw settings passed by user
-			properties: Record<string, any[]>; // property → keyframe array
+			properties: Record<string, any[]>; // property → keyframe array (kf.time in source sec)
 			index: number;
 			layerObj: BaseLayer;
 			/** Intrinsic source duration in seconds, when known. */
-			durationMedia?: number;
-			/** Unresolved trimEnd in seconds (only when probe failed / disabled). */
-			trimEndUnresolved?: number;
+			mediaDurationSec?: number;
+			/** Unresolved sourceEnd in seconds (only when probe failed / disabled). */
+			sourceEndUnresolvedSec?: number;
 		};
 
 		const compiled: Map<string, CompiledLayer> = new Map();
@@ -279,8 +283,8 @@ export default class VideoFlow {
 				} else if (action.statement === 'addLayer') {
 					if (action.type !== 'video' && action.type !== 'audio') continue;
 					const s = action.settings || {};
-					if (s.duration != null) continue;
-					if (s.durationMedia != null) continue;
+					if (s.sourceDuration != null) continue;
+					if (s.mediaDuration != null) continue;
 					if (!this.settings.autoDetectDurations) continue;
 					const source = s.source;
 					if (!source || typeof source !== 'string') continue;
@@ -308,46 +312,46 @@ export default class VideoFlow {
 		collectMediaActions(this.flow);
 
 		/**
-		 * Resolve duration / durationMedia / trimEnd for an addLayer action.
-		 * Returns frames-based values that the action loop can apply directly.
+		 * Resolve sourceDuration / mediaDuration / sourceEnd for an addLayer
+		 * action. Returns source-time values (in seconds).
 		 */
 		const resolveMediaTimings = async (
 			action: Extract<Action, { statement: 'addLayer' }>
 		): Promise<{
-			durationFrames: number | null;
-			durationMediaSec: number | undefined;
-			trimEndUnresolvedSec: number | undefined;
+			sourceDurationSec: number | null;
+			mediaDurationSec: number | undefined;
+			sourceEndUnresolvedSec: number | undefined;
 		}> => {
 			const isMedia = action.type === 'video' || action.type === 'audio';
 			const s = action.settings || {};
-			const trimStartSec = s.trimStart != null ? parseTime(s.trimStart, fps) : 0;
-			const trimEndSec = s.trimEnd != null ? parseTime(s.trimEnd, fps) : 0;
+			const sourceStartSec = s.sourceStart != null ? parseTime(s.sourceStart, fps) : 0;
+			const sourceEndSec = s.sourceEnd != null ? parseTime(s.sourceEnd, fps) : 0;
 
-			// 1. Explicit duration always wins (silently overrides trimEnd).
-			if (s.duration != null) {
-				let durationMediaSec: number | undefined;
-				if (s.durationMedia != null) {
-					durationMediaSec = parseTime(s.durationMedia, fps);
+			// 1. Explicit sourceDuration always wins (silently overrides sourceEnd).
+			if (s.sourceDuration != null) {
+				let mediaDurationSec: number | undefined;
+				if (s.mediaDuration != null) {
+					mediaDurationSec = parseTime(s.mediaDuration, fps);
 				}
 				return {
-					durationFrames: timeToFrames(s.duration, fps),
-					durationMediaSec,
-					trimEndUnresolvedSec: undefined,
+					sourceDurationSec: parseTime(s.sourceDuration, fps),
+					mediaDurationSec,
+					sourceEndUnresolvedSec: undefined,
 				};
 			}
 
 			if (!isMedia) {
-				return { durationFrames: null, durationMediaSec: undefined, trimEndUnresolvedSec: undefined };
+				return { sourceDurationSec: null, mediaDurationSec: undefined, sourceEndUnresolvedSec: undefined };
 			}
 
-			// 2. Explicit durationMedia.
-			if (s.durationMedia != null) {
-				const dm = parseTime(s.durationMedia, fps);
-				const dur = Math.max(0, dm - trimStartSec - trimEndSec);
+			// 2. Explicit mediaDuration.
+			if (s.mediaDuration != null) {
+				const dm = parseTime(s.mediaDuration, fps);
+				const dur = Math.max(0, dm - sourceStartSec - sourceEndSec);
 				return {
-					durationFrames: Math.round(dur * fps),
-					durationMediaSec: dm,
-					trimEndUnresolvedSec: undefined,
+					sourceDurationSec: dur,
+					mediaDurationSec: dm,
+					sourceEndUnresolvedSec: undefined,
 				};
 			}
 
@@ -370,22 +374,46 @@ export default class VideoFlow {
 					} catch { /* ignore */ }
 				}
 				if (Number.isFinite(probed) && probed > 0) {
-					const dur = Math.max(0, probed - trimStartSec - trimEndSec);
+					const dur = Math.max(0, probed - sourceStartSec - sourceEndSec);
 					return {
-						durationFrames: Math.round(dur * fps),
-						durationMediaSec: probed,
-						trimEndUnresolvedSec: undefined,
+						sourceDurationSec: dur,
+						mediaDurationSec: probed,
+						sourceEndUnresolvedSec: undefined,
 					};
 				}
 			}
 
-			// 4. Unbounded — leave duration unknown. If user passed trimEnd we keep
+			// 4. Unbounded — leave duration unknown. If user passed sourceEnd we keep
 			//    it in the JSON for the renderer to resolve later.
 			return {
-				durationFrames: null,
-				durationMediaSec: undefined,
-				trimEndUnresolvedSec: s.trimEnd != null ? trimEndSec : undefined,
+				sourceDurationSec: null,
+				mediaDurationSec: undefined,
+				sourceEndUnresolvedSec: s.sourceEnd != null ? sourceEndSec : undefined,
 			};
+		};
+
+		/**
+		 * Convert a flow-time pointer (timeline frames) into the matching
+		 * source-time (seconds) for the given compiled layer. Used to anchor
+		 * keyframes — keyframes are always stored in **source seconds** so
+		 * the renderer can look them up directly without needing to know the
+		 * timeline at lookup time.
+		 */
+		const flowFrameToSourceSec = (comp: CompiledLayer, t: number): number => {
+			const elapsedTimelineSec = (t - comp.startTimeFrames) / fps;
+			const speedAbs = Math.abs(comp.speed);
+			const elapsedSegmentSec = elapsedTimelineSec * speedAbs;
+			if (comp.speed < 0) {
+				// Reverse playback — source position runs from end → start.
+				// `sourceDurationSec` is only known once the layer's
+				// endTimeFrames is set; for unbounded layers we fall back to 0
+				// (i.e. treat reverse-without-known-duration as forward).
+				const sourceDurationSec = comp.endTimeFrames !== false
+					? ((comp.endTimeFrames - comp.startTimeFrames) / fps) * speedAbs
+					: 0;
+				return comp.sourceStartSec + sourceDurationSec - elapsedSegmentSec;
+			}
+			return comp.sourceStartSec + elapsedSegmentSec;
 		};
 
 		/**
@@ -412,50 +440,62 @@ export default class VideoFlow {
 						const layerObj = this.layers.find(l => l.id === action.id);
 						if (!layerObj) throw new Error(`Layer ${action.id} not found`);
 
-						const trimStart = action.settings?.trimStart != null
-							? timeToFrames(action.settings.trimStart, fps) : 0;
-						let startTime = t - trimStart;
+						const sourceStartSec = action.settings?.sourceStart != null
+							? parseTime(action.settings.sourceStart, fps) : 0;
+						const speed = action.settings?.speed ?? 1;
+						const speedAbs = Math.abs(speed) || 1;
+
+						// New semantics: startTime is the timeline-time at which
+						// the (already-trimmed) playable segment starts. It does
+						// NOT compensate for sourceStart.
+						let startTimeFrames: number;
 						if (action.settings?.startTime != null) {
-							startTime = timeToFrames(action.settings.startTime, fps) - trimStart;
+							startTimeFrames = timeToFrames(action.settings.startTime, fps);
+						} else {
+							startTimeFrames = t;
 						}
 
 						const timings = await resolveMediaTimings(action);
-						let endTime: number | false = false;
-						if (timings.durationFrames != null) {
-							endTime = t + timings.durationFrames;
+						let endTimeFrames: number | false = false;
+						if (timings.sourceDurationSec != null) {
+							const timelineDurFrames = Math.round(
+								(timings.sourceDurationSec / speedAbs) * fps
+							);
+							endTimeFrames = startTimeFrames + timelineDurFrames;
 						}
 
 						const comp: CompiledLayer = {
 							id: action.id,
 							type: action.type,
-							startTime,
-							endTime,
-							speed: action.settings?.speed ?? 1,
-							trimStart,
+							startTimeFrames,
+							endTimeFrames,
+							speed,
+							sourceStartSec,
 							name: action.settings?.name,
 							enabled: action.settings?.enabled ?? true,
 							settings: action.settings,
 							properties: {},
 							index: action.options?.index ?? 0,
 							layerObj,
-							durationMedia: timings.durationMediaSec,
-							trimEndUnresolved: timings.trimEndUnresolvedSec,
+							mediaDurationSec: timings.mediaDurationSec,
+							sourceEndUnresolvedSec: timings.sourceEndUnresolvedSec,
 						};
 						compiled.set(action.id, comp);
 						indexes[action.id] = action.options?.index ?? 0;
 
-						// Set initial properties from the action
+						// Initial properties → keyframe at sourceStart (i.e. the
+						// source-time at which the segment starts playing).
 						if (action.properties) {
 							for (const [prop, value] of Object.entries(action.properties)) {
-								comp.properties[prop] = [{ time: 0, value, easing: 'step' as Easing }];
+								comp.properties[prop] = [{ time: sourceStartSec, value, easing: 'step' as Easing }];
 							}
 						}
 
 						// Handle waitFor
 						if (action.options?.waitFor) {
 							if (action.options.waitFor === 'finish') {
-								if (endTime !== false) {
-									t = endTime;
+								if (endTimeFrames !== false) {
+									t = endTimeFrames;
 								}
 								// else the layer has no known end, don't advance
 							} else {
@@ -468,24 +508,24 @@ export default class VideoFlow {
 					case 'removeLayer': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						if (comp.endTime !== false && comp.endTime < t) {
-							throw new Error(`Layer ${action.id} already ended at frame ${comp.endTime}`);
+						if (comp.endTimeFrames !== false && comp.endTimeFrames < t) {
+							throw new Error(`Layer ${action.id} already ended at frame ${comp.endTimeFrames}`);
 						}
-						comp.endTime = t;
+						comp.endTimeFrames = t;
 						break;
 					}
 
 					case 'set': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						const relativeTime = t - (comp.startTime || 0);
+						const sourceTimeSec = flowFrameToSourceSec(comp, t);
 						for (const [prop, value] of Object.entries(action.value)) {
 							if (!comp.properties[prop]) {
 								comp.properties[prop] = [];
 							}
 							// Remove any existing keyframe at this exact time
-							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== relativeTime);
-							comp.properties[prop].push({ time: relativeTime, value, easing: 'step' as Easing });
+							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== sourceTimeSec);
+							comp.properties[prop].push({ time: sourceTimeSec, value, easing: 'step' as Easing });
 							comp.properties[prop].sort((a: any, b: any) => a.time - b.time);
 						}
 						break;
@@ -494,8 +534,13 @@ export default class VideoFlow {
 					case 'animate': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						const relativeTime = t - (comp.startTime || 0);
-						const duration = timeToFrames(action.settings?.duration ?? '1s', fps);
+						const startSourceTimeSec = flowFrameToSourceSec(comp, t);
+						const animTimelineFrames = timeToFrames(action.settings?.duration ?? '1s', fps);
+						const speedAbs = Math.abs(comp.speed) || 1;
+						// `duration` from animate() is timeline seconds. Convert
+						// to source seconds via the speed factor so the kf.time
+						// span lines up with what the renderer will see.
+						const animSourceSec = (animTimelineFrames / fps) * speedAbs;
 						const easing: Easing = action.settings?.easing || this.settings.defaults?.easing || 'easeInOut';
 
 						const allProps = [...new Set([
@@ -507,23 +552,26 @@ export default class VideoFlow {
 							if (!comp.properties[prop]) {
 								comp.properties[prop] = [];
 							}
-							const fromVal = action.from[prop] ?? this._getLastValue(comp.properties[prop], relativeTime, prop, comp.layerObj);
+							const fromVal = action.from[prop] ?? this._getLastValue(comp.properties[prop], startSourceTimeSec, prop, comp.layerObj);
 							const toVal = action.to[prop] ?? fromVal;
 
 							// Add start keyframe
-							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== relativeTime);
-							comp.properties[prop].push({ time: relativeTime, value: fromVal, easing });
+							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== startSourceTimeSec);
+							comp.properties[prop].push({ time: startSourceTimeSec, value: fromVal, easing });
 
-							// Add end keyframe
-							const endTime = relativeTime + duration;
-							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== endTime);
-							comp.properties[prop].push({ time: endTime, value: toVal, easing: 'step' as Easing });
+							// Add end keyframe — for reverse playback, source
+							// time runs backward, so subtract instead of add.
+							const endSourceTimeSec = comp.speed < 0
+								? startSourceTimeSec - animSourceSec
+								: startSourceTimeSec + animSourceSec;
+							comp.properties[prop] = comp.properties[prop].filter((kf: any) => kf.time !== endSourceTimeSec);
+							comp.properties[prop].push({ time: endSourceTimeSec, value: toVal, easing: 'step' as Easing });
 
 							comp.properties[prop].sort((a: any, b: any) => a.time - b.time);
 						}
 
 						if (action.settings?.wait !== false) {
-							t += duration;
+							t += animTimelineFrames;
 						}
 						break;
 					}
@@ -538,19 +586,19 @@ export default class VideoFlow {
 		// Calculate project duration
 		let projectDuration = totalFrames;
 		for (const comp of compiled.values()) {
-			if (comp.endTime !== false) {
-				projectDuration = Math.max(projectDuration, comp.endTime);
+			if (comp.endTimeFrames !== false) {
+				projectDuration = Math.max(projectDuration, comp.endTimeFrames);
 			}
 			// Set unbounded layers to end at the project duration
-			if (comp.endTime === false) {
-				comp.endTime = projectDuration;
+			if (comp.endTimeFrames === false) {
+				comp.endTimeFrames = projectDuration;
 			}
 		}
 
 		// Second pass: ensure all unbounded layers are capped to the final duration
 		for (const comp of compiled.values()) {
-			if (comp.endTime === false) {
-				comp.endTime = projectDuration;
+			if (comp.endTimeFrames === false) {
+				comp.endTimeFrames = projectDuration;
 			}
 		}
 
@@ -564,16 +612,21 @@ export default class VideoFlow {
 		const layers = sortedLayers.map(comp => {
 			const animations = Object.entries(comp.properties).map(([prop, keyframes]) => ({
 				property: prop,
+				// Keyframes are already stored in absolute source seconds.
 				keyframes: (keyframes as any[]).map(kf => ({
-					time: kf.time / fps,
+					time: kf.time,
 					value: kf.value,
 					...(kf.easing && kf.easing !== 'step' ? { easing: kf.easing } : {}),
 				})),
 			}));
 
-			const startTimeSec = comp.startTime / fps;
-			const endTimeSec = (comp.endTime as number) / fps;
-			const durationSec = endTimeSec - startTimeSec;
+			const startTimeSec = comp.startTimeFrames / fps;
+			const endTimeSec = (comp.endTimeFrames as number) / fps;
+			const timelineDurSec = endTimeSec - startTimeSec;
+			// sourceDuration in JSON is **source seconds**, derived from the
+			// timeline footprint via speed: sourceDur = timelineDur * |speed|.
+			const speedAbs = Math.abs(comp.speed) || 1;
+			const sourceDurationSec = timelineDurSec * speedAbs;
 
 			return {
 				id: comp.id,
@@ -581,17 +634,17 @@ export default class VideoFlow {
 				settings: {
 					enabled: comp.enabled,
 					startTime: startTimeSec,
-					duration: durationSec,
+					sourceDuration: sourceDurationSec,
 					...(comp.name ? { name: comp.name } : {}),
 					...(comp.speed !== 1 ? { speed: comp.speed } : {}),
-					...(comp.trimStart > 0 ? { trimStart: comp.trimStart / fps } : {}),
-					...(comp.durationMedia != null ? { durationMedia: comp.durationMedia } : {}),
-					...(comp.trimEndUnresolved != null ? { trimEnd: comp.trimEndUnresolved } : {}),
+					...(comp.sourceStartSec > 0 ? { sourceStart: comp.sourceStartSec } : {}),
+					...(comp.mediaDurationSec != null ? { mediaDuration: comp.mediaDurationSec } : {}),
+					...(comp.sourceEndUnresolvedSec != null ? { sourceEnd: comp.sourceEndUnresolvedSec } : {}),
 					// Include layer-type-specific settings via settingsKeys
-					// (durationMedia / trimEnd are handled explicitly above)
+					// (mediaDuration / sourceEnd are handled explicitly above)
 					...Object.fromEntries(
 						((comp.layerObj.constructor as typeof BaseLayer).settingsKeys ?? [])
-							.filter(key => key !== 'durationMedia' && key !== 'trimEnd')
+							.filter(key => key !== 'mediaDuration' && key !== 'sourceEnd')
 							.filter(key => comp.settings?.[key] != null)
 							.map(key => [key, comp.settings[key]])
 					),
