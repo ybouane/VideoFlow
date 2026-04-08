@@ -33,7 +33,7 @@ export default class AudioLayer extends AuditoryLayer {
 	}
 
 	static get settingsKeys(): string[] {
-		return [...super.settingsKeys, 'source', 'durationMedia', 'trimEnd'];
+		return [...super.settingsKeys, 'source', 'mediaDuration', 'sourceEnd'];
 	}
 
 	static get defaultSettings(): Partial<AudioLayerSettings> {
