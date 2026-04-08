@@ -175,7 +175,7 @@ export default class DomRenderer implements ILayerRenderer {
 		//    outgoing layers are reused, not re-fetched.
 		await Promise.all(newLayers.map(layer => layer.initialize()));
 
-		// 3. Resolve any deferred trimEnd → duration now that intrinsic
+		// 3. Resolve any deferred sourceEnd → sourceDuration now that intrinsic
 		//    durations are known.
 		for (const layer of newLayers) layer.resolveMediaTimings();
 
@@ -505,10 +505,17 @@ export default class DomRenderer implements ILayerRenderer {
 
 		bufferSource.connect(gainNode).connect(panNode).connect(audioCtx.destination);
 
-		const startTimeSec = layer.actualStartFrame / layer.fps;
-		const trimStartSec = layer.trimStartFrames / layer.fps;
-		const durationSec = (layer.endFrame - layer.actualStartFrame) / layer.fps;
-		bufferSource.start(startTimeSec, trimStartSec, durationSec);
+		const whenSec = layer.startTime;
+		const sourceStartSec = layer.sourceStart;
+		const sourceDurationSec = layer.sourceDuration;
+		let offsetSec: number;
+		if (speed < 0) {
+			const totalLen = audioBuffer.duration;
+			offsetSec = Math.max(0, totalLen - (sourceStartSec + sourceDurationSec));
+		} else {
+			offsetSec = sourceStartSec;
+		}
+		bufferSource.start(whenSec, offsetSec, sourceDurationSec);
 	}
 
 	private applyAudioKeyframes(
@@ -519,9 +526,23 @@ export default class DomRenderer implements ILayerRenderer {
 	): void {
 		const anim = layer.json.animations.find(a => a.property === property);
 		if (!anim || anim.keyframes.length === 0) return;
-		const startTimeSec = layer.startFrame / layer.fps;
+
+		const startTimeSec = layer.startTime;
+		const sourceStartSec = layer.sourceStart;
+		const sourceDurationSec = layer.sourceDuration;
+		const speed = layer.speed;
+		const speedAbs = Math.abs(speed) || 1;
+
 		for (const kf of anim.keyframes) {
-			param.setValueAtTime(Number(kf.value), startTimeSec + kf.time);
+			const sourceOffsetSec = kf.time - sourceStartSec;
+			let timelineSec: number;
+			if (speed < 0) {
+				timelineSec = startTimeSec + (sourceDurationSec - sourceOffsetSec) / speedAbs;
+			} else {
+				timelineSec = startTimeSec + sourceOffsetSec / speedAbs;
+			}
+			if (!Number.isFinite(timelineSec) || timelineSec < 0) continue;
+			param.setValueAtTime(Number(kf.value), timelineSec);
 		}
 	}
 
