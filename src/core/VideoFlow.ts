@@ -29,6 +29,7 @@ import type {
 	VideoJSON, ProjectSettings,
 } from './types.js';
 import { parseTime, timeToFrames, probeMediaDuration } from './utils.js';
+import { loadedMedia, type MediaCache } from './MediaCache.js';
 
 import BaseLayer from './layers/BaseLayer.js';
 import TextLayer from './layers/TextLayer.js';
@@ -69,10 +70,17 @@ export default class VideoFlow {
 	settings: Required<ProjectSettings>;
 
 	/**
-	 * Cache of media-duration probes keyed by source URL/path.
-	 * Stores promises so concurrent compiles share the same in-flight probe.
+	 * Global, refcounted, time-evicted media cache shared by every VideoFlow
+	 * instance and every renderer. Use this to look up an already-fetched
+	 * source, instrument cache behavior in tests, or release entries early.
+	 *
+	 * Entries are kept alive for a short grace period (default 5 s) after
+	 * their refCount drops to zero, which is what makes the compile→render
+	 * handoff and back-to-back `loadVideo()` reloads avoid re-fetching.
 	 */
-	private mediaDurationCache = new Map<string, Promise<number>>();
+	static get loadedMedia(): MediaCache {
+		return loadedMedia;
+	}
 
 	/**
 	 * All layers created through the flow API.
@@ -259,8 +267,11 @@ export default class VideoFlow {
 		const indexes: Record<string, number> = {};
 
 		// ------------------------------------------------------------------
-		//  Pre-pass: kick off duration probes for media layers in parallel
+		//  Pre-pass: kick off duration probes for media layers in parallel.
+		//  Probes populate the global media cache (VideoFlow.loadedMedia) so
+		//  the renderer can reuse the bytes without a second fetch.
 		// ------------------------------------------------------------------
+		const probePromises = new Map<string, Promise<number>>();
 		const collectMediaActions = (actions: Action[]): void => {
 			for (const action of actions) {
 				if (action.statement === 'parallel') {
@@ -273,9 +284,16 @@ export default class VideoFlow {
 					if (!this.settings.autoDetectDurations) continue;
 					const source = s.source;
 					if (!source || typeof source !== 'string') continue;
-					if (this.mediaDurationCache.has(source)) continue;
+					if (probePromises.has(source)) continue;
+					// If the cache already has an entry from a prior compile,
+					// skip the network probe entirely — the renderer will read
+					// duration off the cache entry directly.
+					if (loadedMedia.has(source)) {
+						probePromises.set(source, Promise.resolve(NaN));
+						continue;
+					}
 					const kind = action.type === 'audio' ? 'audio' : 'video';
-					this.mediaDurationCache.set(
+					probePromises.set(
 						source,
 						probeMediaDuration(source, kind).catch((err) => {
 							if (this.settings.verbose) {
@@ -335,8 +353,22 @@ export default class VideoFlow {
 
 			// 3. Probe (if enabled and source available).
 			const source = typeof s.source === 'string' ? s.source : undefined;
-			if (source && this.mediaDurationCache.has(source)) {
-				const probed = await this.mediaDurationCache.get(source)!;
+			if (source) {
+				let probed: number = NaN;
+				const pending = probePromises.get(source);
+				if (pending) {
+					probed = await pending;
+				}
+				// If the probe returned NaN (failed or skipped because the
+				// cache already had the entry), try to read duration straight
+				// from the existing cache entry instead.
+				if (!(Number.isFinite(probed) && probed > 0) && loadedMedia.has(source)) {
+					try {
+						const entry = await loadedMedia.acquire(source);
+						probed = entry.duration;
+						loadedMedia.release(source);
+					} catch { /* ignore */ }
+				}
 				if (Number.isFinite(probed) && probed > 0) {
 					const dur = Math.max(0, probed - trimStartSec - trimEndSec);
 					return {

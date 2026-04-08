@@ -115,10 +115,6 @@ front. VideoFlow handles this for you:
   was provided, it survives in the compiled JSON and the renderer resolves it
   once it has decoded the source.
 
-**Perf note:** `autoDetectDurations: true` adds one network/IO probe per
-unique media source at compile time. Probe results are cached on the
-`VideoFlow` instance. Set `autoDetectDurations: false` if you want to skip
-this entirely and supply timings yourself.
 
 `Time` accepts numbers (seconds) or strings like `'2s'`, `'500ms'`, `'60f'`, `'01:30'`. See [Time Format](#time-format).
 

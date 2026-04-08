@@ -55,3 +55,7 @@ export {
 	parseTime, timeToFrames, framesToTime, formatTime,
 	audioBufferToWav, createDeferred, delay,
 } from './utils.js';
+
+// Global media cache (refcounted, time-evicted)
+export { MediaCache, loadedMedia } from './MediaCache.js';
+export type { MediaEntry } from './MediaCache.js';
