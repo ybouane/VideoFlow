@@ -14,7 +14,7 @@ export default class RuntimeAudioLayer extends RuntimeBaseLayer {
 
 	/** Handle into the global media cache; null until initialize() runs. */
 	cacheEntry: MediaEntry | null = null;
-	/** Decoded audio buffer (cached when needed for trimEnd resolution). */
+	/** Decoded audio buffer (cached when needed for sourceEnd resolution). */
 	decodedBuffer: AudioBuffer | null = null;
 	/** Intrinsic source duration in seconds (populated when known). */
 	duration: number = 0;
@@ -40,10 +40,10 @@ export default class RuntimeAudioLayer extends RuntimeBaseLayer {
 			this.duration = this.cacheEntry.duration;
 		}
 
-		// If the compile pass left an unresolved trimEnd on this layer, we
+		// If the compile pass left an unresolved sourceEnd on this layer, we
 		// need the intrinsic duration before any frame is rendered. Decode the
 		// blob now and cache it so the audio render pass can reuse it.
-		if ((this.json.settings as any).trimEnd != null && !(this.duration > 0)) {
+		if ((this.json.settings as any).sourceEnd != null && !(this.duration > 0)) {
 			try {
 				const arrayBuffer = await this.cacheEntry.blob.arrayBuffer();
 				const Ctx: typeof AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;

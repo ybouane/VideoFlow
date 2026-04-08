@@ -2,11 +2,20 @@
  * RuntimeBaseLayer — the root runtime class for all layer types in the renderer.
  *
  * Provides:
- * - Timing helpers (startFrame, endFrame, retimeFrame, etc.)
+ * - Timing helpers (startFrame, endFrame, sourceTimeAtFrame, etc.)
  * - Keyframe interpolation with easing and unit handling
  * - Overridable property application pipeline:
  *     resetCSSProperties() → applyProperties() → applyCSSProperty() / applyProperty()
  * - Overridable lifecycle: initialize(), generateElement(), renderFrame()
+ *
+ * Time model: VideoFlow exposes three time contexts —
+ *   1. **source media time** (`[0, mediaDuration]`)
+ *   2. **source segment time** (`[0, sourceDuration]`)
+ *   3. **timeline time** (`[0, projectDuration]`)
+ * `startTime` and `endTime` live in timeline time. `sourceStart`,
+ * `sourceDuration`, `mediaDuration` and keyframe `time` values live in source
+ * time. `speed` stretches the segment in the timeline:
+ * `timelineDuration = sourceDuration / speed`.
  *
  * Subclasses override methods like {@link applyCSSProperty} and
  * {@link applyProperty} to provide type-specific behaviour.
@@ -59,33 +68,67 @@ export default class RuntimeBaseLayer {
 
 	// -- Timing helpers -----------------------------------------------------
 
-	get startFrame(): number {
-		return Math.round((this.json.settings.startTime ?? 0) * this.fps);
+	/** Timeline-time (seconds) at which the playable segment starts. */
+	get startTime(): number {
+		return this.json.settings.startTime ?? 0;
 	}
 
-	get endFrame(): number {
-		return Math.round(((this.json.settings.startTime ?? 0) + (this.json.settings.duration ?? 0)) * this.fps);
+	/** Source-time (seconds) offset where the playable segment begins. */
+	get sourceStart(): number {
+		return (this.json.settings as any).sourceStart ?? 0;
 	}
 
-	get trimStartFrames(): number {
-		return Math.round((this.json.settings.trimStart ?? 0) * this.fps);
+	/** Length of the playable segment in source seconds. */
+	get sourceDuration(): number {
+		return (this.json.settings as any).sourceDuration ?? 0;
 	}
 
-	get actualStartFrame(): number {
-		return this.startFrame + this.trimStartFrames;
+	/** Intrinsic length of the source media in seconds, when known. */
+	get mediaDuration(): number | undefined {
+		return (this.json.settings as any).mediaDuration;
 	}
 
 	get speed(): number {
 		return this.json.settings.speed ?? 1;
 	}
 
+	/** Length of the layer's timeline footprint in seconds. */
+	get timelineDuration(): number {
+		const speedAbs = Math.abs(this.speed);
+		if (speedAbs === 0) return 0;
+		return this.sourceDuration / speedAbs;
+	}
+
+	/** Timeline-time (seconds) at which the layer's footprint ends. */
+	get endTime(): number {
+		return this.startTime + this.timelineDuration;
+	}
+
+	get startFrame(): number {
+		return Math.round(this.startTime * this.fps);
+	}
+
+	get endFrame(): number {
+		return Math.round(this.endTime * this.fps);
+	}
+
 	// -- Retiming -----------------------------------------------------------
 
-	/** Convert an absolute frame to the layer-local retimed frame. */
-	retimeFrame(frame: number): number {
-		if (this.speed === 0) return 0;
-		if (this.speed < 0) return Math.abs(this.speed) * (this.endFrame - frame);
-		return this.speed * (frame - this.startFrame);
+	/**
+	 * Convert a timeline frame to the corresponding **absolute source-time**
+	 * (in seconds). This is the value at which keyframes should be looked up
+	 * and the value to feed into a video element's `currentTime`.
+	 */
+	sourceTimeAtFrame(frame: number): number {
+		const timelineSec = frame / this.fps;
+		const elapsedSec = timelineSec - this.startTime;
+		const speedAbs = Math.abs(this.speed);
+		if (speedAbs === 0) return this.sourceStart;
+		const elapsedSourceSec = elapsedSec * speedAbs;
+		if (this.speed < 0) {
+			return this.sourceStart + this.sourceDuration - elapsedSourceSec;
+		}
+		return this.sourceStart + elapsedSourceSec;
 	}
 
 	// -- Property interpolation ---------------------------------------------
@@ -97,8 +140,9 @@ export default class RuntimeBaseLayer {
 	 * retimed frame.
 	 */
 	getPropertiesAtFrame(frame: number): Record<string, any> {
-		const retimedFrame = this.retimeFrame(frame);
-		const retimedTime = retimedFrame / this.fps;
+		// Keyframes live in absolute source seconds, so look them up using
+		// the layer's source-time at this timeline frame.
+		const sourceTimeSec = this.sourceTimeAtFrame(frame);
 		const props: Record<string, any> = {};
 
 		// Process animated properties from the animations array
@@ -107,7 +151,7 @@ export default class RuntimeBaseLayer {
 			if (kfs.length === 0) continue;
 
 			const definition = this.getPropertyDefinition(anim.property);
-			props[anim.property] = this.interpolateKeyframes(anim.property, retimedTime, kfs, definition);
+			props[anim.property] = this.interpolateKeyframes(anim.property, sourceTimeSec, kfs, definition);
 		}
 
 		// Merge static properties (properties not in animations)
@@ -330,21 +374,22 @@ export default class RuntimeBaseLayer {
 	}
 
 	/**
-	 * Resolve a deferred `trimEnd` setting into a concrete `duration` once the
-	 * runtime layer's intrinsic media duration is known. Called by the renderer
-	 * after `initialize()` and before any frame is rendered. No-op when there is
-	 * no `trimEnd` to resolve, or when the intrinsic duration is unknown.
+	 * Resolve a deferred `sourceEnd` setting into a concrete `sourceDuration`
+	 * once the runtime layer's intrinsic media duration is known. Called by
+	 * the renderer after `initialize()` and before any frame is rendered.
+	 * No-op when there is no `sourceEnd` to resolve, or when the intrinsic
+	 * duration is unknown.
 	 */
 	resolveMediaTimings(): void {
 		const s = this.json.settings as any;
-		if (s.trimEnd == null) return;
+		if (s.sourceEnd == null) return;
 		const intrinsic = this.intrinsicDuration;
 		if (intrinsic == null || !Number.isFinite(intrinsic) || intrinsic <= 0) return;
-		const trimStart = s.trimStart ?? 0;
-		const duration = Math.max(0, intrinsic - trimStart - s.trimEnd);
-		s.duration = duration;
-		s.durationMedia = intrinsic;
-		delete s.trimEnd;
+		const sourceStart = s.sourceStart ?? 0;
+		const sourceDuration = Math.max(0, intrinsic - sourceStart - s.sourceEnd);
+		s.sourceDuration = sourceDuration;
+		s.mediaDuration = intrinsic;
+		delete s.sourceEnd;
 	}
 
 	/**
@@ -369,7 +414,7 @@ export default class RuntimeBaseLayer {
 	async renderFrame(frame: number): Promise<void> {
 		if (!this.$element) return;
 
-		if (frame < this.actualStartFrame || frame >= this.endFrame || !this.json.settings.enabled) {
+		if (frame < this.startFrame || frame >= this.endFrame || !this.json.settings.enabled) {
 			this.$element.style.display = 'none';
 			return;
 		}

@@ -427,7 +427,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		if (!source) return;
 
 		// Reuse the layer's pre-decoded AudioBuffer if it has one (audio
-		// layers with unresolved trimEnd decode during initialize()).
+		// layers with unresolved sourceEnd decode during initialize()).
 		let audioBuffer: AudioBuffer | null = !audioSource
 			? ((layer as any).decodedBuffer as AudioBuffer | null) ?? null
 			: null;
@@ -494,14 +494,31 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Connect chain: source → gain → pan → destination
 		bufferSource.connect(gainNode).connect(panNode).connect(audioCtx.destination);
 
-		const startTimeSec = layer.actualStartFrame / layer.fps;
-		const trimStartSec = layer.trimStartFrames / layer.fps;
-		const durationSec = (layer.endFrame - layer.actualStartFrame) / layer.fps;
-		bufferSource.start(startTimeSec, trimStartSec, durationSec);
+		// Schedule playback. The bufferSource's `duration` argument is in
+		// **source seconds** (the buffer's own timing system); combined with
+		// `playbackRate = |speed|` it produces `sourceDuration / |speed|`
+		// timeline seconds of output, exactly matching the layer footprint.
+		const whenSec = layer.startTime;
+		const sourceStartSec = layer.sourceStart;
+		const sourceDurationSec = layer.sourceDuration;
+		let offsetSec: number;
+		if (speed < 0) {
+			// The buffer was reversed end-to-end above. To play the segment
+			// [sourceStart, sourceStart+sourceDuration] in reverse we offset
+			// into the reversed buffer by (totalLen − segmentEnd).
+			const totalLen = audioBuffer.duration;
+			offsetSec = Math.max(0, totalLen - (sourceStartSec + sourceDurationSec));
+		} else {
+			offsetSec = sourceStartSec;
+		}
+		bufferSource.start(whenSec, offsetSec, sourceDurationSec);
 	}
 
 	/**
 	 * Apply keyframe automation to an AudioParam from the layer's animations.
+	 *
+	 * Keyframes are stored in absolute source seconds; this method projects
+	 * each one back into timeline seconds for `setValueAtTime`.
 	 */
 	private applyAudioKeyframes(
 		layer: RuntimeBaseLayer,
@@ -512,10 +529,23 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const anim = layer.json.animations.find(a => a.property === property);
 		if (!anim || anim.keyframes.length === 0) return;
 
-		const startTimeSec = layer.startFrame / layer.fps;
+		const startTimeSec = layer.startTime;
+		const sourceStartSec = layer.sourceStart;
+		const sourceDurationSec = layer.sourceDuration;
+		const speed = layer.speed;
+		const speedAbs = Math.abs(speed) || 1;
+
 		for (const kf of anim.keyframes) {
-			const t = startTimeSec + kf.time;
-			param.setValueAtTime(Number(kf.value), t);
+			// kf.time is in source seconds (absolute, from start of source).
+			const sourceOffsetSec = kf.time - sourceStartSec;
+			let timelineSec: number;
+			if (speed < 0) {
+				timelineSec = startTimeSec + (sourceDurationSec - sourceOffsetSec) / speedAbs;
+			} else {
+				timelineSec = startTimeSec + sourceOffsetSec / speedAbs;
+			}
+			if (!Number.isFinite(timelineSec) || timelineSec < 0) continue;
+			param.setValueAtTime(Number(kf.value), timelineSec);
 		}
 	}
 

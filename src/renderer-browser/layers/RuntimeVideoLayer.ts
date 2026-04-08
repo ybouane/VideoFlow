@@ -134,11 +134,13 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 	 */
 	async renderFrame(frame: number): Promise<void> {
 		if (this.$element && this.vidA && this.vidB &&
-			frame >= this.actualStartFrame && frame < this.endFrame) {
+			frame >= this.startFrame && frame < this.endFrame) {
 
-			const targetTime = this.retimeFrame(frame) / this.fps;
+			// `sourceTimeAtFrame` returns the absolute source-time (seconds)
+			// — exactly what `<video>.currentTime` expects.
+			const targetTime = this.sourceTimeAtFrame(frame);
 			const nextFrame = Math.min(frame + 1, this.endFrame - 1);
-			const nextTargetTime = this.retimeFrame(nextFrame) / this.fps;
+			const nextTargetTime = this.sourceTimeAtFrame(nextFrame);
 
 			let drawFromVid: HTMLVideoElement;
 
