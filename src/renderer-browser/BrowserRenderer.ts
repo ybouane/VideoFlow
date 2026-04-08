@@ -24,6 +24,7 @@
 
 import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
+import { loadedMedia } from '@videoflow/core';
 import RENDERER_CSS from './renderer.css.js';
 export { RENDERER_CSS };
 import {
@@ -425,25 +426,40 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const source = audioSource || layer.json.settings.source;
 		if (!source) return;
 
-		// Decode audio data — try the layer's cached blob first, then fetch.
-		// Skip the cached blob if an explicit audioSource was provided (it
-		// points to a pre-extracted WAV which is more reliable to decode).
-		let arrayBuffer: ArrayBuffer;
-		const blob = !audioSource ? (layer as any).dataBlob as Blob | null : null;
-		if (blob) {
-			arrayBuffer = await blob.arrayBuffer();
-		} else {
-			const res = await fetch(source);
-			arrayBuffer = await res.arrayBuffer();
-		}
+		// Reuse the layer's pre-decoded AudioBuffer if it has one (audio
+		// layers with unresolved trimEnd decode during initialize()).
+		let audioBuffer: AudioBuffer | null = !audioSource
+			? ((layer as any).decodedBuffer as AudioBuffer | null) ?? null
+			: null;
 
-		let audioBuffer: AudioBuffer;
-		try {
-			audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-		} catch (e) {
-			// Audio decoding failed — this layer has no decodable audio
-			// (e.g., video with no audio track, or unsupported format)
-			return;
+		if (!audioBuffer) {
+			// Decode audio data — try the layer's cached blob first, then
+			// acquire a transient ref into the global media cache. Skip the
+			// cached blob if an explicit audioSource was provided (it points
+			// to a pre-extracted WAV which is more reliable to decode).
+			let arrayBuffer: ArrayBuffer;
+			const blob = !audioSource ? (layer as any).dataBlob as Blob | null : null;
+			let acquiredFromCache = false;
+			if (blob) {
+				arrayBuffer = await blob.arrayBuffer();
+			} else if (!audioSource) {
+				const entry = await loadedMedia.acquire(source);
+				acquiredFromCache = true;
+				arrayBuffer = await entry.blob.arrayBuffer();
+			} else {
+				const res = await fetch(source);
+				arrayBuffer = await res.arrayBuffer();
+			}
+
+			try {
+				audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+			} catch (e) {
+				// Audio decoding failed — this layer has no decodable audio
+				// (e.g., video with no audio track, or unsupported format)
+				if (acquiredFromCache) loadedMedia.release(source);
+				return;
+			}
+			if (acquiredFromCache) loadedMedia.release(source);
 		}
 
 		const bufferSource = audioCtx.createBufferSource();
