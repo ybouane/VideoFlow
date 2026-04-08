@@ -5,20 +5,19 @@
  * for CSS fit calculations.
  */
 
+import { loadedMedia } from '@videoflow/core';
 import RuntimeMediaLayer from './RuntimeMediaLayer.js';
 
 export default class RuntimeImageLayer extends RuntimeMediaLayer {
 	async initialize(): Promise<void> {
+		if (this.cacheEntry) return; // Idempotent — already initialised.
 		const source = this.json.settings.source;
 		if (!source) return;
 
-		const response = await fetch(source, { cache: 'no-cache' });
-		if (!response.ok) throw new Error(`Failed to fetch image: ${response.statusText}`);
-		this.dataBlob = await response.blob();
-		this.dataUrl = URL.createObjectURL(this.dataBlob);
+		this.cacheEntry = await loadedMedia.acquire(source);
 
 		this.internalMedia = document.createElement('img');
-		(this.internalMedia as HTMLImageElement).src = this.dataUrl;
+		(this.internalMedia as HTMLImageElement).src = this.cacheEntry.objectUrl;
 
 		await new Promise<void>((resolve, reject) => {
 			(this.internalMedia as HTMLImageElement).onload = () => {

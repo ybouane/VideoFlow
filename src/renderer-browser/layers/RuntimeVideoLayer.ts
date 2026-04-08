@@ -5,6 +5,7 @@
  * frame onto the canvas, and declares audio output.
  */
 
+import { loadedMedia } from '@videoflow/core';
 import RuntimeMediaLayer from './RuntimeMediaLayer.js';
 
 export default class RuntimeVideoLayer extends RuntimeMediaLayer {
@@ -23,18 +24,24 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 	private vidBReady: Promise<void> = Promise.resolve();
 
 	async initialize(): Promise<void> {
+		if (this.cacheEntry) return; // Idempotent — already initialised.
 		const source = this.json.settings.source;
 		if (!source) return;
 
-		const response = await fetch(source, { cache: 'no-cache' });
-		if (!response.ok) throw new Error(`Failed to fetch video: ${response.statusText}`);
-		this.dataBlob = await response.blob();
-		this.dataUrl = URL.createObjectURL(this.dataBlob);
+		this.cacheEntry = await loadedMedia.acquire(source);
+		// If a previous layer already wrote dimensions/duration into the
+		// shared entry, we can read them back without waiting for oncanplay.
+		if (this.cacheEntry.dimensions) {
+			this.dimensions = [...this.cacheEntry.dimensions];
+		}
+		if (this.cacheEntry.duration > 0) {
+			this.duration = this.cacheEntry.duration;
+		}
 
 		// Create both video elements for decode-ahead buffering
 		const createVideoElement = (): HTMLVideoElement => {
 			const vid = document.createElement('video');
-			vid.src = this.dataUrl!;
+			vid.src = this.cacheEntry!.objectUrl;
 			vid.controls = false;
 			vid.autoplay = false;
 			vid.loop = false;
@@ -54,6 +61,16 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 				this.vidA!.oncanplay = () => {
 					this.dimensions = [this.vidA!.videoWidth, this.vidA!.videoHeight];
 					this.duration = this.vidA!.duration;
+					// Write back into the shared cache entry so other layers
+					// using the same source can skip the metadata wait.
+					if (this.cacheEntry) {
+						if (!this.cacheEntry.dimensions) {
+							this.cacheEntry.dimensions = [this.dimensions[0], this.dimensions[1]];
+						}
+						if (!(this.cacheEntry.duration > 0)) {
+							this.cacheEntry.duration = this.duration;
+						}
+					}
 					resolve();
 				};
 				this.vidA!.onerror = () => reject(new Error(`Failed to load video: ${source}`));

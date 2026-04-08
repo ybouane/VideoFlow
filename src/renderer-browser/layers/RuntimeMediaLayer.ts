@@ -7,6 +7,7 @@
  */
 
 import type { PropertyDefinition } from '@videoflow/core/types';
+import { loadedMedia, type MediaEntry } from '@videoflow/core';
 import RuntimeVisualLayer from './RuntimeVisualLayer.js';
 
 export default class RuntimeMediaLayer extends RuntimeVisualLayer {
@@ -14,8 +15,17 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 	internalMedia: HTMLImageElement | HTMLVideoElement | null = null;
 	dimensions: [number, number] = [0, 0];
 	duration: number = 0;
-	dataUrl: string | null = null;
-	dataBlob: Blob | null = null;
+	/** Handle into the global media cache; null until initialize() runs. */
+	cacheEntry: MediaEntry | null = null;
+
+	/** Backwards-compatible accessor — returns the cached blob, if any. */
+	get dataBlob(): Blob | null {
+		return this.cacheEntry?.blob ?? null;
+	}
+	/** Backwards-compatible accessor — returns the cached object URL, if any. */
+	get dataUrl(): string | null {
+		return this.cacheEntry?.objectUrl ?? null;
+	}
 
 	get intrinsicDuration(): number | undefined {
 		return this.duration > 0 ? this.duration : undefined;
@@ -63,9 +73,10 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 	}
 
 	destroy(): void {
-		if (this.dataUrl) {
-			URL.revokeObjectURL(this.dataUrl);
-			this.dataUrl = null;
+		if (this.cacheEntry) {
+			const source = this.json.settings.source;
+			if (typeof source === 'string') loadedMedia.release(source);
+			this.cacheEntry = null;
 		}
 	}
 }
