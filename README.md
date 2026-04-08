@@ -202,10 +202,10 @@ const img = $.addImage(
 ```ts
 // `compile()` probes the source's intrinsic length automatically
 // (autoDetectDurations is on by default), so you can rely on
-// `waitFor: 'finish'` without supplying a `duration` manually.
+// `waitFor: 'finish'` without supplying a `sourceDuration` manually.
 const vid = $.addVideo(
   { fit: 'cover', volume: 0.8 },
-  { source: './clip.mp4', trimStart: '1s', trimEnd: '2s' },
+  { source: './clip.mp4', sourceStart: '1s', sourceEnd: '2s' },
   { waitFor: 'finish' },
 );
 ```
@@ -229,10 +229,28 @@ const caps = $.addCaptions(
       { caption: 'First line.',  startTime: 0, endTime: 2.5 },
       { caption: 'Second line.', startTime: 2.5, endTime: 5 },
     ],
-    duration: '5s',
+    sourceDuration: '5s',
   },
 );
 ```
+
+### Time Properties
+
+Every layer accepts these timing settings:
+
+| Setting | Description |
+| --- | --- |
+| `startTime` | When the layer begins on the timeline. Default: `0`. |
+| `sourceDuration` | How long the layer plays, in source seconds. Defaults to the source's intrinsic length (video/audio) or until the timeline advances. |
+| `sourceStart` | Skip the first N seconds of the source. Default: `0`. |
+| `sourceEnd` | Trim N seconds off the end of the source (video/audio). Default: `0`. |
+| `mediaDuration` | Intrinsic length of the source. Auto-detected for video/audio. |
+| `speed` | Playback speed multiplier. `2` plays twice as fast, `-1` plays in reverse. Default: `1`. |
+
+Layers also expose two read-only getters:
+
+- `timelineDuration` — how long the layer occupies on the timeline (`sourceDuration / |speed|`).
+- `endTime` — `startTime + timelineDuration`.
 
 ## Examples
 

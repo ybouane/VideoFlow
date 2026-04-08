@@ -66,7 +66,7 @@ const $ = new VideoFlow(options?: {
 Layers inherit their properties and settings through a class hierarchy. When you use `addText`, `addImage`, etc., your layer gets everything from every parent class:
 
 ```
-BaseLayer              → id, timing (startTime, duration, speed, trimStart), enabled
+BaseLayer              → id, timing (startTime, sourceDuration, speed, sourceStart), enabled
  ├── VisualLayer       → opacity, position, scale, rotation, anchor, borders, filters, shadows, perspective
  │    ├── MediaLayer   → source, fit
  │    │    ├── ImageLayer
@@ -86,34 +86,25 @@ These settings are accepted by every `add*` call:
 
 ```typescript
 {
-  name?: string,          // Human-readable name, optional (not persisted if unset)
-  enabled?: boolean,      // Whether the layer renders at all. Default: true
-  startTime?: Time,       // When the layer enters the timeline. Default: 0
-  duration?: Time,        // How long it stays. Default: undefined (runs to end of timeline)
-  speed?: number,         // Playback rate multiplier (media layers). Default: 1
-  trimStart?: Time,       // Offset into the source before playback starts. Default: 0
-  trimEnd?: Time,         // Trim N from the END of the source (video/audio only). Resolved into `duration` once `durationMedia` is known. Default: 0
-  durationMedia?: Time,   // Intrinsic source length (video/audio only). Supply manually to skip auto-probe.
+  name?: string,           // Human-readable name, optional
+  enabled?: boolean,       // Whether the layer renders at all. Default: true
+  startTime?: Time,        // When the layer begins on the timeline. Default: 0
+  sourceDuration?: Time,   // How long the layer plays, in source seconds. Default: until end of timeline (or end of source for video/audio)
+  sourceStart?: Time,      // Skip the first N seconds of the source. Default: 0
+  sourceEnd?: Time,        // Trim N seconds off the end of the source (video/audio only). Default: 0
+  mediaDuration?: Time,    // Intrinsic length of the source (video/audio only). Auto-detected when omitted.
+  speed?: number,          // Playback speed multiplier. 2 = twice as fast, -1 = reverse. Default: 1
 }
 ```
 
-### Auto duration detection (`durationMedia` / `trimEnd`)
+Layers also expose two read-only getters:
 
-For `addVideo` / `addAudio`, you usually don't know the source's length up
-front. VideoFlow handles this for you:
+- `timelineDuration` — how long the layer occupies on the timeline (`sourceDuration / |speed|`).
+- `endTime` — `startTime + timelineDuration`.
 
-- If you pass `duration`, it's used as-is. If you also pass `trimEnd`,
-  `duration` wins silently.
-- Else if you pass `durationMedia` (the source's intrinsic length), the
-  effective `duration` is computed as `durationMedia − trimStart − trimEnd`.
-- Else if the project has `autoDetectDurations: true` (the **default**),
-  `compile()` probes each source in parallel to learn its length, then derives
-  `duration` the same way. In the browser this uses a transient `<video>` /
-  `<audio>` element; in Node it shells out to `ffprobe`.
-- Else (`autoDetectDurations: false` and no manual hint), the layer is treated
-  as **unbounded** — `waitFor: 'finish'` becomes a no-op for it. If `trimEnd`
-  was provided, it survives in the compiled JSON and the renderer resolves it
-  once it has decoded the source.
+For `addVideo` / `addAudio`, `mediaDuration` is auto-detected at compile time
+(set `autoDetectDurations: false` on the project to opt out). You can also pass
+it manually to skip the probe.
 
 
 `Time` accepts numbers (seconds) or strings like `'2s'`, `'500ms'`, `'60f'`, `'01:30'`. See [Time Format](#time-format).
@@ -182,7 +173,7 @@ const title = $.addText(
   {
     // --- Common settings (see above) ---
     startTime: 0,                // Default: 0
-    duration: '3s',              // Default: undefined (runs to end)
+    sourceDuration: '3s',        // Default: undefined (runs to end)
     enabled: true,               // Default: true
   }
 );
@@ -212,7 +203,7 @@ const photo = $.addImage(
   {
     source: 'https://example.com/image.jpg', // REQUIRED: URL or file path
     startTime: 0,                // Default: 0
-    duration: '5s',              // Default: undefined
+    sourceDuration: '5s',        // Default: undefined
   }
 );
 ```
@@ -247,9 +238,9 @@ const clip = $.addVideo(
   {
     source: './clip.mp4',        // REQUIRED: URL or file path
     startTime: 0,                // Default: 0
-    duration: '10s',             // Default: undefined (plays to end of video)
-    speed: 1,                    // Playback rate. Default: 1
-    trimStart: 0,                // Skip first N seconds of source. Default: 0
+    sourceDuration: '10s',       // Default: undefined (plays to end of source)
+    sourceStart: 0,              // Skip first N seconds of source. Default: 0
+    speed: 1,                    // Default: 1
   },
   {
     waitFor: 'finish',           // Advance flow pointer by the full clip duration
@@ -274,9 +265,9 @@ const music = $.addAudio(
   {
     source: './music.mp3',       // REQUIRED: URL or file path
     startTime: 0,                // Default: 0
-    duration: '30s',             // Default: undefined
+    sourceDuration: '30s',       // Default: undefined (plays to end of source)
+    sourceStart: 0,              // Default: 0
     speed: 1,                    // Default: 1
-    trimStart: 0,                // Default: 0
   }
 );
 ```
@@ -314,7 +305,7 @@ const subs = $.addCaptions(
 
     // --- Common settings ---
     startTime: 0,                // Default: 0
-    duration: '4s',              // Default: undefined
+    sourceDuration: '4s',        // Default: undefined
   }
 );
 ```
