@@ -24,6 +24,7 @@
 
 import type { VideoJSON, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
+import { loadedMedia } from '@videoflow/core';
 import {
 	createRuntimeLayer,
 	RuntimeBaseLayer,
@@ -157,23 +158,38 @@ export default class DomRenderer implements ILayerRenderer {
 	 * @param videoJSON - Compiled VideoJSON from VideoFlow.compile().
 	 */
 	async loadVideo(videoJSON: VideoJSON): Promise<void> {
-		// Tear down previous state
+		// Stop playback / pending audio, but DO NOT destroy old layers yet —
+		// we want to keep their cache references alive while the new layers
+		// acquire theirs, so any source present in both old and new JSONs
+		// stays in the cache without bouncing through refCount === 0.
 		this.stop();
-		this.destroy(false);
+		const oldLayers = this.layers;
 
+		// 1. Construct new runtime layers (no fetches yet).
+		const newLayers = videoJSON.layers.map(layerJSON =>
+			createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this)
+		);
+
+		// 2. Initialise them in parallel — this is where each layer acquires
+		//    its source from the global media cache. Sources shared with the
+		//    outgoing layers are reused, not re-fetched.
+		await Promise.all(newLayers.map(layer => layer.initialize()));
+
+		// 3. Resolve any deferred trimEnd → duration now that intrinsic
+		//    durations are known.
+		for (const layer of newLayers) layer.resolveMediaTimings();
+
+		// 4. Swap state and rebuild the shadow scaffolding.
 		this.videoJSON = videoJSON;
+		this.layers = newLayers;
 		this.currentFrame = -1;
 		this.elementsSetup = false;
 
-		// Rebuild shadow DOM
 		this.shadow.innerHTML = '';
-
-		// Inject renderer CSS into shadow root for style isolation
 		const style = document.createElement('style');
 		style.textContent = RENDERER_CSS;
 		this.shadow.appendChild(style);
 
-		// Create the canvas container
 		this.$canvas = document.createElement('div');
 		this.$canvas.toggleAttribute('data-renderer', true);
 		this.$canvas.style.setProperty('--project-width-target', String(videoJSON.width));
@@ -181,12 +197,14 @@ export default class DomRenderer implements ILayerRenderer {
 		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
 		this.shadow.appendChild(this.$canvas);
 
-		// Create runtime layers
-		this.layers = videoJSON.layers.map(layerJSON =>
-			createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this)
-		);
+		// 5. Release the old layers AFTER the new ones are holding their
+		//    refs. Sources unique to the old set drop to refCount === 0 and
+		//    enter the cache's 5 s eviction grace window — if the user
+		//    quickly reloads a project that needs them again, the timer is
+		//    canceled and there is no re-fetch.
+		for (const layer of oldLayers) layer.destroy();
 
-		// Render frame 0 to initialise everything
+		// 6. Render frame 0.
 		await this.renderFrame(0, true);
 	}
 
@@ -433,22 +451,30 @@ export default class DomRenderer implements ILayerRenderer {
 		const source = layer.json.settings.source;
 		if (!source) return;
 
-		let arrayBuffer: ArrayBuffer;
-		const blob = (layer as any).dataBlob as Blob | null;
-		if (blob) {
-			arrayBuffer = await blob.arrayBuffer();
-		} else {
-			const res = await fetch(source);
-			arrayBuffer = await res.arrayBuffer();
-		}
+		// Reuse the layer's pre-decoded AudioBuffer if it has one.
+		let audioBuffer: AudioBuffer | null = ((layer as any).decodedBuffer as AudioBuffer | null) ?? null;
 
-		let audioBuffer: AudioBuffer;
-		try {
-			audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-		} catch (e) {
-			// Audio decoding failed — this layer has no decodable audio
-			// (e.g., video with no audio track, or unsupported format)
-			return;
+		if (!audioBuffer) {
+			let arrayBuffer: ArrayBuffer;
+			const blob = (layer as any).dataBlob as Blob | null;
+			let acquiredFromCache = false;
+			if (blob) {
+				arrayBuffer = await blob.arrayBuffer();
+			} else {
+				const entry = await loadedMedia.acquire(source);
+				acquiredFromCache = true;
+				arrayBuffer = await entry.blob.arrayBuffer();
+			}
+
+			try {
+				audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+			} catch (e) {
+				// Audio decoding failed — this layer has no decodable audio
+				// (e.g., video with no audio track, or unsupported format)
+				if (acquiredFromCache) loadedMedia.release(source);
+				return;
+			}
+			if (acquiredFromCache) loadedMedia.release(source);
 		}
 
 		const bufferSource = audioCtx.createBufferSource();
