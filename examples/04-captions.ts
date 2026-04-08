@@ -37,7 +37,7 @@ export function createProject() {
 			],
 			maxCharsPerLine: 40,
 			maxLines: 2,
-			duration: '10s',
+			sourceDuration: '10s',
 		},
 	);
 
