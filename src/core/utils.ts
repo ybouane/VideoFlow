@@ -247,7 +247,19 @@ export async function probeMediaDuration(
 	const isBrowser = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 	if (isBrowser) {
-		return await new Promise<number>((resolve, reject) => {
+		// Fetch the bytes ourselves and seed the global media cache so the
+		// renderer (and any other consumer) can reuse them without a second
+		// network round-trip. We then read .duration from a transient
+		// HTMLMediaElement pointed at the entry's shared object URL.
+		const { loadedMedia } = await import('./MediaCache.js');
+		const response = await fetch(source, { cache: 'default' });
+		if (!response.ok) {
+			throw new Error(`probeMediaDuration: failed to fetch "${source}": ${response.status} ${response.statusText}`);
+		}
+		const blob = await response.blob();
+		const entry = await loadedMedia.populate(source, blob);
+
+		const duration = await new Promise<number>((resolve, reject) => {
 			const el = document.createElement(kind) as HTMLMediaElement;
 			el.preload = 'metadata';
 			el.muted = true;
@@ -266,8 +278,13 @@ export async function probeMediaDuration(
 				cleanup();
 				reject(new Error(`probeMediaDuration: failed to load "${source}"`));
 			};
-			el.src = source;
+			el.src = entry.objectUrl;
 		});
+
+		// Write the duration back into the cache entry so future consumers
+		// see it without having to re-decode metadata.
+		await loadedMedia.populate(source, blob, duration);
+		return duration;
 	}
 
 	// Node path — ffprobe via child_process. Built at runtime so bundlers
