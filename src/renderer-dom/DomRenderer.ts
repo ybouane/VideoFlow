@@ -22,7 +22,7 @@
  * element, and adjust playback rate to keep video and audio in sync.
  */
 
-import type { VideoJSON, PropertyDefinition } from '@videoflow/core/types';
+import type { VideoJSON, LayerJSON, LayerSettingsJSON, Animation, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
 import { loadedMedia } from '@videoflow/core';
 import {
@@ -65,8 +65,15 @@ export default class DomRenderer implements ILayerRenderer {
 
 	/** Runtime layer instances. */
 	layers: RuntimeBaseLayer[] = [];
+	/** Fast id → runtime layer lookup, kept in sync with `layers`. */
+	layerById: Map<string, RuntimeBaseLayer> = new Map();
 	/** Track whether DOM elements have been set up. */
 	private elementsSetup = false;
+	/**
+	 * Serializes structural/property mutations so they don't interleave with
+	 * each other. Each mutation awaits the previous one before running.
+	 */
+	private mutationQueue: Promise<void> = Promise.resolve();
 	/** Current frame rendered. */
 	currentFrame = -1;
 	private rendering = false;
@@ -182,6 +189,7 @@ export default class DomRenderer implements ILayerRenderer {
 		// 4. Swap state and rebuild the shadow scaffolding.
 		this.videoJSON = videoJSON;
 		this.layers = newLayers;
+		this.layerById = new Map(newLayers.map(l => [l.json.id, l]));
 		this.currentFrame = -1;
 		this.elementsSetup = false;
 
@@ -206,6 +214,258 @@ export default class DomRenderer implements ILayerRenderer {
 
 		// 6. Render frame 0.
 		await this.renderFrame(0, true);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Incremental mutation API
+	//
+	//  These methods allow editors to mutate the loaded video without tearing
+	//  down and rebuilding the entire Shadow DOM as `loadVideo()` would. Each
+	//  mutation is serialized through `mutationQueue` so callers can fire them
+	//  without worrying about interleaving, and each one concludes by
+	//  re-rendering the current frame so the preview stays in sync.
+	//
+	//  Property/settings/animation edits are fully in-place: the existing
+	//  `$element` is kept and its inline styles / CSS variables are updated.
+	//  Structural edits (add/remove/reorder) touch `this.layers` and the
+	//  `$canvas` child list but don't rebuild unrelated layers.
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Queue a mutation so it runs after any in-flight mutation completes.
+	 * The returned promise resolves with the mutation's result (or rejects
+	 * with its error) but the queue itself is never left in a rejected state.
+	 */
+	private enqueueMutation<T>(fn: () => Promise<T>): Promise<T> {
+		const run = this.mutationQueue.then(fn, fn);
+		this.mutationQueue = run.then(() => {}, () => {});
+		return run;
+	}
+
+	/**
+	 * Apply a property / settings / animations patch to a single layer.
+	 *
+	 * - `settings` and `properties` are shallow-merged into `layer.json`.
+	 * - `animations` replaces the array wholesale (callers hold the diffing
+	 *   logic because per-keyframe reconciliation is cheap to do in editor
+	 *   state).
+	 *
+	 * If `settings.source` changed, the layer's media is re-initialized via
+	 * `layer.initialize()` — callers should debounce rapid source swaps.
+	 *
+	 * If a text layer's `fontFamily` is among the patched properties, the font
+	 * is loaded into the shadow DOM before the frame is re-rendered.
+	 *
+	 * @param id - The layer id to patch.
+	 * @param patch - A partial patch. Any subset of settings/properties/animations.
+	 * @returns Resolves once the patch has been applied and the current frame re-rendered.
+	 */
+	async updateLayer(id: string, patch: {
+		settings?: Partial<LayerSettingsJSON>;
+		properties?: Record<string, any>;
+		animations?: Animation[];
+	}): Promise<void> {
+		return this.enqueueMutation(async () => {
+			const layer = this.layerById.get(id);
+			if (!layer) return;
+
+			const prevSource = layer.json.settings.source;
+
+			if (patch.settings) {
+				layer.json.settings = { ...layer.json.settings, ...patch.settings };
+			}
+			if (patch.properties) {
+				layer.json.properties = { ...layer.json.properties, ...patch.properties };
+			}
+			if (patch.animations) {
+				layer.json.animations = patch.animations;
+			}
+
+			// If the source changed, re-initialize media. The global media cache
+			// makes this cheap when swapping between already-loaded sources.
+			if (patch.settings && 'source' in patch.settings && patch.settings.source !== prevSource) {
+				await layer.initialize();
+				layer.resolveMediaTimings();
+			}
+
+			// If a text-bearing layer changed its font, load it before rendering.
+			const newFont = patch.properties?.fontFamily;
+			if (typeof newFont === 'string' && newFont.length > 0) {
+				await this.loadFont(newFont);
+			}
+
+			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
+		});
+	}
+
+	/**
+	 * Insert a new layer into the video at the given index (defaults to end).
+	 *
+	 * The new layer is constructed, initialized, and mounted into the existing
+	 * `$canvas` — other layers' DOM elements are left untouched.
+	 *
+	 * @param layerJSON - The layer JSON to add. Must include a unique `id`.
+	 * @param index - The insertion index in `this.layers`. Defaults to appending.
+	 */
+	async addLayer(layerJSON: LayerJSON, index?: number): Promise<void> {
+		return this.enqueueMutation(async () => {
+			if (!this.videoJSON || !this.$canvas) {
+				throw new Error('DomRenderer.addLayer: no video loaded. Call loadVideo() first.');
+			}
+			if (this.layerById.has(layerJSON.id)) {
+				throw new Error(`DomRenderer.addLayer: layer id "${layerJSON.id}" already exists.`);
+			}
+
+			const insertAt = index === undefined ? this.layers.length : Math.max(0, Math.min(index, this.layers.length));
+
+			const layer = createRuntimeLayer(
+				layerJSON,
+				this.videoJSON.fps,
+				this.videoJSON.width,
+				this.videoJSON.height,
+				this
+			);
+			await layer.initialize();
+			layer.resolveMediaTimings();
+
+			// Splice into the layers array and the id lookup.
+			this.layers.splice(insertAt, 0, layer);
+			this.layerById.set(layerJSON.id, layer);
+			this.videoJSON.layers.splice(insertAt, 0, layerJSON);
+
+			// Mount the layer's DOM element inside $canvas at the matching
+			// position so z-ordering (via DOM order) matches the layers array.
+			if (this.elementsSetup && layer.json.settings.enabled) {
+				const $el = await layer.generateElement();
+				if ($el) {
+					const nextSiblingIndex = insertAt + 1;
+					const nextEl = nextSiblingIndex < this.layers.length
+						? this.layers[nextSiblingIndex].$element
+						: null;
+					if (nextEl && nextEl.parentNode === this.$canvas) {
+						this.$canvas.insertBefore($el, nextEl);
+					} else {
+						this.$canvas.appendChild($el);
+					}
+				}
+			}
+
+			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
+		});
+	}
+
+	/**
+	 * Remove a layer from the video.
+	 *
+	 * Destroys the layer (releasing its media ref) and detaches its DOM
+	 * element. Other layers are untouched.
+	 */
+	async removeLayer(id: string): Promise<void> {
+		return this.enqueueMutation(async () => {
+			const layer = this.layerById.get(id);
+			if (!layer) return;
+
+			const idx = this.layers.indexOf(layer);
+			if (idx === -1) return;
+
+			// Detach DOM first so a late renderFrame can't touch it.
+			if (layer.$element && layer.$element.parentNode) {
+				layer.$element.parentNode.removeChild(layer.$element);
+			}
+
+			this.layers.splice(idx, 1);
+			this.layerById.delete(id);
+			if (this.videoJSON) {
+				const jsonIdx = this.videoJSON.layers.findIndex(l => l.id === id);
+				if (jsonIdx !== -1) this.videoJSON.layers.splice(jsonIdx, 1);
+			}
+
+			layer.destroy();
+
+			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
+		});
+	}
+
+	/**
+	 * Reorder layers to match the given id sequence.
+	 *
+	 * The runtime layers and the backing `videoJSON.layers` array are reordered,
+	 * and the layers' `$element`s are re-appended to `$canvas` in the new order
+	 * (DOM order drives z-index via the `z-index` style written in
+	 * `applyProperties`). No media is touched.
+	 *
+	 * @param orderedIds - The new layer order. Must contain exactly the set of
+	 *   currently-loaded layer ids, in any order. Extra/missing ids throw.
+	 */
+	async reorderLayers(orderedIds: string[]): Promise<void> {
+		return this.enqueueMutation(async () => {
+			if (orderedIds.length !== this.layers.length) {
+				throw new Error(
+					`DomRenderer.reorderLayers: expected ${this.layers.length} ids, got ${orderedIds.length}.`
+				);
+			}
+
+			const next: RuntimeBaseLayer[] = [];
+			for (const id of orderedIds) {
+				const layer = this.layerById.get(id);
+				if (!layer) {
+					throw new Error(`DomRenderer.reorderLayers: unknown layer id "${id}".`);
+				}
+				next.push(layer);
+			}
+
+			this.layers = next;
+			if (this.videoJSON) {
+				this.videoJSON.layers = next.map(l => l.json);
+			}
+
+			// Re-append in new order. appendChild moves existing nodes, so this
+			// is a reorder rather than a re-mount.
+			if (this.elementsSetup && this.$canvas) {
+				for (const layer of next) {
+					if (layer.$element && layer.$element.parentNode === this.$canvas) {
+						this.$canvas.appendChild(layer.$element);
+					}
+				}
+			}
+
+			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
+		});
+	}
+
+	/**
+	 * Patch top-level video properties (width, height, backgroundColor).
+	 *
+	 * `fps` and `duration` changes are not supported here — they invalidate
+	 * frame numbers across the pipeline and require a full `loadVideo()`.
+	 */
+	async updateVideo(patch: {
+		width?: number;
+		height?: number;
+		backgroundColor?: string;
+		name?: string;
+	}): Promise<void> {
+		return this.enqueueMutation(async () => {
+			if (!this.videoJSON || !this.$canvas) return;
+
+			if (patch.width !== undefined) {
+				this.videoJSON.width = patch.width;
+				this.$canvas.style.setProperty('--project-width-target', String(patch.width));
+			}
+			if (patch.height !== undefined) {
+				this.videoJSON.height = patch.height;
+				this.$canvas.style.setProperty('--project-height-target', String(patch.height));
+			}
+			if (patch.backgroundColor !== undefined) {
+				this.videoJSON.backgroundColor = patch.backgroundColor;
+				this.$canvas.style.backgroundColor = patch.backgroundColor;
+			}
+			if (patch.name !== undefined) {
+				this.videoJSON.name = patch.name;
+			}
+
+			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
+		});
 	}
 
 	/**
@@ -412,6 +672,7 @@ export default class DomRenderer implements ILayerRenderer {
 		this.stop();
 		for (const layer of this.layers) layer.destroy();
 		this.layers = [];
+		this.layerById.clear();
 		this.$canvas = null;
 		this.videoJSON = null;
 		this.elementsSetup = false;

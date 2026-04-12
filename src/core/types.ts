@@ -130,6 +130,12 @@ export type LayerSettingsJSON = {
 
 /**
  * A single layer as it appears in the compiled JSON model.
+ *
+ * `track` is optional editor metadata: it groups layers into rows in a timeline
+ * UI but has no effect on the renderer, which continues to z-order layers by
+ * their position in the parent `layers` array (later = on top). Editors are
+ * free to pack layers into tracks and write the assignment back here; non-editor
+ * consumers can ignore the field entirely.
  */
 export type LayerJSON = {
 	id: Id;
@@ -137,12 +143,38 @@ export type LayerJSON = {
 	settings: LayerSettingsJSON;
 	properties: Record<string, any>;
 	animations: Animation[];
+	track?: number;
+};
+
+/**
+ * Optional editor metadata for a single track row.
+ *
+ * Tracks are a purely editor-side concept — the renderer still z-orders
+ * layers by their position in `layers`. When an editor groups layers into
+ * tracks (via `LayerJSON.track`), this parallel array can carry per-track
+ * display state (name, enable/mute toggles) without embedding that state on
+ * every layer.
+ *
+ * Indices line up with the track numbers used by `LayerJSON.track`. Entries
+ * may be sparse: missing indices default to `{ name: "Track N", enabled: true,
+ * muted: false }` at the editor's discretion.
+ */
+export type TrackJSON = {
+	/** Human-readable name shown in the timeline header. */
+	name: string;
+	/** When false, the editor treats all layers on this track as hidden. */
+	enabled: boolean;
+	/** When true, audio-bearing layers on this track are silenced. */
+	muted: boolean;
 };
 
 /**
  * The top-level compiled video JSON model.
  *
  * This is the format accepted by both the browser and server renderers.
+ *
+ * `tracks` is optional editor metadata: it mirrors `LayerJSON.track` with
+ * per-row display state. Non-editor consumers should ignore it.
  */
 export type VideoJSON = {
 	name: string;
@@ -152,6 +184,7 @@ export type VideoJSON = {
 	fps: number;
 	backgroundColor: string;
 	layers: LayerJSON[];
+	tracks?: TrackJSON[];
 };
 
 // ---------------------------------------------------------------------------
