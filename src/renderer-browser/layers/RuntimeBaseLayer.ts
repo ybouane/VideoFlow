@@ -145,26 +145,31 @@ export default class RuntimeBaseLayer {
 		const sourceTimeSec = this.sourceTimeAtFrame(frame);
 		const props: Record<string, any> = {};
 
+		const allDefs = this.getPropertiesDefinition();
+
 		// Process animated properties from the animations array
 		for (const anim of this.json.animations) {
 			const kfs = anim.keyframes;
 			if (kfs.length === 0) continue;
 
-			const definition = this.getPropertyDefinition(anim.property);
+			const definition = allDefs[anim.property];
+			// Skip properties not defined for this layer type
+			if (!definition) continue;
 			props[anim.property] = this.interpolateKeyframes(anim.property, sourceTimeSec, kfs, definition);
 		}
 
 		// Merge static properties (properties not in animations)
 		for (const [key, value] of Object.entries(this.json.properties)) {
 			if (!(key in props)) {
-				const definition = this.getPropertyDefinition(key);
-				props[key] = definition ? this.ensureUnit(value, definition) : value;
+				const definition = allDefs[key];
+				// Skip properties not defined for this layer type
+				if (!definition) continue;
+				props[key] = this.ensureUnit(value, definition);
 			}
 		}
 
 		// Fill in defaults from propertiesDefinition for any properties
 		// that are not set in animations or static properties.
-		const allDefs = this.getPropertiesDefinition();
 		for (const [key, def] of Object.entries(allDefs)) {
 			if (!(key in props) && def.default !== undefined) {
 				props[key] = this.ensureUnit(def.default, def);
