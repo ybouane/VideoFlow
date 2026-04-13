@@ -242,6 +242,12 @@ export type RenderOptions = {
 	verbose?: boolean;
 	/** Progress callback — called with a value from 0 to 1 as rendering advances. */
 	onProgress?: (progress: number) => void;
+	/**
+	 * Whether to offload SVG decoding, canvas drawing and MediaBunny encoding to
+	 * a dedicated Web Worker, keeping the main thread free during export.
+	 * Defaults to `true` in the browser renderer.
+	 */
+	worker?: boolean;
 };
 
 /**
