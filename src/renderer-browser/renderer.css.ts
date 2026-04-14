@@ -8,6 +8,14 @@
  * - Media-specific selectors handle `fit` (contain/cover) sizing
  * - `textual-layer` is a custom element tag for text-bearing layers
  *
+ * Scale-independent units:
+ * - `--vw`, `--vh`, `--vmin` each resolve to 1% of the corresponding project
+ *   dimension in CSS pixels. The root `font-size` is set to `--vw`, so `1em`
+ *   inside a layer is also 1% of the project width. Layer properties marked
+ *   with `scaleWith` in their definition are rewritten at apply-time to
+ *   `calc(value * var(--vw | --vh | --vmin))`, giving resolution-independent
+ *   rendering out of the box.
+ *
  * The transform uses CSS custom properties so the renderer only needs to set
  * variable values (e.g. `--position-0: 0.3`) rather than rewrite the full
  * transform string every frame.
@@ -48,16 +56,19 @@ const RENDERER_CSS = `
 	--text-shadow-color:#000000;
 }
 [data-renderer] {
+	--vw: calc(var(--project-width) * 0.01 * 1px);
+	--vh: calc(var(--project-height) * 0.01 * 1px);
+	--vmin: min(var(--vw), var(--vh));
 	position:relative;
 	overflow:hidden;
 	display:flex;
 	align-items: center;
 	justify-content: center;
-	font-size:calc(var(--project-width) / 720 * 26px);
+	font-size: var(--vw);
 	font-weight:600;
 	width:calc(var(--project-width) * 1px);
 	height:calc(var(--project-height) * 1px);
-	perspective: calc(1px * max(var(--project-height), var(--project-width)));
+	perspective: calc(100 * var(--vw));
 }
 [data-element] {
 	position:absolute;
@@ -65,13 +76,13 @@ const RENDERER_CSS = `
 		translate3d(
 			calc((var(--anchor-0) - 0.5) * -100% + (var(--position-0) - 0.5) * var(--project-width) * 1px),
 			calc((var(--anchor-1) - 0.5) * -100% + (var(--position-1) - 0.5) * var(--project-height) * 1px),
-			calc(var(--position-2) * 1px)
+			calc(var(--position-2) * var(--vw))
 		)
-		perspective(var(--perspective, 2000px))
+		perspective(var(--perspective, calc(100 * var(--vw))))
 		rotateX(var(--rotation-1)) rotateY(var(--rotation-2)) rotateZ(var(--rotation-0, var(--rotation)))
 		scale3d(var(--scale-0, var(--scale)), var(--scale-1, var(--scale)), var(--scale-2, var(--scale)))
 	;
-	transform-origin: calc(var(--anchor-0) * 100%) calc(var(--anchor-1) * 100%) calc(var(--anchor-2) * 1px);
+	transform-origin: calc(var(--anchor-0) * 100%) calc(var(--anchor-1) * 100%) calc(var(--anchor-2) * var(--vw));
 	will-change: transform;
 	border-style:solid;
 	border-color:#000000;
