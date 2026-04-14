@@ -171,6 +171,7 @@ export default class DomRenderer implements ILayerRenderer {
 		// stays in the cache without bouncing through refCount === 0.
 		this.stop();
 		const oldLayers = this.layers;
+		const oldCanvas = this.$canvas;
 
 		// 1. Construct new runtime layers (no fetches yet).
 		const newLayers = videoJSON.layers.map(layerJSON =>
@@ -186,34 +187,58 @@ export default class DomRenderer implements ILayerRenderer {
 		//    durations are known.
 		for (const layer of newLayers) layer.resolveMediaTimings();
 
-		// 4. Swap state and rebuild the shadow scaffolding.
+		// 4. Make sure the renderer stylesheet is present. Reuse the existing
+		//    one if the shadow already has it so we don't thrash styles during
+		//    reload.
+		if (!this.shadow.querySelector('style[data-renderer-css]')) {
+			const style = document.createElement('style');
+			style.setAttribute('data-renderer-css', '');
+			style.textContent = RENDERER_CSS;
+			this.shadow.appendChild(style);
+		}
+
+		// 5. Build the new $canvas but keep the old one mounted and visible
+		//    so the user keeps seeing the previous frame until the new canvas
+		//    has had its layers generated and the first frame painted. The
+		//    new canvas is taken out of flow (position: absolute) and hidden
+		//    so it doesn't disturb the old canvas's layout.
+		const newCanvas = document.createElement('div');
+		newCanvas.toggleAttribute('data-renderer', true);
+		newCanvas.style.setProperty('--project-width-target', String(videoJSON.width));
+		newCanvas.style.setProperty('--project-height-target', String(videoJSON.height));
+		newCanvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
+		if (oldCanvas && oldCanvas.parentNode === this.shadow) {
+			newCanvas.style.position = 'absolute';
+			newCanvas.style.visibility = 'hidden';
+		}
+		this.shadow.appendChild(newCanvas);
+
+		// 6. Swap runtime state so renderFrame targets the new canvas/layers.
 		this.videoJSON = videoJSON;
 		this.layers = newLayers;
 		this.layerById = new Map(newLayers.map(l => [l.json.id, l]));
+		this.$canvas = newCanvas;
 		this.currentFrame = -1;
 		this.elementsSetup = false;
 
-		this.shadow.innerHTML = '';
-		const style = document.createElement('style');
-		style.textContent = RENDERER_CSS;
-		this.shadow.appendChild(style);
-
-		this.$canvas = document.createElement('div');
-		this.$canvas.toggleAttribute('data-renderer', true);
-		this.$canvas.style.setProperty('--project-width-target', String(videoJSON.width));
-		this.$canvas.style.setProperty('--project-height-target', String(videoJSON.height));
-		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
-		this.shadow.appendChild(this.$canvas);
-
-		// 5. Release the old layers AFTER the new ones are holding their
-		//    refs. Sources unique to the old set drop to refCount === 0 and
-		//    enter the cache's 5 s eviction grace window — if the user
-		//    quickly reloads a project that needs them again, the timer is
-		//    canceled and there is no re-fetch.
-		for (const layer of oldLayers) layer.destroy();
-
-		// 6. Render frame 0.
+		// 7. Generate layer DOM inside the new canvas and render frame 0 into
+		//    it. The old canvas is still on screen during this step.
 		await this.renderFrame(0, true);
+
+		// 8. Atomic swap: remove the old canvas and reveal the new one in a
+		//    single synchronous step so there's no interleaved blank frame.
+		if (oldCanvas && oldCanvas.parentNode === this.shadow) {
+			this.shadow.removeChild(oldCanvas);
+		}
+		newCanvas.style.removeProperty('position');
+		newCanvas.style.removeProperty('visibility');
+
+		// 9. Release the old layers AFTER the new ones are holding their
+		//    refs AND the handoff is visually complete. Sources unique to the
+		//    old set drop to refCount === 0 and enter the cache's 5 s eviction
+		//    grace window — if the user quickly reloads a project that needs
+		//    them again, the timer is canceled and there is no re-fetch.
+		for (const layer of oldLayers) layer.destroy();
 	}
 
 	// -----------------------------------------------------------------------
