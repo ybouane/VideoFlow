@@ -42,7 +42,11 @@ export default class TextLayer extends TextualLayer {
 	static get propertiesDefinition(): Record<string, PropertyDefinition> {
 		return {
 			...super.propertiesDefinition,
-			/** The text content to render.  Not a CSS property — applied via DOM. */
+			/**
+			 * The string to display. Applied directly to the DOM element
+			 * (not a CSS property). Not animatable — to swap text over time,
+			 * remove and re-add the layer.
+			 */
 			'text': { cssProperty: false, default: 'Type your text here', animatable: false },
 		};
 	}
