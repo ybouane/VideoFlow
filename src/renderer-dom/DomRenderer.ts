@@ -299,10 +299,13 @@ export default class DomRenderer implements ILayerRenderer {
 	/**
 	 * Apply a property / settings / animations patch to a single layer.
 	 *
-	 * - `settings` and `properties` are shallow-merged into `layer.json`.
-	 * - `animations` replaces the array wholesale (callers hold the diffing
-	 *   logic because per-keyframe reconciliation is cheap to do in editor
-	 *   state).
+	 * - `settings` is shallow-merged into `layer.json.settings`.
+	 * - `properties` replaces `layer.json.properties` wholesale so keys removed
+	 *   by the editor (e.g. via a reset-to-default) are actually cleared.
+	 *   Callers should pass the full post-mutation properties object.
+	 * - `animations` replaces the array wholesale (same rationale — callers
+	 *   hold the diffing logic because per-keyframe reconciliation is cheap to
+	 *   do in editor state).
 	 *
 	 * If `settings.source` changed, the layer's media is re-initialized via
 	 * `layer.initialize()` — callers should debounce rapid source swaps.
@@ -329,7 +332,7 @@ export default class DomRenderer implements ILayerRenderer {
 				layer.json.settings = { ...layer.json.settings, ...patch.settings };
 			}
 			if (patch.properties) {
-				layer.json.properties = { ...layer.json.properties, ...patch.properties };
+				layer.json.properties = patch.properties;
 			}
 			if (patch.animations) {
 				layer.json.animations = patch.animations;
