@@ -45,9 +45,9 @@ export default class RuntimeMediaLayer extends RuntimeVisualLayer {
 	 */
 	resetCSSProperties(): void {
 		super.resetCSSProperties();
-		if (this.$element) {
+		/*if (this.$element) {
 			this.$element.removeAttribute('data-fit');
-		}
+		}*/
 	}
 
 	/**
