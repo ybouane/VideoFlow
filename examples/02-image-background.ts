@@ -27,7 +27,7 @@ export function createProject() {
 	// Slowly blur the background over 4 seconds (non-blocking)
 	bg.animate(
 		{ filterBlur: 0 },
-		{ filterBlur: 8 },
+		{ filterBlur: 0.5 },
 		{ duration: '4s', wait: false },
 	);
 
@@ -40,7 +40,7 @@ export function createProject() {
 		fontWeight: 700,
 		color: '#ffffff',
 		textShadowColor: 'rgba(0,0,0,0.5)',
-		textShadowBlur: 10,
+		textShadowBlur: 0.5,
 	});
 
 	title.fadeIn('1s');

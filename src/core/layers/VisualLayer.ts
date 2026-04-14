@@ -78,57 +78,126 @@ export default class VisualLayer extends BaseLayer {
 	 * Each entry specifies how a property maps to CSS, what units it accepts,
 	 * its default value, and whether it can be smoothly interpolated between
 	 * keyframes during animation.
+	 *
+	 * ### Unit conventions
+	 *
+	 * Size properties accept `em` (default) or `px`. The renderer sets the
+	 * root font-size to `1%` of the project width, so `1em` = 1% of project
+	 * width and renders identically at any output resolution. Inside a text
+	 * layer with a non-default `fontSize`, `em` is relative to that layer's
+	 * font-size (standard CSS cascade), so sizes around text scale with the
+	 * text.
+	 *
+	 * Colours accept any CSS colour string. Boolean toggles and enum values
+	 * are plain strings / booleans. Angles are in degrees.
 	 */
 	static get propertiesDefinition(): Record<string, PropertyDefinition> {
 		return {
 			...super.propertiesDefinition,
 
 			// --- Visibility & opacity ---
+			/** Hard on/off toggle. Not animatable — fades via `opacity`. */
 			'visible': { default: true, animatable: false },
+			/** `0` = fully transparent, `1` = fully opaque. */
 			'opacity': { default: 1, animatable: true },
 
 			// --- Transform ---
+			/**
+			 * `[x, y]` or `[x, y, z]`. `x` and `y` are normalised fractions of
+			 * the project canvas — `0` = left/top edge, `1` = right/bottom
+			 * edge, `0.5` = centred. `z` is a depth offset in `em` (1em = 1%
+			 * of project width) — positive moves toward the camera.
+			 */
 			'position': { cssProperty: '--position', default: [0.5, 0.5], animatable: true },
+			/**
+			 * Uniform scale factor, or `[sx, sy]` / `[sx, sy, sz]` for
+			 * non-uniform scaling. `1` = natural size, `2` = double size.
+			 */
 			'scale': { cssProperty: '--scale', default: 1, animatable: true },
+			/**
+			 * Rotation in degrees. Number = rotate around Z axis, or
+			 * `[rx, ry, rz]` for per-axis rotation (X tilt / Y turn / Z roll).
+			 */
 			'rotation': { cssProperty: '--rotation', units: ['deg'], default: 0, animatable: true },
+			/**
+			 * Pivot point for rotation / scale, as normalised fractions
+			 * (`[0, 0]` = top-left, `[0.5, 0.5]` = centre, `[1, 1]` = bottom-right).
+			 * Also defines where `position` anchors on the layer.
+			 */
 			'anchor': { cssProperty: '--anchor', default: [0.5, 0.5], animatable: true },
 
 			// --- Background ---
+			/** CSS colour string (hex, `rgb()`, `rgba()`, `hsl()`, named, …). */
 			'backgroundColor': { cssProperty: 'background-color', default: 'transparent', animatable: true },
 
 			// --- Border ---
-			'borderWidth': { cssProperty: 'border-width', units: ['px'], default: 0, animatable: true },
+			/**
+			 * Border thickness. Unitless = `em` (1em = 1% of project width).
+			 * Single number applies to all sides; use `[top, right, bottom, left]`
+			 * to set each side independently.
+			 */
+			'borderWidth': { cssProperty: 'border-width', units: ['em', 'px'], default: 0, animatable: true },
+			/** One of the CSS border-style keywords. Not animatable. */
 			'borderStyle': { cssProperty: 'border-style', enum: ['none', 'solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'inset', 'outset'], default: 'solid', animatable: false },
+			/** CSS colour string. */
 			'borderColor': { cssProperty: 'border-color', default: '#000000', animatable: true },
+			/** When `true`, the border is drawn outside the layer box. */
 			'outerBorder': { default: false, animatable: false },
-			'borderRadius': { cssProperty: 'border-radius', units: ['', 'px', '%'], default: 0, animatable: true },
+			/**
+			 * Corner radius. Unitless = `em`. Use `%` for proportional
+			 * rounding (e.g. `50%` = perfect circle on a square). Single number
+			 * applies to all four corners; array is `[tl, tr, br, bl]`.
+			 */
+			'borderRadius': { cssProperty: 'border-radius', units: ['em', 'px', '%'], default: 0, animatable: true },
 
 			// --- Box shadow ---
+			/** Master switch — when `false`, all box-shadow props are ignored. */
 			'boxShadow': { default: false, animatable: false },
-			'boxShadowBlur': { cssProperty: '--box-shadow-blur', units: ['px'], default: 0, animatable: true },
-			'boxShadowOffset': { cssProperty: '--box-shadow-offset', units: ['px'], default: [0, 0], animatable: true },
-			'boxShadowSpread': { cssProperty: '--box-shadow-spread', units: ['px'], default: 0, animatable: true },
+			/** Shadow blur radius. Unitless = `em`. `0` = hard edge. */
+			'boxShadowBlur': { cssProperty: '--box-shadow-blur', units: ['em', 'px'], default: 0, animatable: true },
+			/** `[x, y]` shadow offset. Unitless = `em`. Positive = right/down. */
+			'boxShadowOffset': { cssProperty: '--box-shadow-offset', units: ['em', 'px'], default: [0, 0], animatable: true },
+			/** Positive values grow the shadow, negative values shrink it. `em` units. */
+			'boxShadowSpread': { cssProperty: '--box-shadow-spread', units: ['em', 'px'], default: 0, animatable: true },
+			/** CSS colour string (use `rgba()` for soft translucent shadows). */
 			'boxShadowColor': { cssProperty: '--box-shadow-color', default: '#000000', animatable: true },
 
 			// --- Outline ---
-			'outlineWidth': { cssProperty: 'outline-width', units: ['px'], default: 0, animatable: true },
+			/** Outline thickness (drawn outside the border). Unitless = `em`. */
+			'outlineWidth': { cssProperty: 'outline-width', units: ['em', 'px'], default: 0, animatable: true },
+			/** One of the CSS outline-style keywords. Not animatable. */
 			'outlineStyle': { cssProperty: 'outline-style', enum: ['none', 'solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'inset', 'outset'], default: 'none', animatable: false },
+			/** CSS colour string. */
 			'outlineColor': { cssProperty: 'outline-color', default: '#000000', animatable: true },
-			'outlineOffset': { cssProperty: 'outline-offset', units: ['px'], default: 0, animatable: true },
+			/** Gap between the layer and its outline. Unitless = `em`. */
+			'outlineOffset': { cssProperty: 'outline-offset', units: ['em', 'px'], default: 0, animatable: true },
 
 			// --- Filters (individual CSS filter functions) ---
-			'filterBlur': { cssProperty: '--filter-blur', units: ['px'], default: 0, animatable: true },
+			/** Gaussian blur radius. Unitless = `em`. `0` = no blur. */
+			'filterBlur': { cssProperty: '--filter-blur', units: ['em', 'px'], default: 0, animatable: true },
+			/** Unitless multiplier. `0` = black, `1` = original, `>1` = brighter. */
 			'filterBrightness': { cssProperty: '--filter-brightness', default: 1, animatable: true },
+			/** Unitless multiplier. `0` = grey, `1` = original, `>1` = higher contrast. */
 			'filterContrast': { cssProperty: '--filter-contrast', default: 1, animatable: true },
+			/** `0` = original colour, `1` = fully black-and-white. */
 			'filterGrayscale': { cssProperty: '--filter-grayscale', default: 0, animatable: true },
+			/** `0` = original colour, `1` = fully sepia-toned. */
 			'filterSepia': { cssProperty: '--filter-sepia', default: 0, animatable: true },
+			/** `0` = original colours, `1` = fully inverted (negative). */
 			'filterInvert': { cssProperty: '--filter-invert', default: 0, animatable: true },
+			/** Hue shift in degrees (`0`–`360`). */
 			'filterHueRotate': { cssProperty: '--filter-hue-rotate', units: ['deg'], default: 0, animatable: true },
+			/** Unitless multiplier. `0` = grey, `1` = original, `>1` = more saturated. */
 			'filterSaturate': { cssProperty: '--filter-saturate', default: 1, animatable: true },
 
 			// --- Blend mode & perspective ---
 			//'blendMode': { cssProperty: 'mix-blend-mode', enum: ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'], default: 'normal', animatable: false },
-			'perspective': { cssProperty: '--perspective', units: ['px'], default: 2000, animatable: true },
+			/**
+			 * 3D viewing distance for `rotation` / `position[z]`. Unitless = `em`.
+			 * Default `100` (= `100em` = one project-width) gives a gentle 3D
+			 * effect; smaller values exaggerate perspective, larger flatten it.
+			 */
+			'perspective': { cssProperty: '--perspective', units: ['em', 'px'], default: 100, animatable: true },
 		};
 	}
 }

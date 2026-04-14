@@ -218,7 +218,12 @@ export type Action =
 export type PropertyDefinition = {
 	/** CSS property name, CSS custom property (`--name`), or `false` for non-CSS props. */
 	cssProperty?: string | false;
-	/** Allowed CSS unit suffixes (e.g. `['px']`, `['deg']`, `['em', 'px']`). */
+	/**
+	 * Allowed CSS unit suffixes (e.g. `['em', 'px']`, `['deg']`, `['%']`).
+	 * Unitless inputs are suffixed with the first entry at render time, so
+	 * sizing properties typically list `['em', 'px']` — unitless `4` becomes
+	 * `"4em"`, and `1em` equals 1% of the project width at the root element.
+	 */
 	units?: string[];
 	/** Enumerated allowed values (if applicable). */
 	enum?: string[];
