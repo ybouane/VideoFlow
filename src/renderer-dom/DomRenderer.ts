@@ -165,80 +165,109 @@ export default class DomRenderer implements ILayerRenderer {
 	 * @param videoJSON - Compiled VideoJSON from VideoFlow.compile().
 	 */
 	async loadVideo(videoJSON: VideoJSON): Promise<void> {
-		// Stop playback / pending audio, but DO NOT destroy old layers yet —
-		// we want to keep their cache references alive while the new layers
-		// acquire theirs, so any source present in both old and new JSONs
-		// stays in the cache without bouncing through refCount === 0.
-		this.stop();
-		const oldLayers = this.layers;
-		const oldCanvas = this.$canvas;
+		// Serialize through the mutation queue so concurrent loadVideo() calls,
+		// or a loadVideo() racing with an addLayer/updateLayer/... mutation,
+		// can't interleave and leave stale state (e.g., multiple [data-renderer]
+		// canvases in the shadow, orphaned layer refs, etc.).
+		return this.enqueueMutation(async () => {
+			// Stop playback / pending audio, but DO NOT destroy old layers yet —
+			// we want to keep their cache references alive while the new layers
+			// acquire theirs, so any source present in both old and new JSONs
+			// stays in the cache without bouncing through refCount === 0.
+			this.stop();
 
-		// 1. Construct new runtime layers (no fetches yet).
-		const newLayers = videoJSON.layers.map(layerJSON =>
-			createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this)
-		);
+			// Wait for any in-flight renderFrame() kicked off from outside the
+			// mutation queue (seek, play, currentTime setter, public renderFrame)
+			// to drain before we start swapping state — otherwise that render
+			// could finish mid-swap and paint into the wrong canvas.
+			while (this.rendering) {
+				await new Promise<void>(r => queueMicrotask(r));
+			}
 
-		// 2. Initialise them in parallel — this is where each layer acquires
-		//    its source from the global media cache. Sources shared with the
-		//    outgoing layers are reused, not re-fetched.
-		await Promise.all(newLayers.map(layer => layer.initialize()));
+			const oldLayers = this.layers;
+			const oldCanvas = this.$canvas;
 
-		// 3. Resolve any deferred sourceEnd → sourceDuration now that intrinsic
-		//    durations are known.
-		for (const layer of newLayers) layer.resolveMediaTimings();
+			// 1. Construct new runtime layers (no fetches yet).
+			const newLayers = videoJSON.layers.map(layerJSON =>
+				createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this)
+			);
 
-		// 4. Make sure the renderer stylesheet is present. Reuse the existing
-		//    one if the shadow already has it so we don't thrash styles during
-		//    reload.
-		if (!this.shadow.querySelector('style[data-renderer-css]')) {
-			const style = document.createElement('style');
-			style.setAttribute('data-renderer-css', '');
-			style.textContent = RENDERER_CSS;
-			this.shadow.appendChild(style);
-		}
+			// 2. Initialise them in parallel — this is where each layer acquires
+			//    its source from the global media cache. Sources shared with the
+			//    outgoing layers are reused, not re-fetched.
+			await Promise.all(newLayers.map(layer => layer.initialize()));
 
-		// 5. Build the new $canvas but keep the old one mounted and visible
-		//    so the user keeps seeing the previous frame until the new canvas
-		//    has had its layers generated and the first frame painted. The
-		//    new canvas is taken out of flow (position: absolute) and hidden
-		//    so it doesn't disturb the old canvas's layout.
-		const newCanvas = document.createElement('div');
-		newCanvas.toggleAttribute('data-renderer', true);
-		newCanvas.style.setProperty('--project-width-target', String(videoJSON.width));
-		newCanvas.style.setProperty('--project-height-target', String(videoJSON.height));
-		newCanvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
-		if (oldCanvas && oldCanvas.parentNode === this.shadow) {
-			newCanvas.style.position = 'absolute';
-			newCanvas.style.visibility = 'hidden';
-		}
-		this.shadow.appendChild(newCanvas);
+			// 3. Resolve any deferred sourceEnd → sourceDuration now that intrinsic
+			//    durations are known.
+			for (const layer of newLayers) layer.resolveMediaTimings();
 
-		// 6. Swap runtime state so renderFrame targets the new canvas/layers.
-		this.videoJSON = videoJSON;
-		this.layers = newLayers;
-		this.layerById = new Map(newLayers.map(l => [l.json.id, l]));
-		this.$canvas = newCanvas;
-		this.currentFrame = -1;
-		this.elementsSetup = false;
+			// 4. Make sure the renderer stylesheet is present. Reuse the existing
+			//    one if the shadow already has it so we don't thrash styles during
+			//    reload.
+			if (!this.shadow.querySelector('style[data-renderer-css]')) {
+				const style = document.createElement('style');
+				style.setAttribute('data-renderer-css', '');
+				style.textContent = RENDERER_CSS;
+				this.shadow.appendChild(style);
+			}
 
-		// 7. Generate layer DOM inside the new canvas and render frame 0 into
-		//    it. The old canvas is still on screen during this step.
-		await this.renderFrame(0, true);
+			// 5. Build the new $canvas but keep the old one mounted and visible
+			//    so the user keeps seeing the previous frame until the new canvas
+			//    has had its layers generated and the first frame painted. The
+			//    new canvas is taken out of flow (position: absolute) and hidden
+			//    so it doesn't disturb the old canvas's layout.
+			const newCanvas = document.createElement('div');
+			newCanvas.toggleAttribute('data-renderer', true);
+			newCanvas.style.setProperty('--project-width-target', String(videoJSON.width));
+			newCanvas.style.setProperty('--project-height-target', String(videoJSON.height));
+			newCanvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
+			// Hide the new canvas off-flow whenever there's anything else visible
+			// in the shadow with [data-renderer] (normally the old canvas, but
+			// this also covers leaked canvases from an earlier interrupted run).
+			const hasExistingCanvas = this.shadow.querySelector('[data-renderer]') !== null;
+			if (hasExistingCanvas) {
+				newCanvas.style.position = 'absolute';
+				newCanvas.style.visibility = 'hidden';
+			}
+			this.shadow.appendChild(newCanvas);
 
-		// 8. Atomic swap: remove the old canvas and reveal the new one in a
-		//    single synchronous step so there's no interleaved blank frame.
-		if (oldCanvas && oldCanvas.parentNode === this.shadow) {
-			this.shadow.removeChild(oldCanvas);
-		}
-		newCanvas.style.removeProperty('position');
-		newCanvas.style.removeProperty('visibility');
+			// 6. Swap runtime state so renderFrame targets the new canvas/layers.
+			this.videoJSON = videoJSON;
+			this.layers = newLayers;
+			this.layerById = new Map(newLayers.map(l => [l.json.id, l]));
+			this.$canvas = newCanvas;
+			this.currentFrame = -1;
+			this.elementsSetup = false;
 
-		// 9. Release the old layers AFTER the new ones are holding their
-		//    refs AND the handoff is visually complete. Sources unique to the
-		//    old set drop to refCount === 0 and enter the cache's 5 s eviction
-		//    grace window — if the user quickly reloads a project that needs
-		//    them again, the timer is canceled and there is no re-fetch.
-		for (const layer of oldLayers) layer.destroy();
+			try {
+				// 7. Generate layer DOM inside the new canvas and render frame 0
+				//    into it. The old canvas is still on screen during this step.
+				await this.renderFrame(0, true);
+			} finally {
+				// 8. Atomic swap: remove every [data-renderer] except the new one.
+				//    Using querySelectorAll (instead of just oldCanvas) makes this
+				//    self-healing — if a previous loadVideo was interrupted and
+				//    left a stray canvas behind, it gets cleaned up here too.
+				const canvases = this.shadow.querySelectorAll('[data-renderer]');
+				for (const el of Array.from(canvases)) {
+					if (el !== newCanvas) el.remove();
+				}
+				newCanvas.style.removeProperty('position');
+				newCanvas.style.removeProperty('visibility');
+
+				// 9. Release the old layers AFTER the new ones are holding their
+				//    refs AND the handoff is visually complete. Sources unique to
+				//    the old set drop to refCount === 0 and enter the cache's 5 s
+				//    eviction grace window — if the user quickly reloads a project
+				//    that needs them again, the timer is canceled and there is no
+				//    re-fetch. Done in `finally` so refs are released even when
+				//    renderFrame(0) throws, and ignored if oldLayers === newLayers
+				//    (shouldn't happen, but cheap to guard).
+				if (oldLayers !== newLayers) {
+					for (const layer of oldLayers) layer.destroy();
+				}
+			}
+		});
 	}
 
 	// -----------------------------------------------------------------------
