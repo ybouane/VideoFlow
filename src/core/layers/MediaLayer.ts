@@ -57,6 +57,11 @@ export default class MediaLayer extends VisualLayer {
 	static get propertiesDefinition(): Record<string, PropertyDefinition> {
 		return {
 			...super.propertiesDefinition,
+			/**
+			 * How the media is sized within the project canvas:
+			 * - `'contain'` — fit entirely inside, letterboxing as needed
+			 * - `'cover'` — fill the canvas, cropping overflow
+			 */
 			'fit': { enum: ['contain', 'cover'], default: 'contain', animatable: false },
 		};
 	}

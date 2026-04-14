@@ -51,12 +51,19 @@ export default class VideoLayer extends MediaLayer {
 		const base = super.propertiesDefinition;
 		return {
 			...base,
-			// Audio properties
+			// Audio properties — same semantics as AuditoryLayer
+			/** Gain multiplier — `0` = silence, `1` = full volume, `>1` amplifies. */
 			'volume': { default: 1, animatable: true },
+			/** Stereo panning — `-1` = full left, `0` = centre, `1` = full right. */
 			'pan': { default: 0, animatable: true },
+			/** Playback-rate pitch shift — `1` = normal. */
 			'pitch': { default: 1, animatable: true },
+			/** Silence the audio track without changing `volume`. Not animatable. */
 			'mute': { default: false, animatable: false },
-			// Override default fit to cover for video
+			/**
+			 * Video defaults to `'cover'` so a clip always fills the canvas
+			 * (instead of the `'contain'` default for static images).
+			 */
 			'fit': { ...base['fit'], default: 'cover' },
 		};
 	}

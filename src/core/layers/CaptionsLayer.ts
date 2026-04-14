@@ -67,8 +67,9 @@ export default class CaptionsLayer extends TextualLayer {
 		return {
 			...super.propertiesDefinition,
 			/**
-			 * The `text` property is overridden to have no default — the caption
-			 * text is determined at render time from the `captions` setting array.
+			 * The caption text shown at the current frame. Driven by the
+			 * `captions` setting array — no default value, and not directly
+			 * settable by the user.
 			 */
 			'text': { cssProperty: false, default: undefined, animatable: false },
 		};

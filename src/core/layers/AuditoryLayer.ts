@@ -44,18 +44,17 @@ export default class AuditoryLayer extends BaseLayer {
 
 	/**
 	 * Audio property definitions.
-	 *
-	 * - **volume** — gain multiplier (0 = silence, 1 = full)
-	 * - **pan** — stereo panning (−1 = full left, 0 = centre, 1 = full right)
-	 * - **pitch** — playback rate pitch shift (1 = normal)
-	 * - **mute** — boolean toggle, silences without affecting volume value
 	 */
 	static get propertiesDefinition(): Record<string, PropertyDefinition> {
 		return {
 			...super.propertiesDefinition,
+			/** Gain multiplier — `0` = silence, `1` = full volume, `>1` amplifies. */
 			'volume': { default: 1, animatable: true },
+			/** Stereo panning — `-1` = full left, `0` = centre, `1` = full right. */
 			'pan': { default: 0, animatable: true },
+			/** Playback-rate pitch shift — `1` = normal, `2` = one octave up, `0.5` = one octave down. */
 			'pitch': { default: 1, animatable: true },
+			/** Silence the layer without changing `volume`. Not animatable. */
 			'mute': { default: false, animatable: false },
 		};
 	}
