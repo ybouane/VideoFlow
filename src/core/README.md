@@ -134,7 +134,8 @@ const title = $.addText(
     text: 'Hello, VideoFlow!',   // Text content. Default: 'Type your text here'
 
     // --- TextualLayer (typography) ---
-    fontSize: 1.0,               // In em (relative to canvas) or px. Default: 1.0
+    // Sizing defaults to `em`. At the project root, 1em = 1% of project width.
+    fontSize: 4,                 // Unitless = em (4em = 4% of project width). Default: 4
     fontFamily: 'Noto Sans',     // Google Font name, auto-loaded. Default: 'Noto Sans'
     fontWeight: 600,             // 100–900 or string. Default: 600
     fontStyle: 'normal',         // 'normal' | 'italic'. Default: 'normal'
@@ -142,19 +143,19 @@ const title = $.addText(
     color: '#FFFFFF',            // Text color. Default: '#FFFFFF'
     textAlign: 'center',         // 'left' | 'right' | 'center' | 'justify'. Default: 'center'
     verticalAlign: 'middle',     // 'top' | 'middle' | 'bottom'. Default: 'middle'
-    padding: 0,                  // In px, or [top, right, bottom, left]. Default: 0
+    padding: 0,                  // Unitless = em, or [top, right, bottom, left]. Default: 0
 
     textStroke: false,           // Enable stroke outline around glyphs. Default: false
-    textStrokeWidth: 0,          // Stroke width in px. Default: 0
+    textStrokeWidth: 0,          // Stroke width (unitless = em). Default: 0
     textStrokeColor: '#000000',  // Stroke color. Default: '#000000'
 
     textShadow: false,           // Enable text shadow. Default: false
     textShadowColor: '#000000',  // Shadow color. Default: '#000000'
-    textShadowOffset: [0, 0],    // [x, y] in px. Default: [0, 0]
-    textShadowBlur: 0,           // Blur radius in px. Default: 0
+    textShadowOffset: [0, 0],    // [x, y] (unitless = em). Default: [0, 0]
+    textShadowBlur: 0,           // Blur radius (unitless = em). Default: 0
 
     letterSpacing: '0em',        // In em or px. Default: '0em'
-    lineHeight: 1,               // Unitless multiplier, or em/px. Default: 1
+    lineHeight: 1,               // Unitless multiplier of font-size, or em/px. Default: 1
     wordSpacing: 0,              // In em or px. Default: 0
     textIndent: 0,               // First-line indent. Default: 0
     textTransform: 'none',       // 'none' | 'capitalize' | 'uppercase' | 'lowercase'. Default: 'none'
@@ -282,12 +283,12 @@ Displays timed caption entries from a pre-built array. Inherits from `TextualLay
 const subs = $.addCaptions(
   {
     // --- Typography (same as addText, see TextualLayer properties above) ---
-    fontSize: 1.2,
+    fontSize: 3,                 // 3em = 3% of project width
     fontFamily: 'Inter',
     fontWeight: 700,
     color: '#FFFFFF',
     textStroke: true,            // Common for readable captions
-    textStrokeWidth: 4,
+    textStrokeWidth: 0.15,       // 0.15em — scales with text
     textStrokeColor: '#000000',
 
     // --- Visual / transform ---
@@ -316,6 +317,20 @@ const subs = $.addCaptions(
 
 Every visual layer (text, image, video, captions) inherits the following from `VisualLayer`. All of these can be passed at creation or via `.set()` / `.animate()`. Most are animatable.
 
+### Unit convention
+
+Sizing properties default to the `em` unit so videos render identically at any
+output resolution. VideoFlow sets the project root font-size so that **`1em`
+= 1% of the project width** — an unstyled `fontSize: 4` resolves to 4% of the
+canvas width (≈ 77px on 1920, ≈ 51px on 1280). Inside a text layer, `em`
+follows the standard CSS cascade (relative to that layer's `fontSize`), which
+is typically what you want for padding/stroke/shadow *around* text.
+
+Size inputs also accept explicit `px` strings, and `borderRadius` additionally
+accepts `%`. Rotations and `filterHueRotate` are in `deg`. Colours are any CSS
+colour string. Unitless ratios (opacity, scale, filter multipliers) stay
+unitless.
+
 ### Transform — position, scale, rotation, anchor
 
 Transforms use **normalized 0–1 coordinates** — not pixels. `[0.5, 0.5]` is always the center.
@@ -324,7 +339,7 @@ Transforms use **normalized 0–1 coordinates** — not pixels. `[0.5, 0.5]` is 
 layer.set({
   // Position of the anchor point within the canvas.
   // [0, 0] = top-left, [0.5, 0.5] = center, [1, 1] = bottom-right.
-  // Third value (z) is in px for 3D depth. Animatable.
+  // Third value (z) is depth in em (1em = 1% of project width). Animatable.
   position: [0.5, 0.5],        // Default: [0.5, 0.5]
 
   // Scale multiplier relative to the element's natural size.
@@ -338,8 +353,8 @@ layer.set({
   // [0, 0] = top-left of element, [0.5, 0.5] = center, [1, 1] = bottom-right. Animatable.
   anchor: [0.5, 0.5],          // Default: [0.5, 0.5]
 
-  // 3D perspective distance in px (how strong 3D rotations look). Animatable.
-  perspective: 2000,           // Default: 2000
+  // 3D perspective distance (unitless = em; 100em = one project-width). Animatable.
+  perspective: 100,            // Default: 100
 });
 ```
 
@@ -369,11 +384,11 @@ layer.animate(
 ```typescript
 layer.set({
   backgroundColor: 'transparent', // Default: 'transparent'. Animatable.
-  borderWidth: 0,                 // In px, or [top, right, bottom, left]. Default: 0. Animatable.
+  borderWidth: 0,                 // Unitless = em, or [top, right, bottom, left]. Default: 0. Animatable.
   borderStyle: 'solid',           // 'none'|'solid'|'dashed'|'dotted'|'double'|'groove'|'ridge'|'inset'|'outset'. Default: 'solid'
   borderColor: '#000000',         // Default: '#000000'. Animatable.
   outerBorder: false,             // Draw border outside instead of inside. Default: false
-  borderRadius: 0,                // In px or %, or 4-corner array. Default: 0. Animatable.
+  borderRadius: 0,                // Unitless = em, or '%', or 4-corner array. Default: 0. Animatable.
 });
 ```
 
@@ -383,9 +398,9 @@ layer.set({
 layer.set({
   boxShadow: true,                // Must be true to render shadow. Default: false
   boxShadowColor: '#000000',      // Default: '#000000'. Animatable.
-  boxShadowOffset: [0, 0],        // [x, y] in px. Default: [0, 0]. Animatable.
-  boxShadowBlur: 0,               // In px. Default: 0. Animatable.
-  boxShadowSpread: 0,             // In px. Default: 0. Animatable.
+  boxShadowOffset: [0, 0],        // [x, y], unitless = em. Default: [0, 0]. Animatable.
+  boxShadowBlur: 0,               // Unitless = em. Default: 0. Animatable.
+  boxShadowSpread: 0,             // Unitless = em. Default: 0. Animatable.
 });
 ```
 
@@ -393,10 +408,10 @@ layer.set({
 
 ```typescript
 layer.set({
-  outlineWidth: 0,                // In px. Default: 0. Animatable.
+  outlineWidth: 0,                // Unitless = em. Default: 0. Animatable.
   outlineStyle: 'none',           // Same enum as borderStyle. Default: 'none'
   outlineColor: '#000000',        // Default: '#000000'. Animatable.
-  outlineOffset: 0,               // In px. Default: 0. Animatable.
+  outlineOffset: 0,               // Unitless = em. Default: 0. Animatable.
 });
 ```
 
@@ -405,10 +420,10 @@ layer.set({
 All filters are animatable:
 
 ```typescript
-layer.animate({ filterBlur: 0 }, { filterBlur: 20 }, { duration: '2s' });
+layer.animate({ filterBlur: 0 }, { filterBlur: 1 }, { duration: '2s' });
 
-// filterBlur:       px,              default 0
-// filterBrightness: multiplier,      default 1 (>1 brighter, <1 darker)
+// filterBlur:       unitless = em,   default 0  (1em = 1% of project width at root)
+// filterBrightness: multiplier,      default 1  (>1 brighter, <1 darker)
 // filterContrast:   multiplier,      default 1
 // filterGrayscale:  0–1,             default 0
 // filterSepia:      0–1,             default 0

@@ -164,12 +164,16 @@ All visual layers (text, image, video, captions) share these transform propertie
 
 | Property | Type | Default | Description |
 | --- | --- | --- | --- |
-| `position` | `[x, y]` | `[0.5, 0.5]` | Normalized 0–1. `[0, 0]` = top-left, `[0.5, 0.5]` = center, `[1, 1]` = bottom-right |
+| `position` | `[x, y]` or `[x, y, z]` | `[0.5, 0.5]` | `x`/`y` normalised 0–1 of the canvas. `[0, 0]` = top-left, `[0.5, 0.5]` = centre. Optional `z` is depth in `em` (1em = 1% of project width) |
 | `scale` | `number` or `[x, y]` | `1` | Multiplier. `1` = natural size, `0.5` = half, `2` = double |
 | `rotation` | `number` or `[x, y, z]` | `0` | Degrees, clockwise. Use `[x, y, z]` for 3D rotation |
-| `anchor` | `[x, y]` | `[0.5, 0.5]` | Normalized 0–1 within the element. Point around which position, scale, and rotation are applied |
+| `anchor` | `[x, y]` | `[0.5, 0.5]` | Normalised 0–1 within the element. Pivot for position, scale, and rotation |
 | `opacity` | `number` | `1` | 0 (transparent) to 1 (opaque) |
-| `perspective` | `number` | `2000` | Distance in pixels for 3D transforms |
+| `perspective` | `number` | `100` | 3D viewing distance in `em` (1em = 1% of project width) |
+
+### Unit convention
+
+Sizing properties (`fontSize`, `borderWidth`, `boxShadowBlur`, `filterBlur`, `perspective`, …) accept unitless numbers that default to `em`. VideoFlow sets the project root font-size so that **`1em` = 1% of the project width**, so an unstyled `fontSize: 4` resolves to 4% of the canvas width (≈ 77px on 1920, ≈ 51px on 1280) and renders identically at any output resolution. You can still pass `px` (or `%` for `borderRadius`) when you need absolute values.
 
 See [`@videoflow/core` README](https://github.com/ybouane/VideoFlow/tree/main/src/core) for the full list of visual properties (filters, borders, shadows, etc.).
 
