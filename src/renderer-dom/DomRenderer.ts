@@ -748,16 +748,22 @@ export default class DomRenderer implements ILayerRenderer {
 		// Load default font
 		const defaultFont = 'Noto Sans';
 		await this.loadFont(defaultFont);
+		// `loadFont` above and the media init below both `await`, so the canvas
+		// can be torn down (loadVideo / destroy) while we're suspended. Re-check
+		// at each wake-up point to avoid touching a null `$canvas`.
+		if (!this.$canvas) return;
 		this.$canvas.style.setProperty('font-family', `"${defaultFont}", sans-serif`);
 
 		// Initialise media (fetch, decode, extract metadata)
 		await Promise.all(this.layers.map(layer => layer.initialize()));
+		if (!this.$canvas) return;
 
 		// Create DOM elements
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;
 			const $el = await layer.generateElement();
+			if (!this.$canvas) return;
 			if ($el) this.$canvas.appendChild($el);
 		}
 
