@@ -152,20 +152,19 @@ export type LayerJSON = {
  * Tracks are a purely editor-side concept — the renderer still z-orders
  * layers by their position in `layers`. When an editor groups layers into
  * tracks (via `LayerJSON.track`), this parallel array can carry per-track
- * display state (name, enable/mute toggles) without embedding that state on
- * every layer.
+ * display state (name, enable toggle) without embedding that state on every
+ * layer. Disabling a track hides **both** its visual and audio output — the
+ * editor deliberately does not expose a separate mute control.
  *
  * Indices line up with the track numbers used by `LayerJSON.track`. Entries
- * may be sparse: missing indices default to `{ name: "Track N", enabled: true,
- * muted: false }` at the editor's discretion.
+ * may be sparse: missing indices default to `{ name: "Track N", enabled:
+ * true }` at the editor's discretion.
  */
 export type TrackJSON = {
 	/** Human-readable name shown in the timeline header. */
 	name: string;
-	/** When false, the editor treats all layers on this track as hidden. */
+	/** When false, all layers on this track are hidden AND silenced. */
 	enabled: boolean;
-	/** When true, audio-bearing layers on this track are silenced. */
-	muted: boolean;
 };
 
 /**
