@@ -392,7 +392,7 @@ export default class DomRenderer implements ILayerRenderer {
 
 			// Mount the layer's DOM element inside $canvas at the matching
 			// position so z-ordering (via DOM order) matches the layers array.
-			if (this.elementsSetup && layer.json.settings.enabled) {
+			if (this.elementsSetup && layer.json.settings.enabled && this.isLayerEnabled(layer)) {
 				const $el = await layer.generateElement();
 				if ($el) {
 					const nextSiblingIndex = insertAt + 1;
@@ -550,8 +550,12 @@ export default class DomRenderer implements ILayerRenderer {
 
 			await Promise.all(
 				this.layers.map(async layer => {
-					if (layer.json.settings.enabled) {
+					if (this.isLayerEnabled(layer)) {
 						await layer.renderFrame(frame);
+					} else if (layer.$element) {
+						// Track-disabled (but mounted) layers must be hidden so
+						// they don't linger on screen from a previous render.
+						layer.$element.style.display = 'none';
 					}
 				})
 			);
@@ -578,7 +582,7 @@ export default class DomRenderer implements ILayerRenderer {
 	 */
 	async renderAudio(): Promise<AudioBuffer | null> {
 		if (!this.videoJSON) return null;
-		const audioLayers = this.layers.filter(l => l.hasAudio && l.json.settings.enabled);
+		const audioLayers = this.layers.filter(l => l.hasAudio && this.isLayerEnabled(l));
 		if (audioLayers.length === 0) return null;
 
 		const durationSec = this.videoJSON.duration;
@@ -738,6 +742,24 @@ export default class DomRenderer implements ILayerRenderer {
 	}
 
 	// -----------------------------------------------------------------------
+	//  Track-aware helpers
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Whether a layer should be visible/rendered at all.
+	 *
+	 * Returns `false` when the layer's own `settings.enabled` is false, **or**
+	 * when the layer belongs to a track whose `enabled` flag is explicitly
+	 * `false` in `videoJSON.tracks`.
+	 */
+	private isLayerEnabled(layer: RuntimeBaseLayer): boolean {
+		if (!layer.json.settings.enabled) return false;
+		const { track } = layer.json;
+		if (track == null) return true;
+		return this.videoJSON?.tracks?.[track]?.enabled !== false;
+	}
+
+	// -----------------------------------------------------------------------
 	//  Internal helpers
 	// -----------------------------------------------------------------------
 
@@ -758,7 +780,9 @@ export default class DomRenderer implements ILayerRenderer {
 		await Promise.all(this.layers.map(layer => layer.initialize()));
 		if (!this.$canvas) return;
 
-		// Create DOM elements
+		// Create DOM elements (always mount enabled layers; track state is
+		// evaluated per-frame so toggling a track takes effect immediately
+		// without a full reload).
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;

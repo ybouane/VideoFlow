@@ -179,7 +179,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Create DOM elements
 		this.$canvas.innerHTML = '';
 		for (const layer of this.layers) {
-			if (!layer.json.settings.enabled) continue;
+			if (!this.isLayerEnabled(layer)) continue;
 			const $el = await layer.generateElement();
 			if ($el) {
 				this.$canvas.appendChild($el);
@@ -212,7 +212,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 
 			await Promise.all(
 				this.layers.map(async layer => {
-					if (layer.json.settings.enabled) {
+					if (this.isLayerEnabled(layer)) {
 						await layer.renderFrame(frame);
 					}
 				})
@@ -400,6 +400,24 @@ export default class BrowserRenderer implements ILayerRenderer {
 	}
 
 	// -----------------------------------------------------------------------
+	//  Track-aware helpers
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Whether a layer should be visible/rendered at all.
+	 *
+	 * Returns `false` when the layer's own `settings.enabled` is false, **or**
+	 * when the layer belongs to a track whose `enabled` flag is explicitly
+	 * `false` in `videoJSON.tracks`.
+	 */
+	private isLayerEnabled(layer: RuntimeBaseLayer): boolean {
+		if (!layer.json.settings.enabled) return false;
+		const { track } = layer.json;
+		if (track == null) return true;
+		return this.videoJSON.tracks?.[track]?.enabled !== false;
+	}
+
+	// -----------------------------------------------------------------------
 	//  Audio rendering
 	// -----------------------------------------------------------------------
 
@@ -410,7 +428,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 * keyframe automation, connected to the context's destination.
 	 */
 	async renderAudio(): Promise<AudioBuffer | null> {
-		const audioLayers = this.layers.filter(l => l.hasAudio && l.json.settings.enabled);
+		const audioLayers = this.layers.filter(l => l.hasAudio && this.isLayerEnabled(l));
 		if (audioLayers.length === 0) return null;
 
 		const durationSec = this.videoJSON.duration;
