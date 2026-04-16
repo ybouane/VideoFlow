@@ -608,6 +608,29 @@ export default class VideoFlow {
 			return 0;
 		});
 
+		// Deduce a human-readable name for a layer when none was explicitly set.
+		const deduceLayerName = (comp: CompiledLayer): string => {
+			// Text / captions: use the text content (truncated)
+			if (comp.type === 'text' || comp.type === 'captions') {
+				const textKfs = comp.properties['text'];
+				if (textKfs?.length > 0) {
+					const raw = String(textKfs[0].value ?? '').trim();
+					if (raw) return raw.length > 30 ? raw.slice(0, 30) + '\u2026' : raw;
+				}
+				return comp.type === 'captions' ? 'Captions' : 'Text';
+			}
+			// Media layers: derive from the source filename
+			const source = comp.settings?.source;
+			if (source) {
+				// Strip path separators and query/hash to get a bare filename
+				const filename = String(source).split(/[/\\]/).pop() ?? '';
+				const base = filename.split(/[?#]/)[0];
+				if (base) return base;
+			}
+			// Fallback: capitalise the type tag
+			return comp.type.charAt(0).toUpperCase() + comp.type.slice(1);
+		};
+
 		// Convert to VideoJSON
 		const layers = sortedLayers.map(comp => {
 			const animations = Object.entries(comp.properties).map(([prop, keyframes]) => ({
@@ -635,7 +658,7 @@ export default class VideoFlow {
 					enabled: comp.enabled,
 					startTime: startTimeSec,
 					sourceDuration: sourceDurationSec,
-					...(comp.name ? { name: comp.name } : {}),
+					name: comp.name || deduceLayerName(comp),
 					...(comp.speed !== 1 ? { speed: comp.speed } : {}),
 					...(comp.sourceStartSec > 0 ? { sourceStart: comp.sourceStartSec } : {}),
 					...(comp.mediaDurationSec != null ? { mediaDuration: comp.mediaDurationSec } : {}),
