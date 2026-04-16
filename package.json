@@ -12,6 +12,7 @@
     "src/renderer-dom"
   ],
   "scripts": {
+    "postinstall": "patch-package",
     "publish": "npm run build && npm publish --workspaces --access public",
     "build": "npm run build --workspaces",
     "build:core": "npm run build -w src/core",
@@ -20,7 +21,8 @@
     "build:dom": "npm run build -w src/renderer-dom"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
-    "esbuild": "^0.24.0"
+    "esbuild": "^0.24.0",
+    "patch-package": "^8.0.1",
+    "typescript": "^5.7.0"
   }
 }
