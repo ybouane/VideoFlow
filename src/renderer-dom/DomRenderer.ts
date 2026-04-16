@@ -84,6 +84,19 @@ export default class DomRenderer implements ILayerRenderer {
 
 	/** Whether playback is active. */
 	playing = false;
+	/**
+	 * Monotonic playback token. Every call to `play()` and `stop()` bumps
+	 * this counter. Long-running `play()` loops check their starting token
+	 * against the current one — when they don't match, the loop has been
+	 * superseded by a newer `play()` (or cancelled by `stop()`) and must
+	 * exit without touching the audio element created by the newer call.
+	 *
+	 * This avoids a nasty race: without it, calling `seek()` during playback
+	 * (which internally calls `stop()` then `play()`) could leave two
+	 * overlapping `play()` coroutines alive — each with its own `Audio`
+	 * element — producing duplicated audio output.
+	 */
+	private playToken = 0;
 
 	/**
 	 * Optional callback fired whenever a new frame is rendered. Set this
@@ -617,6 +630,10 @@ export default class DomRenderer implements ILayerRenderer {
 		const { fpsCallback } = options;
 		if (!this.videoJSON) throw new Error('No video loaded. Call loadVideo() first.');
 		if (this.playing) return;
+		// Take a generation token so we can detect if a subsequent stop()/play()
+		// supersedes this invocation while we're suspended in renderAudio() or
+		// waiting on a requestAnimationFrame promise.
+		const myToken = ++this.playToken;
 		this.playing = true;
 
 		const fps = this.videoJSON.fps;
@@ -627,8 +644,12 @@ export default class DomRenderer implements ILayerRenderer {
 			const startFrame = this.currentFrame < 0 ? 0 : this.currentFrame;
 			const startTimeSec = startFrame / fps;
 
-			// Render audio
+			// Render audio (async — may take tens of ms). Bail without creating
+			// an Audio element if we've already been superseded, otherwise we'd
+			// leak a second audio source playing in parallel.
 			const audioBuffer = await this.renderAudio();
+			if (myToken !== this.playToken) return;
+
 			if (audioBuffer) {
 				const wav = audioBufferToWav(audioBuffer);
 				const blob = new Blob([wav], { type: 'audio/wav' });
@@ -639,8 +660,9 @@ export default class DomRenderer implements ILayerRenderer {
 				this.audio.play();
 			}
 
-			// Playback loop
-			while (this.playing) {
+			// Playback loop. Exits as soon as either `playing` flips to false
+			// (stop() called) or the token advances (another play() took over).
+			while (this.playing && myToken === this.playToken) {
 				const renderStart = performance.now();
 				const elapsed = (Date.now() - startTime) / 1000;
 				const currentTimeSec = (startTimeSec + elapsed) % durationSec;
@@ -660,6 +682,7 @@ export default class DomRenderer implements ILayerRenderer {
 					}
 
 					await this.renderFrame(frame, true);
+					if (myToken !== this.playToken) return;
 				}
 
 				const frameFps = 1000 / (performance.now() - renderStart);
@@ -668,16 +691,23 @@ export default class DomRenderer implements ILayerRenderer {
 				await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 			}
 		} catch (e) {
-			this.playing = false;
+			if (myToken === this.playToken) this.playing = false;
 			console.error('DomRenderer playback error:', e);
 		}
 
-		this.cleanupAudio();
+		// Only clean up audio if we're still the owning play() call — a newer
+		// play() may have taken over and have its own Audio element live.
+		if (myToken === this.playToken) {
+			this.cleanupAudio();
+		}
 	}
 
 	/** Stop playback. */
 	stop(): void {
 		this.playing = false;
+		// Bump the token so any suspended play() loop detects the supersession
+		// and bails cleanly without running its final cleanupAudio().
+		this.playToken++;
 		this.cleanupAudio();
 	}
 
