@@ -478,6 +478,8 @@ export default class ServerRenderer {
 			'-crf', '17',
 			...(hasAudio ? ['-c:a', 'aac'] : []),
 			'-pix_fmt', 'yuv420p',
+			'-metadata:s:v:0', 'handler_name=VideoFlow.dev',
+			...(hasAudio ? ['-metadata:s:a:0', 'handler_name=VideoFlow.dev'] : []),
 			outputPath,
 		]);
 
