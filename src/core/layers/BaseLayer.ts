@@ -18,7 +18,7 @@
  * `timelineDuration = sourceDuration / speed`.
  */
 
-import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON } from '../types.js';
+import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON, LayerTransitionJSON, LayerTransitionSpec, LayerEffectJSON } from '../types.js';
 import { timeToFrames, parseTime } from '../utils.js';
 
 function createLayerId(): Id {
@@ -71,6 +71,13 @@ export type BaseLayerSettings = {
 	 * as `mediaDuration` is known. Default: `0`.
 	 */
 	sourceEnd?: Time;
+	/**
+	 * Transition played across the start of the layer's timeline footprint.
+	 * References a transition registered via `Renderer.registerTransition`.
+	 */
+	transitionIn?: LayerTransitionSpec;
+	/** Transition played across the end of the layer's timeline footprint. */
+	transitionOut?: LayerTransitionSpec;
 };
 
 /** Properties shared by every layer type (empty at this level). */
@@ -308,8 +315,15 @@ export default class BaseLayer {
 	toJSON(): LayerJSON {
 		const animations: Animation[] = [];
 		const staticProps: Record<string, any> = {};
+		let effects: LayerEffectJSON[] | undefined;
 
 		for (const [key, value] of Object.entries(this.properties)) {
+			if (key === 'effects') {
+				// `effects` is a special creation-time property — promote it to a
+				// top-level JSON field instead of treating it as a keyframe property.
+				if (Array.isArray(value) && value.length > 0) effects = value.slice();
+				continue;
+			}
 			if (Array.isArray(value) && value.length > 0 && value[0]?.time !== undefined) {
 				// Keyframed property → animation
 				animations.push({
@@ -334,6 +348,9 @@ export default class BaseLayer {
 			: 0;
 		const sourceStartSec = parseTime(this.settings.sourceStart ?? 0, this.fps);
 
+		const transitionIn = this.normalizeTransitionSpec(this.settings.transitionIn);
+		const transitionOut = this.normalizeTransitionSpec(this.settings.transitionOut);
+
 		return {
 			id: this.id,
 			type: (this.constructor as typeof BaseLayer).type,
@@ -347,6 +364,20 @@ export default class BaseLayer {
 			},
 			properties: staticProps,
 			animations,
+			...(transitionIn ? { transitionIn } : {}),
+			...(transitionOut ? { transitionOut } : {}),
+			...(effects ? { effects } : {}),
+		};
+	}
+
+	/** Convert a user-facing {@link LayerTransitionSpec} into the JSON shape. */
+	protected normalizeTransitionSpec(spec: LayerTransitionSpec | undefined): LayerTransitionJSON | undefined {
+		if (!spec || !spec.transition) return undefined;
+		const durationSec = spec.duration != null ? parseTime(spec.duration, this.fps) : 0.2;
+		return {
+			transition: spec.transition,
+			duration: durationSec,
+			...(spec.params ? { params: spec.params } : {}),
 		};
 	}
 }

@@ -26,7 +26,7 @@
 
 import type {
 	Time, Action, Easing, AddLayerOptions,
-	VideoJSON, ProjectSettings,
+	VideoJSON, ProjectSettings, LayerTransitionJSON, LayerEffectJSON,
 } from './types.js';
 import { parseTime, timeToFrames, probeMediaDuration } from './utils.js';
 import { loadedMedia, type MediaCache } from './MediaCache.js';
@@ -265,6 +265,12 @@ export default class VideoFlow {
 			mediaDurationSec?: number;
 			/** Unresolved sourceEnd in seconds (only when probe failed / disabled). */
 			sourceEndUnresolvedSec?: number;
+			/** Normalised transitionIn (seconds) pulled from layer settings. */
+			transitionIn?: LayerTransitionJSON;
+			/** Normalised transitionOut (seconds) pulled from layer settings. */
+			transitionOut?: LayerTransitionJSON;
+			/** Effects declared at creation time (from properties.effects). */
+			effects?: LayerEffectJSON[];
 		};
 
 		const compiled: Map<string, CompiledLayer> = new Map();
@@ -464,6 +470,35 @@ export default class VideoFlow {
 							endTimeFrames = startTimeFrames + timelineDurFrames;
 						}
 
+						// Extract transitions from settings (user-facing spec →
+						// normalised JSON form with seconds durations).
+						const normalizeTransition = (spec: any): LayerTransitionJSON | undefined => {
+							if (!spec || typeof spec !== 'object' || !spec.transition) return undefined;
+							const durationSec = spec.duration != null ? parseTime(spec.duration, fps) : 0.2;
+							return {
+								transition: String(spec.transition),
+								duration: durationSec,
+								...(spec.params ? { params: { ...spec.params } } : {}),
+							};
+						};
+						const transitionIn = normalizeTransition(action.settings?.transitionIn);
+						const transitionOut = normalizeTransition(action.settings?.transitionOut);
+
+						// Extract effects from properties (creation-time only — the
+						// effects list itself isn't animatable, though individual
+						// effect params can be animated via dot-path properties).
+						let effects: LayerEffectJSON[] | undefined;
+						const rawEffects = action.properties?.effects;
+						if (Array.isArray(rawEffects) && rawEffects.length > 0) {
+							effects = rawEffects
+								.filter((e: any) => e && typeof e === 'object' && typeof e.effect === 'string')
+								.map((e: any) => ({
+									effect: String(e.effect),
+									...(e.params ? { params: { ...e.params } } : {}),
+								}));
+							if (effects.length === 0) effects = undefined;
+						}
+
 						const comp: CompiledLayer = {
 							id: action.id,
 							type: action.type,
@@ -479,14 +514,20 @@ export default class VideoFlow {
 							layerObj,
 							mediaDurationSec: timings.mediaDurationSec,
 							sourceEndUnresolvedSec: timings.sourceEndUnresolvedSec,
+							...(transitionIn ? { transitionIn } : {}),
+							...(transitionOut ? { transitionOut } : {}),
+							...(effects ? { effects } : {}),
 						};
 						compiled.set(action.id, comp);
 						indexes[action.id] = action.options?.index ?? 0;
 
 						// Initial properties → keyframe at sourceStart (i.e. the
 						// source-time at which the segment starts playing).
+						// `effects` is a special creation-time property promoted
+						// to the top-level JSON; skip it here.
 						if (action.properties) {
 							for (const [prop, value] of Object.entries(action.properties)) {
+								if (prop === 'effects') continue;
 								comp.properties[prop] = [{ time: sourceStartSec, value, easing: 'step' as Easing }];
 							}
 						}
@@ -674,6 +715,9 @@ export default class VideoFlow {
 				},
 				properties: {},
 				animations,
+				...(comp.transitionIn ? { transitionIn: comp.transitionIn } : {}),
+				...(comp.transitionOut ? { transitionOut: comp.transitionOut } : {}),
+				...(comp.effects ? { effects: comp.effects } : {}),
 			};
 		});
 
@@ -690,10 +734,29 @@ export default class VideoFlow {
 
 	/**
 	 * Get the last known value of a property at the given time.
-	 * Falls back to the layer class's default property value.
+	 * Falls back to the layer class's default property value, or — for
+	 * effect param dot-paths — to the initial value declared in the layer's
+	 * `effects` property array.
 	 */
 	private _getLastValue(keyframes: any[], time: number, prop: string, layerObj: BaseLayer): any {
 		if (keyframes.length === 0) {
+			// Effect param dot-path: effects.<name>[idx].<param>
+			const m = /^effects\.([a-zA-Z_][\w-]*)(?:\[(\d+)\])?\.([a-zA-Z_]\w*)$/.exec(prop);
+			if (m) {
+				const [, effectName, idxStr, paramName] = m;
+				const idx = idxStr ? Number(idxStr) : 0;
+				const declaredEffects: any[] = layerObj.properties['effects'];
+				if (Array.isArray(declaredEffects)) {
+					let occurrence = 0;
+					for (const e of declaredEffects) {
+						if (e?.effect === effectName) {
+							if (occurrence === idx) return e.params?.[paramName];
+							occurrence++;
+						}
+					}
+				}
+				return undefined;
+			}
 			const def = (layerObj.constructor as typeof BaseLayer).propertiesDefinition[prop];
 			return def?.default;
 		}
