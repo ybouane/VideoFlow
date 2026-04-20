@@ -46,7 +46,7 @@ export type {
 export type {
 	Time, Id, Easing, Keyframe, Animation,
 	Action, AddLayerOptions,
-	VideoJSON, LayerJSON, LayerSettingsJSON,
+	VideoJSON, LayerJSON, LayerSettingsJSON, LayerTransitionJSON, LayerEffectJSON,
 	PropertyDefinition, RenderOptions, ProjectSettings,
 } from './types.js';
 
