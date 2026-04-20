@@ -12,7 +12,7 @@
       "@videoflow/core/types": ["../core/types.ts"]
     }
   },
-  "include": ["./**/*.ts"],
+  "include": ["./**/*.ts", "./googlefonts.json"],
   "exclude": ["node_modules", "dist", "bundle-worker.ts"],
   "references": [
     { "path": "../core" }

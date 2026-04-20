@@ -21,7 +21,11 @@
  * {@link applyProperty} to provide type-specific behaviour.
  */
 
-import type { LayerJSON, PropertyDefinition } from '@videoflow/core/types';
+import type { LayerJSON, LayerEffectJSON, PropertyDefinition } from '@videoflow/core/types';
+import { getTransition } from '../transitions.js';
+
+/** Regex that matches an animated effect-param key (`effects.name.param` or `effects.name[idx].param`). */
+const EFFECT_PARAM_PATH_RE = /^effects\.([a-zA-Z_][\w-]*)(?:\[(\d+)\])?\.([a-zA-Z_]\w*)$/;
 
 // ---------------------------------------------------------------------------
 //  ILayerRenderer — minimal interface required by runtime layer classes.
@@ -49,6 +53,13 @@ export default class RuntimeBaseLayer {
 	$element: HTMLElement | null = null;
 	/** Reference to the parent renderer for font loading, property lookup, etc. */
 	renderer: ILayerRenderer;
+	/**
+	 * The most recent final (post-transition) property map applied to this
+	 * layer by `renderFrame`. Used by BrowserRenderer as the per-layer raster
+	 * cache key, and as a snapshot of what the DOM currently reflects. `null`
+	 * when the layer is out of range for the current frame.
+	 */
+	lastAppliedProps: Record<string, any> | null = null;
 
 	constructor(json: LayerJSON, fps: number, width: number, height: number, renderer: ILayerRenderer) {
 		this.json = json;
@@ -65,6 +76,19 @@ export default class RuntimeBaseLayer {
 
 	/** Whether this layer type produces audio output. */
 	get hasAudio(): boolean { return false; }
+
+	/**
+	 * Whether this layer's rasterized frame can be cached across frames based
+	 * on a stable property hash. Defaults to `true` (image/text/captions are
+	 * effectively static for identical inputs). Overridden to `false` by the
+	 * video layer whose content changes every frame regardless of properties.
+	 */
+	get cacheable(): boolean { return true; }
+
+	/** Whether this layer has any registered effects attached. */
+	get hasEffects(): boolean {
+		return !!this.json.effects && this.json.effects.length > 0;
+	}
 
 	// -- Timing helpers -----------------------------------------------------
 
@@ -131,6 +155,76 @@ export default class RuntimeBaseLayer {
 		return this.sourceStart + elapsedSourceSec;
 	}
 
+	// -- Transitions --------------------------------------------------------
+
+	/**
+	 * Compute the clamped `{ pIn, pOut }` completeness values at a given frame.
+	 *
+	 * - `pIn`  = 1 outside the in-window, rises 0→1 across the in-window.
+	 * - `pOut` = 1 outside the out-window, falls 1→0 across the out-window.
+	 *
+	 * If the two windows would overlap (in.duration + out.duration >
+	 * timelineDuration), both are scaled down proportionally so they meet in
+	 * the middle without overlap.
+	 */
+	getTransitionProgress(frame: number): { pIn: number; pOut: number } {
+		const tIn = this.json.transitionIn;
+		const tOut = this.json.transitionOut;
+		if (!tIn && !tOut) return { pIn: 1, pOut: 1 };
+
+		let dIn = tIn?.duration ?? 0;
+		let dOut = tOut?.duration ?? 0;
+		const total = this.timelineDuration;
+
+		if (dIn + dOut > total && dIn + dOut > 0) {
+			const scale = total / (dIn + dOut);
+			dIn *= scale;
+			dOut *= scale;
+		}
+
+		const elapsed = (frame / this.fps) - this.startTime;
+
+		let pIn = 1;
+		if (dIn > 0) {
+			pIn = elapsed / dIn;
+			if (pIn < 0) pIn = 0;
+			if (pIn > 1) pIn = 1;
+		}
+
+		let pOut = 1;
+		if (dOut > 0) {
+			const timeLeft = total - elapsed;
+			pOut = timeLeft / dOut;
+			if (pOut < 0) pOut = 0;
+			if (pOut > 1) pOut = 1;
+		}
+
+		return { pIn, pOut };
+	}
+
+	/**
+	 * Apply `transitionIn` and `transitionOut` presets to the resolved
+	 * property map for this frame. Called between `getPropertiesAtFrame` and
+	 * `applyProperties`. Unknown presets are silently skipped.
+	 */
+	applyTransitions(frame: number, props: Record<string, any>): Record<string, any> {
+		const tIn = this.json.transitionIn;
+		const tOut = this.json.transitionOut;
+		if (!tIn && !tOut) return props;
+
+		const { pIn, pOut } = this.getTransitionProgress(frame);
+
+		if (tIn && pIn < 1) {
+			const fn = getTransition(tIn.transition);
+			if (fn) props = fn(pIn, props, tIn.params ?? {}) ?? props;
+		}
+		if (tOut && pOut < 1) {
+			const fn = getTransition(tOut.transition);
+			if (fn) props = fn(pOut, props, tOut.params ?? {}) ?? props;
+		}
+		return props;
+	}
+
 	// -- Property interpolation ---------------------------------------------
 
 	/**
@@ -152,6 +246,14 @@ export default class RuntimeBaseLayer {
 			const kfs = anim.keyframes;
 			if (kfs.length === 0) continue;
 
+			// Effect param dot-paths (effects.name[.idx].param) aren't in the
+			// layer's propertiesDefinition; they're interpolated as bare numeric
+			// values with no unit/CSS mapping, then fed to the effect compositor.
+			if (EFFECT_PARAM_PATH_RE.test(anim.property)) {
+				props[anim.property] = this.interpolateKeyframes(anim.property, sourceTimeSec, kfs);
+				continue;
+			}
+
 			const definition = allDefs[anim.property];
 			// Skip properties not defined for this layer type
 			if (!definition) continue;
@@ -161,6 +263,11 @@ export default class RuntimeBaseLayer {
 		// Merge static properties (properties not in animations)
 		for (const [key, value] of Object.entries(this.json.properties)) {
 			if (!(key in props)) {
+				// Allow static effect-param dot-paths through untouched.
+				if (EFFECT_PARAM_PATH_RE.test(key)) {
+					props[key] = value;
+					continue;
+				}
 				const definition = allDefs[key];
 				// Skip properties not defined for this layer type
 				if (!definition) continue;
@@ -177,6 +284,49 @@ export default class RuntimeBaseLayer {
 		}
 
 		return props;
+	}
+
+	// -- Effects ------------------------------------------------------------
+
+	/**
+	 * Resolve the layer's declared effects with animated-param overrides
+	 * merged in, for the current frame's `lastAppliedProps`. Dot-path props
+	 * of the form `effects.<name>[idx].<param>` (idx defaults to 0 — the
+	 * first occurrence of that effect name) override the static param from
+	 * the effect's creation-time declaration.
+	 */
+	resolveEffectsForProps(props: Record<string, any> | null | undefined): LayerEffectJSON[] {
+		const declared = this.json.effects;
+		if (!declared || declared.length === 0) return [];
+		// Clone each entry so we never mutate the compiled JSON.
+		const resolved: LayerEffectJSON[] = declared.map(e => ({
+			effect: e.effect,
+			params: { ...(e.params ?? {}) },
+		}));
+		if (!props) return resolved;
+
+		// Index the n-th occurrence of each effect name so [idx] lookups
+		// line up with the original array positions.
+		const occurrenceSlots: Record<string, number[]> = {};
+		for (let i = 0; i < resolved.length; i++) {
+			const name = resolved[i].effect;
+			(occurrenceSlots[name] ??= []).push(i);
+		}
+
+		for (const [key, value] of Object.entries(props)) {
+			const match = EFFECT_PARAM_PATH_RE.exec(key);
+			if (!match) continue;
+			const [, effectName, idxStr, paramName] = match;
+			const slots = occurrenceSlots[effectName];
+			if (!slots || slots.length === 0) continue;
+			const idx = idxStr ? Number(idxStr) : 0;
+			const slot = slots[idx];
+			if (slot === undefined) continue;
+			const entry = resolved[slot];
+			entry.params = { ...(entry.params ?? {}), [paramName]: value };
+		}
+
+		return resolved;
 	}
 
 	/**
@@ -414,18 +564,20 @@ export default class RuntimeBaseLayer {
 	/**
 	 * Render this layer's visual state at the given frame.
 	 *
-	 * Hides if out of range, gets properties, applies them, shows.
+	 * Hides if out of range, gets properties, applies transitions, applies them, shows.
 	 */
 	async renderFrame(frame: number): Promise<void> {
 		if (!this.$element) return;
 
 		if (frame < this.startFrame || frame >= this.endFrame || !this.json.settings.enabled) {
 			this.$element.style.display = 'none';
+			this.lastAppliedProps = null;
 			return;
 		}
 
-		const props = this.getPropertiesAtFrame(frame);
+		const props = this.applyTransitions(frame, this.getPropertiesAtFrame(frame));
 		await this.applyProperties(props);
+		this.lastAppliedProps = props;
 		this.$element.style.display = '';
 	}
 
@@ -464,6 +616,10 @@ export default class RuntimeBaseLayer {
 		this.$element.style.setProperty('z-index', String(this.getLayerIndex() + 1));
 
 		for (const prop of Object.keys(props)) {
+			// Effect param dot-paths never drive CSS — they're consumed by the
+			// WebGL compositor in `resolveEffectsForProps`.
+			if (EFFECT_PARAM_PATH_RE.test(prop)) continue;
+
 			const definition = propertiesDefinition[prop];
 
 			if (definition?.cssProperty === false) {
