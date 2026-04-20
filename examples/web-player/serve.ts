@@ -61,7 +61,7 @@ async function main() {
 		} else if (url === '/player.js') {
 			res.writeHead(200, { 'Content-Type': 'application/javascript' });
 			res.end(bundledJs);
-		} else if (url === '/sample.mp3' || url === '/sample.mp4') {
+		} else if (url === '/sample.mp3' || url === '/sample.mp4' || url === '/sample.jpg') {
 			// Serve sample media files from examples directory
 			const filePath = path.join(__dirname, '..', url);
 			try {
