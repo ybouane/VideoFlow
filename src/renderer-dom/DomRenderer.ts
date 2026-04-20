@@ -28,7 +28,15 @@ import { loadedMedia } from '@videoflow/core';
 import {
 	createRuntimeLayer,
 	RuntimeBaseLayer,
+	LayerRasterizer,
+	WebGLEffectCompositor,
+	FontEmbedder,
+	registerTransition as registerTransitionInRegistry,
+	registerEffect as registerEffectInRegistry,
+	buildFontUrl,
 	type ILayerRenderer,
+	type TransitionFn,
+	type EffectParamDefinition,
 } from '@videoflow/renderer-browser';
 import {
 	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer,
@@ -109,6 +117,15 @@ export default class DomRenderer implements ILayerRenderer {
 	/** Object URL for the audio blob (for cleanup). */
 	private audioUrl: string | null = null;
 
+	/** Shared per-layer rasterizer, created lazily when the first effect layer shows up. */
+	private rasterizer: LayerRasterizer | null = null;
+	/** WebGL compositor for effect layers, created lazily on first use. */
+	private effectCompositor: WebGLEffectCompositor | null = null;
+	/** Overlay canvas per effect layer id, showing the post-effect bitmap. */
+	private effectCanvases: Map<string, HTMLCanvasElement> = new Map();
+	/** Font embedder — inlines @font-face as base64 data URIs for SVG rasterization. */
+	private fontEmbedder: FontEmbedder = new FontEmbedder(this.loadedFonts);
+
 	constructor(host: HTMLElement) {
 		this.host = host;
 
@@ -131,33 +148,32 @@ export default class DomRenderer implements ILayerRenderer {
 		return PROPERTIES_BY_TYPE[layerType];
 	}
 
-	/** Load a Google Font and inject it into the shadow DOM. */
+	/** Load a Google Font and make it available to the document (and shadow DOM). */
 	async loadFont(fontName: string): Promise<void> {
 		if (fontName in this.loadedFonts) return;
 
-		const encoded = fontName.replace(/ /g, '+');
-		const href = `https://fonts.googleapis.com/css2?family=${encoded}:ital,wght@0,100..900;1,100..900&display=swap`;
+		const href = buildFontUrl(fontName);
+		if (!href) {
+			console.warn(`DomRenderer: font "${fontName}" not found in registry — skipping.`);
+			return;
+		}
 
 		this.loadedFonts[fontName] = href;
 
+		// Fonts must be declared in document.head, not inside the shadow root.
+		// Chrome does not resolve @font-face rules defined inside a shadow DOM,
+		// so even though the shadow has its own style scope, font loading must
+		// happen at the document level.
 		const sheet = document.createElement('style');
 		try {
 			const fontSheet = await (await fetch(href, { cache: 'force-cache' })).text();
 			sheet.textContent = fontSheet;
 		} catch {
-			const fallbackHref = `https://fonts.googleapis.com/css2?family=${encoded}&display=swap`;
-			this.loadedFonts[fontName] = fallbackHref;
-			try {
-				const fontSheet = await (await fetch(fallbackHref, { cache: 'force-cache' })).text();
-				sheet.textContent = fontSheet;
-			} catch {
-				console.error(`DomRenderer: Failed to load font "${fontName}"`);
-				return;
-			}
+			console.error(`DomRenderer: failed to load font "${fontName}"`);
+			return;
 		}
 
-		// Inject into shadow DOM (not document.head) for style isolation
-		this.shadow.insertBefore(sheet, this.shadow.firstChild);
+		document.head.appendChild(sheet);
 		try {
 			await document.fonts.load(`1em "${fontName}"`);
 		} catch {
@@ -251,6 +267,15 @@ export default class DomRenderer implements ILayerRenderer {
 			this.$canvas = newCanvas;
 			this.currentFrame = -1;
 			this.elementsSetup = false;
+			// The previous rasterizer held a reference to the old $canvas /
+			// videoJSON — drop it so `ensureRasterizer` rebuilds against the
+			// new state on the next frame. Effect canvases are recreated from
+			// scratch in initLayers.
+			if (this.rasterizer) {
+				this.rasterizer.destroy();
+				this.rasterizer = null;
+			}
+			this.effectCanvases.clear();
 
 			try {
 				// 7. Generate layer DOM inside the new canvas and render frame 0
@@ -334,6 +359,9 @@ export default class DomRenderer implements ILayerRenderer {
 		settings?: Partial<LayerSettingsJSON>;
 		properties?: Record<string, any>;
 		animations?: Animation[];
+		transitionIn?: any;
+		transitionOut?: any;
+		effects?: any[];
 	}): Promise<void> {
 		return this.enqueueMutation(async () => {
 			const layer = this.layerById.get(id);
@@ -349,6 +377,27 @@ export default class DomRenderer implements ILayerRenderer {
 			}
 			if (patch.animations) {
 				layer.json.animations = patch.animations;
+			}
+			if ('transitionIn' in patch) {
+				(layer.json as Record<string, unknown>).transitionIn = patch.transitionIn ?? undefined;
+			}
+			if ('transitionOut' in patch) {
+				(layer.json as Record<string, unknown>).transitionOut = patch.transitionOut ?? undefined;
+			}
+			if ('effects' in patch) {
+				(layer.json as Record<string, unknown>).effects = patch.effects;
+				// Reconcile the effect overlay canvas with the updated effects list.
+				// processEffectLayers() skips layers with no canvas entry, so we must
+				// mount/unmount the overlay whenever hasEffects transitions.
+				const hadOverlay = this.effectCanvases.has(id);
+				const nowHasEffects = layer.hasEffects;
+				if (nowHasEffects && !hadOverlay && layer.$element && this.elementsSetup) {
+					this.ensureEffectHiderStyle();
+					this.mountEffectOverlay(layer, layer.$element);
+				} else if (!nowHasEffects && hadOverlay) {
+					this.unmountEffectOverlay(id);
+					layer.$element?.removeAttribute('data-effect-layer');
+				}
 			}
 
 			// If the source changed, re-initialize media. The global media cache
@@ -417,6 +466,9 @@ export default class DomRenderer implements ILayerRenderer {
 					} else {
 						this.$canvas.appendChild($el);
 					}
+					if (layer.hasEffects) {
+						this.mountEffectOverlay(layer, $el);
+					}
 				}
 			}
 
@@ -442,6 +494,7 @@ export default class DomRenderer implements ILayerRenderer {
 			if (layer.$element && layer.$element.parentNode) {
 				layer.$element.parentNode.removeChild(layer.$element);
 			}
+			this.unmountEffectOverlay(id);
 
 			this.layers.splice(idx, 1);
 			this.layerById.delete(id);
@@ -490,11 +543,18 @@ export default class DomRenderer implements ILayerRenderer {
 			}
 
 			// Re-append in new order. appendChild moves existing nodes, so this
-			// is a reorder rather than a re-mount.
+			// is a reorder rather than a re-mount. Each effect layer's overlay
+			// canvas is moved alongside its $element so the effected output
+			// stays at the correct z-position.
 			if (this.elementsSetup && this.$canvas) {
 				for (const layer of next) {
 					if (layer.$element && layer.$element.parentNode === this.$canvas) {
 						this.$canvas.appendChild(layer.$element);
+						const overlay = this.effectCanvases.get(layer.json.id);
+						if (overlay && overlay.parentNode === this.$canvas) {
+							this.$canvas.appendChild(overlay);
+							overlay.style.zIndex = String(next.indexOf(layer) + 1);
+						}
 					}
 				}
 			}
@@ -572,6 +632,8 @@ export default class DomRenderer implements ILayerRenderer {
 					}
 				})
 			);
+
+			await this.processEffectLayers();
 
 			this.currentFrame = frame;
 			await document.fonts.ready;
@@ -768,7 +830,40 @@ export default class DomRenderer implements ILayerRenderer {
 		this.videoJSON = null;
 		this.elementsSetup = false;
 		this.currentFrame = -1;
+		this.effectCanvases.clear();
+		if (this.rasterizer) {
+			this.rasterizer.destroy();
+			this.rasterizer = null;
+		}
+		if (this.effectCompositor) {
+			this.effectCompositor.destroy();
+			this.effectCompositor = null;
+		}
 		if (clearShadow) this.shadow.innerHTML = '';
+	}
+
+	// -----------------------------------------------------------------------
+	//  Static registries — transitions & effects
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Register a transition preset. The registry is shared with
+	 * `BrowserRenderer` so a transition registered on either renderer is
+	 * available in both live preview and export.
+	 */
+	static registerTransition(name: string, fn: TransitionFn): void {
+		registerTransitionInRegistry(name, fn);
+	}
+
+	/**
+	 * Register a GLSL effect. Shares its registry with `BrowserRenderer`.
+	 */
+	static registerEffect(
+		name: string,
+		glsl: string,
+		params: Record<string, EffectParamDefinition> = {},
+	): void {
+		registerEffectInRegistry(name, glsl, params);
 	}
 
 	// -----------------------------------------------------------------------
@@ -810,18 +905,137 @@ export default class DomRenderer implements ILayerRenderer {
 		await Promise.all(this.layers.map(layer => layer.initialize()));
 		if (!this.$canvas) return;
 
+		// One-time stylesheet that keeps live effect-layer DOM hidden while
+		// its overlay canvas shows the post-effect bitmap. Marked `!important`
+		// so the per-frame inline-style reset in `resetCSSProperties` can't
+		// accidentally re-expose the layer.
+		this.ensureEffectHiderStyle();
+
 		// Create DOM elements (always mount enabled layers; track state is
 		// evaluated per-frame so toggling a track takes effect immediately
 		// without a full reload).
 		this.$canvas.innerHTML = '';
+		this.effectCanvases.clear();
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;
 			const $el = await layer.generateElement();
 			if (!this.$canvas) return;
-			if ($el) this.$canvas.appendChild($el);
+			if ($el) {
+				this.$canvas.appendChild($el);
+				if (layer.hasEffects) {
+					this.mountEffectOverlay(layer, $el);
+				}
+			}
 		}
 
 		this.elementsSetup = true;
+	}
+
+	/**
+	 * Inject the shadow-scoped stylesheet that hides elements flagged with
+	 * `data-effect-layer`. Hiding is driven by an attribute (not an inline
+	 * style) so it survives `resetCSSProperties()`'s `cssText = ''` wipe each
+	 * frame.
+	 */
+	private ensureEffectHiderStyle(): void {
+		if (this.shadow.querySelector('style[data-effect-hider]')) return;
+		const style = document.createElement('style');
+		style.setAttribute('data-effect-hider', '');
+		style.textContent = '[data-effect-layer] { visibility: hidden !important; }';
+		this.shadow.appendChild(style);
+	}
+
+	/**
+	 * Flag the layer's live DOM as hidden and insert a sibling `<canvas>`
+	 * right after it. Subsequent renderFrame passes paint the effected
+	 * bitmap onto that canvas.
+	 */
+	private mountEffectOverlay(layer: RuntimeBaseLayer, $el: HTMLElement): void {
+		if (!this.$canvas || !this.videoJSON) return;
+		$el.setAttribute('data-effect-layer', '');
+		const canvas = document.createElement('canvas');
+		canvas.width = this.videoJSON.width;
+		canvas.height = this.videoJSON.height;
+		canvas.setAttribute('data-effect-overlay', layer.json.id);
+		// Match the absolute-fill layout of sibling layer elements so the
+		// overlay covers the project area in the same coordinate space.
+		canvas.style.position = 'absolute';
+		canvas.style.inset = '0';
+		canvas.style.width = '100%';
+		canvas.style.height = '100%';
+		canvas.style.pointerEvents = 'none';
+		canvas.style.zIndex = String(this.layers.indexOf(layer) + 1);
+		// Insert immediately after $el so DOM order (hence paint order)
+		// matches the layer order without shifting unrelated layers.
+		if ($el.nextSibling) {
+			this.$canvas.insertBefore(canvas, $el.nextSibling);
+		} else {
+			this.$canvas.appendChild(canvas);
+		}
+		this.effectCanvases.set(layer.json.id, canvas);
+	}
+
+	/** Tear down an effect layer's overlay canvas, if any. */
+	private unmountEffectOverlay(layerId: string): void {
+		const canvas = this.effectCanvases.get(layerId);
+		if (!canvas) return;
+		canvas.remove();
+		this.effectCanvases.delete(layerId);
+	}
+
+	/** Ensure the shared rasterizer exists. */
+	private ensureRasterizer(): LayerRasterizer {
+		if (!this.rasterizer) {
+			if (!this.videoJSON || !this.$canvas) {
+				throw new Error('DomRenderer.ensureRasterizer: no video loaded.');
+			}
+			this.rasterizer = new LayerRasterizer(
+				this.videoJSON,
+				this.$canvas,
+				RENDERER_CSS,
+				(layer) => this.fontEmbedder.buildFontCSSForLayer(layer),
+			);
+		}
+		return this.rasterizer;
+	}
+
+	/**
+	 * After layers have rendered this frame, rasterize each effect layer and
+	 * paint it through the WebGL compositor onto its overlay canvas. Clears
+	 * canvases for effect layers that are out of range this frame.
+	 */
+	private async processEffectLayers(): Promise<void> {
+		if (this.effectCanvases.size === 0) return;
+		this.fontEmbedder.invalidateFrame();
+		const rasterizer = this.ensureRasterizer();
+		const width = this.videoJSON!.width;
+		const height = this.videoJSON!.height;
+
+		for (const layer of this.layers) {
+			if (!layer.hasEffects) continue;
+			const canvas = this.effectCanvases.get(layer.json.id);
+			if (!canvas) continue;
+			const ctx = canvas.getContext('2d');
+			if (!ctx) continue;
+
+			if (!this.isLayerEnabled(layer) || !layer.lastAppliedProps || !layer.$element) {
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+				continue;
+			}
+
+			const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+			const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
+			if (effects.length > 0) {
+				if (!this.effectCompositor) {
+					this.effectCompositor = new WebGLEffectCompositor(width, height);
+				}
+				const effected = this.effectCompositor.apply(surface, effects);
+				ctx.drawImage(effected, 0, 0, canvas.width, canvas.height);
+			} else {
+				ctx.drawImage(surface, 0, 0, canvas.width, canvas.height);
+			}
+		}
 	}
 
 	/** Generate audio for a single layer in the OfflineAudioContext. */
