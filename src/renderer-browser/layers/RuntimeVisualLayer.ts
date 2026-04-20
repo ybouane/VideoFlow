@@ -5,7 +5,7 @@
  * - Filter composition (individual filter props → CSS filter string)
  * - Box shadow handling
  * - Border radius calculation
- * - Visible / outerBorder CSS overrides
+ * - Visible / innerBorder CSS overrides
  *
  * Sits between RuntimeBaseLayer and RuntimeTextualLayer/RuntimeMediaLayer.
  */
@@ -116,9 +116,9 @@ export default class RuntimeVisualLayer extends RuntimeBaseLayer {
 			return;
 		}
 
-		if (prop === 'outerBorder') {
+		if (prop === 'innerBorder') {
 			if (value) {
-				return super.applyCSSProperty('box-sizing', 'content-box', definition);
+				return super.applyCSSProperty('box-sizing', 'border-box', definition);
 			}
 			return;
 		}
