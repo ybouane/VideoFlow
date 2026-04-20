@@ -9,10 +9,12 @@ An open-source TypeScript library for generating videos programmatically. Define
 - **Browser & server rendering** — render to MP4 client-side or server-side
 - **Layer types** — Text, Image, Video, Audio, Captions
 - **Keyframe animations** — animate any visual/auditory property with multiple easing functions
+- **Transitions** — attach built-in (or custom) enter/exit presets to any layer via `transitionIn` / `transitionOut` settings
+- **GLSL effects** — apply WebGL shader effects (pixelate, chromatic aberration, vignette, …) to individual layers; effect params are animatable
 - **Parallel timelines** — run animation branches simultaneously
 - **Flexible time formats** — seconds, `"5s"`, `"2m"`, `"500ms"`, `"120f"`, `"01:30"`, `"hh:mm:ss:ff"`
 - **AbortController support** — cancel renders mid-flight
-- **Google Fonts** — load and embed web fonts automatically
+- **Google Fonts** — load and embed web fonts automatically using a bundled registry for reliable URL construction
 
 ## Packages
 
@@ -177,6 +179,78 @@ Sizing properties (`fontSize`, `borderWidth`, `boxShadowBlur`, `filterBlur`, `pe
 
 See [`@videoflow/core` README](https://github.com/ybouane/VideoFlow/tree/main/src/core) for the full list of visual properties (filters, borders, shadows, etc.).
 
+## Transitions
+
+Attach an enter and/or exit animation to any layer using `transitionIn` and `transitionOut` in the layer's settings. No manual keyframing required.
+
+```ts
+const title = $.addText(
+  { text: 'Hello!', fontSize: 3, color: '#fff' },
+  {
+    sourceDuration: '3s',
+    transitionIn:  { transition: 'riseFade', duration: '500ms' },
+    transitionOut: { transition: 'blur',     duration: '500ms', params: { amount: 8 } },
+  },
+);
+```
+
+The `duration` defaults to `200ms` and accepts any [Time format](#time-formats). If `transitionIn.duration + transitionOut.duration` would exceed the layer's own duration, both are scaled proportionally.
+
+### Built-in transition presets
+
+| Name | Effect | Params |
+| --- | --- | --- |
+| `fade` | Crossfade opacity | — |
+| `zoom` | Scale in/out from `from` | `from?: number` (default `0.8`) |
+| `blur` | Gaussian blur sweeps in/out | `amount?: number` (peak blur in `em`, default `4`) |
+| `slideLeft` | Slides in from the right | `distance?: number` (fraction of canvas, default `0.25`) |
+| `slideRight` | Slides in from the left | `distance?: number` |
+| `slideUp` | Slides in from below | `distance?: number` |
+| `slideDown` | Slides in from above | `distance?: number` |
+| `riseFade` | Combines `slideUp` + `fade` | `distance?: number` (default `0.08`) |
+
+Transitions work in both `BrowserRenderer` (export) and `DomRenderer` (live preview). Custom presets can be registered with `BrowserRenderer.registerTransition(name, fn)`.
+
+## GLSL Effects
+
+Attach one or more WebGL shader effects to a layer via the `effects` property. Effects run in array order, each pass reading from the previous result (ping-pong framebuffers), before the layer is composited.
+
+```ts
+const img = $.addImage(
+  {
+    fit: 'cover',
+    effects: [
+      { effect: 'pixelate',            params: { size: 48 } },
+      { effect: 'chromaticAberration', params: { amount: 0.004 } },
+      { effect: 'vignette',            params: { strength: 0.7, radius: 0.75 } },
+    ],
+  },
+  { source: './photo.jpg', sourceDuration: '4s' },
+);
+
+// Animate an effect param with dot-path notation
+img.animate(
+  { 'effects.pixelate.size': 48 },
+  { 'effects.pixelate.size': 1 },
+  { duration: '2s' },
+);
+```
+
+When the same effect appears more than once, use an index to target a specific occurrence:
+`'effects.pixelate[1].size'` targets the second `pixelate` entry.
+
+### Built-in effect presets
+
+| Name | Effect | Params |
+| --- | --- | --- |
+| `chromaticAberration` | RGB channel split | `amount` (default `0.005`) |
+| `pixelate` | Pixel mosaic | `size` (pixels, default `8`) |
+| `vignette` | Darkened border vignette | `strength` (default `0.6`), `radius` (default `0.8`) |
+| `rgbSplit` | Directional chromatic aberration | `angle` (degrees), `amount` (default `0.005`) |
+| `invert` | Colour inversion | `amount` (0–1, default `1`) |
+
+All params listed above are animatable. Effects work in both `BrowserRenderer` and `DomRenderer`. Custom effects can be registered with `BrowserRenderer.registerEffect(name, glsl, params)`.
+
 ## Layer Types
 
 ### Text
@@ -269,6 +343,8 @@ See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) fol
 | [05-parallel-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/05-parallel-animations.ts) | Staggered parallel animations |
 | [06-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-render-frame-and-audio.ts) | Render a single frame or audio track |
 | [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
+| [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, zoom, blur, slide, riseFade) |
+| [09-effects.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/09-effects.ts) | GLSL effects with animated params (pixelate, chromatic aberration, vignette) |
 
 Run any example with:
 

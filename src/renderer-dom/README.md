@@ -33,6 +33,7 @@ await player.play();
 - **Preview VideoFlow videos in real-time** — test animations and timing before exporting
 - **Build custom video editors** — seek to any frame, scrub the timeline, inspect layers
 - **Interactive playback with audio sync** — play, pause, and seek with frame-accurate audio
+- **Full transition & effect support** — layers with `transitionIn`/`transitionOut` animate in live preview; `effects` layers are rendered via WebGL on a per-layer overlay canvas
 
 ## API
 
@@ -124,6 +125,51 @@ player.duration         // number — total duration in seconds
 player.fps              // number — frames per second
 ```
 
+---
+
+## Transitions
+
+`DomRenderer` fully supports transitions declared on layers. Built-in presets (`fade`, `zoom`, `blur`, `slideLeft`, `slideRight`, `slideUp`, `slideDown`, `riseFade`) animate automatically in live preview — no extra setup needed.
+
+Custom presets can be registered with `DomRenderer.registerTransition`, which writes to the same shared registry as `BrowserRenderer.registerTransition`:
+
+```typescript
+import DomRenderer from '@videoflow/renderer-dom';
+
+DomRenderer.registerTransition('spin', (p, properties, params) => {
+  properties.rotation = (properties.rotation ?? 0) + (1 - p) * (params.angle ?? 360);
+  properties.opacity = (properties.opacity ?? 1) * p;
+  return properties;
+});
+```
+
+---
+
+## GLSL Effects
+
+`DomRenderer` also supports `effects` layers. When a layer declares effects, the renderer substitutes a project-sized `<canvas>` overlay for that layer's normal DOM output. Each frame, the layer is rasterized off-screen and piped through the shared WebGL compositor, and the result is painted onto the overlay canvas. Non-effect layers stay on the fast DOM-mutation path, so there is no regression for the common case.
+
+Custom effects can be registered with `DomRenderer.registerEffect`:
+
+```typescript
+import DomRenderer from '@videoflow/renderer-dom';
+
+DomRenderer.registerEffect(
+  'glitch',
+  `
+vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
+  vec2 shifted = uv + vec2(u_amount * sin(uv.y * 40.0), 0.0);
+  return texture2D(tex, shifted);
+}
+`,
+  {
+    amount: { type: 'float', default: 0.02, min: 0, max: 0.1, animatable: true },
+  },
+);
+```
+
+---
+
 ## Example: Video Player with Controls
 
 ```html
@@ -141,10 +187,15 @@ player.fps              // number — frames per second
 
   // Build the video
   const $ = new VideoFlow({ width: 1280, height: 720, fps: 30 });
-  const title = $.addText({ text: 'VideoFlow Preview', fontSize: 3 });
-  title.fadeIn('1s');
-  $.wait('4s');
-  title.fadeOut('1s');
+  const title = $.addText(
+    { text: 'VideoFlow Preview', fontSize: 3 },
+    {
+      sourceDuration: '5s',
+      transitionIn:  { transition: 'riseFade', duration: '500ms' },
+      transitionOut: { transition: 'fade',     duration: '400ms' },
+    },
+  );
+  $.wait('5s');
 
   // Set up the player
   const json = await $.compile();
@@ -154,6 +205,11 @@ player.fps              // number — frames per second
   // Wire up controls
   document.getElementById('playBtn').onclick = () => player.play();
   document.getElementById('stopBtn').onclick = () => player.stop();
+
+  player.onFrame = (frame) => {
+    timeline.value = String((frame / player.totalFrames) * 100);
+    time.textContent = (frame / player.fps).toFixed(2) + 's';
+  };
 
   document.getElementById('timeline').addEventListener('input', (e) => {
     const frame = Math.floor((e.target.value / 100) * player.totalFrames);
