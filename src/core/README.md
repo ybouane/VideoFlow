@@ -94,6 +94,16 @@ These settings are accepted by every `add*` call:
   sourceEnd?: Time,        // Trim N seconds off the end of the source (video/audio only). Default: 0
   mediaDuration?: Time,    // Intrinsic length of the source (video/audio only). Auto-detected when omitted.
   speed?: number,          // Playback speed multiplier. 2 = twice as fast, -1 = reverse. Default: 1
+  transitionIn?: {         // Enter transition. Duration defaults to 200ms.
+    transition: string,    // Preset name (e.g. 'fade', 'zoom', 'riseFade')
+    duration?: Time,       // Transition window. Default: '200ms'
+    params?: Record<string, any>, // Preset-specific parameters
+  },
+  transitionOut?: {        // Exit transition, same shape as transitionIn
+    transition: string,
+    duration?: Time,
+    params?: Record<string, any>,
+  },
 }
 ```
 
@@ -169,13 +179,20 @@ const title = $.addText(
     scale: 1,                    // Default: 1
     rotation: 0,                 // Degrees. Default: 0
     anchor: [0.5, 0.5],          // Normalized anchor point. Default: [0.5, 0.5]
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
+
+    // --- GLSL effects (see "GLSL Effects" section) ---
+    effects: [
+      { effect: 'pixelate', params: { size: 8 } },
+    ],
   },
   {
     // --- Common settings (see above) ---
     startTime: 0,                // Default: 0
     sourceDuration: '3s',        // Default: undefined (runs to end)
     enabled: true,               // Default: true
+    transitionIn:  { transition: 'fade', duration: '300ms' },
+    transitionOut: { transition: 'fade', duration: '300ms' },
   }
 );
 ```
@@ -199,7 +216,7 @@ const photo = $.addImage(
     scale: 1,                    // Default: 1
     rotation: 0,                 // Degrees. Default: 0
     anchor: [0.5, 0.5],          // Default: centered
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
   },
   {
     source: 'https://example.com/image.jpg', // REQUIRED: URL or file path
@@ -234,7 +251,7 @@ const clip = $.addVideo(
     scale: 1,                    // Default: 1
     rotation: 0,                 // Default: 0
     anchor: [0.5, 0.5],          // Default: centered
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective
+    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
   },
   {
     source: './clip.mp4',        // REQUIRED: URL or file path
@@ -387,7 +404,7 @@ layer.set({
   borderWidth: 0,                 // Unitless = em, or [top, right, bottom, left]. Default: 0. Animatable.
   borderStyle: 'solid',           // 'none'|'solid'|'dashed'|'dotted'|'double'|'groove'|'ridge'|'inset'|'outset'. Default: 'solid'
   borderColor: '#000000',         // Default: '#000000'. Animatable.
-  outerBorder: false,             // Draw border outside instead of inside. Default: false
+  innerBorder: false,             // Draw border inside the layer box (box-sizing: border-box). Default: false
   borderRadius: 0,                // Unitless = em, or '%', or 4-corner array. Default: 0. Animatable.
 });
 ```
@@ -431,6 +448,88 @@ layer.animate({ filterBlur: 0 }, { filterBlur: 1 }, { duration: '2s' });
 // filterHueRotate:  degrees,         default 0
 // filterSaturate:   multiplier,      default 1
 ```
+
+---
+
+## Transitions
+
+Attach an enter and/or exit animation to any layer via `transitionIn` / `transitionOut` in the layer's settings. Transitions modify the layer's resolved properties during a bounded window at the layer's start or end — no manual keyframing required.
+
+```typescript
+const title = $.addText(
+  { text: 'Hello!', fontSize: 3 },
+  {
+    sourceDuration: '4s',
+    transitionIn:  { transition: 'riseFade', duration: '600ms', params: { distance: 0.1 } },
+    transitionOut: { transition: 'blur',     duration: '500ms', params: { amount: 8 } },
+  },
+);
+```
+
+`duration` defaults to `200ms` and accepts any [Time format](#time-format). If the combined in+out duration would exceed the layer's own duration, both are scaled proportionally.
+
+### Built-in transition presets
+
+| Preset | Effect | Params |
+| --- | --- | --- |
+| `fade` | Crossfades opacity | — |
+| `zoom` | Scales in/out from `from` factor | `from?: number` (default `0.8`) |
+| `blur` | Sweeps a Gaussian blur in/out | `amount?: number` (peak blur in `em`, default `4`) |
+| `slideLeft` | Slides in from the right | `distance?: number` (fraction of canvas width, default `0.25`) |
+| `slideRight` | Slides in from the left | `distance?: number` |
+| `slideUp` | Slides in from below | `distance?: number` |
+| `slideDown` | Slides in from above | `distance?: number` |
+| `riseFade` | `slideUp` + `fade` combined | `distance?: number` (default `0.08`) |
+
+The same preset name works for both `transitionIn` and `transitionOut` — the transition function receives `p` rising from 0→1 on entry and falling from 1→0 on exit, so `opacity *= p` is a fade-in *and* a fade-out with the same code.
+
+---
+
+## GLSL Effects
+
+Attach one or more WebGL shader effects to a layer via the first-argument `effects` property. Effects run in array order, each pass reading from the previous output (ping-pong framebuffers), before the layer is composited.
+
+```typescript
+const img = $.addImage(
+  {
+    fit: 'cover',
+    effects: [
+      { effect: 'pixelate',            params: { size: 48 } },
+      { effect: 'chromaticAberration', params: { amount: 0.004 } },
+      { effect: 'vignette',            params: { strength: 0.7, radius: 0.75 } },
+    ],
+  },
+  { source: './photo.jpg', sourceDuration: '4s' },
+);
+```
+
+The `effects` array is set at creation time and cannot be animated. Individual params, however, **are** animatable via dot-path property keys:
+
+```typescript
+// Animate the 'size' param of the first 'pixelate' effect
+img.animate(
+  { 'effects.pixelate.size': 48 },
+  { 'effects.pixelate.size': 1 },
+  { duration: '2s' },
+);
+
+// When the same effect appears more than once, use an index:
+img.animate({}, { 'effects.pixelate[1].size': 4 }, { duration: '1s' });
+```
+
+### Built-in effect presets
+
+| Effect | Description | Params |
+| --- | --- | --- |
+| `chromaticAberration` | Splits RGB channels horizontally | `amount` (default `0.005`) |
+| `pixelate` | Pixel mosaic | `size` (pixels, default `8`) |
+| `vignette` | Darkened border | `strength` (default `0.6`), `radius` (default `0.8`) |
+| `rgbSplit` | Directional chromatic aberration | `angle` (degrees, default `0`), `amount` (default `0.005`) |
+| `invert` | Colour inversion | `amount` (0–1, default `1`) |
+
+All params are animatable. Effects are supported in both `BrowserRenderer` (export) and `DomRenderer` (live preview).
+
+---
 
 ## Timeline Methods
 
