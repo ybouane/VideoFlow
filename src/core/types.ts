@@ -129,6 +129,48 @@ export type LayerSettingsJSON = {
 };
 
 /**
+ * A transition attached to the start or end of a layer's timeline footprint.
+ *
+ * `transition` names a function previously registered with
+ * `Renderer.registerTransition(name, fn)`. `duration` is in seconds and must
+ * fit inside the layer's own timeline duration — if `transitionIn.duration +
+ * transitionOut.duration` exceeds the layer duration, both are scaled down
+ * proportionally by the renderer.
+ *
+ * `params` is passed verbatim to the transition function as its third argument
+ * and is free-form per preset (e.g. `{ amount: 8 }` for a blur preset).
+ */
+export type LayerTransitionJSON = {
+	transition: string;
+	duration: number;
+	params?: Record<string, any>;
+};
+
+/**
+ * User-facing transition spec passed in a layer's `settings`. `duration`
+ * accepts any {@link Time} format (e.g. `'400ms'`, `'1s'`, `0.4`) and is
+ * normalised to seconds at compile time.
+ */
+export type LayerTransitionSpec = {
+	transition: string;
+	duration?: Time;
+	params?: Record<string, any>;
+};
+
+/**
+ * A single effect entry on a layer. `effect` names a shader previously
+ * registered with `Renderer.registerEffect(name, glsl, paramsDefinitions)`.
+ * `params` holds the uniform values used when the shader runs.
+ *
+ * A layer may declare multiple effects; they run in array order, each pass
+ * reading the previous pass's output.
+ */
+export type LayerEffectJSON = {
+	effect: string;
+	params?: Record<string, any>;
+};
+
+/**
  * A single layer as it appears in the compiled JSON model.
  *
  * `track` is optional editor metadata: it groups layers into rows in a timeline
@@ -136,6 +178,11 @@ export type LayerSettingsJSON = {
  * their position in the parent `layers` array (later = on top). Editors are
  * free to pack layers into tracks and write the assignment back here; non-editor
  * consumers can ignore the field entirely.
+ *
+ * `transitionIn` / `transitionOut` attach registered transition presets to the
+ * layer's timeline edges; they modify the final (post-keyframe) properties
+ * during the transition window. `effects` attaches registered GLSL effects
+ * that run on the rasterized layer texture before it is composited.
  */
 export type LayerJSON = {
 	id: Id;
@@ -144,6 +191,9 @@ export type LayerJSON = {
 	properties: Record<string, any>;
 	animations: Animation[];
 	track?: number;
+	transitionIn?: LayerTransitionJSON;
+	transitionOut?: LayerTransitionJSON;
+	effects?: LayerEffectJSON[];
 };
 
 /**
