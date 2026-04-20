@@ -11,6 +11,9 @@ import RuntimeMediaLayer from './RuntimeMediaLayer.js';
 export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 	get hasAudio(): boolean { return true; }
 
+	/** Video frames change every frame regardless of property equality. */
+	get cacheable(): boolean { return false; }
+
 	/** Dual video elements for decode-ahead buffering. */
 	private vidA: HTMLVideoElement | null = null;
 	private vidB: HTMLVideoElement | null = null;

@@ -22,3 +22,25 @@ export {
 	RuntimeAudioLayer,
 	type ILayerRenderer,
 } from './layers/index.js';
+
+export {
+	registerTransition,
+	getTransition,
+	listTransitions,
+	type TransitionFn,
+} from './transitions.js';
+
+export {
+	registerEffect,
+	getEffect,
+	listEffects,
+	type EffectDefinition,
+	type EffectParamDefinition,
+	type EffectParamType,
+} from './effects.js';
+
+export { default as LayerRasterizer } from './LayerRasterizer.js';
+export { default as WebGLEffectCompositor } from './WebGLEffectCompositor.js';
+export type { FontCssForLayerFn } from './LayerRasterizer.js';
+export { buildFontUrl } from './googleFontLoader.js';
+export { default as FontEmbedder } from './FontEmbedder.js';
