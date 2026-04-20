@@ -141,8 +141,8 @@ export default class VisualLayer extends BaseLayer {
 			'borderStyle': { cssProperty: 'border-style', enum: ['none', 'solid', 'dashed', 'dotted', 'double', 'groove', 'ridge', 'inset', 'outset'], default: 'solid', animatable: false },
 			/** CSS colour string. */
 			'borderColor': { cssProperty: 'border-color', default: '#000000', animatable: true },
-			/** When `true`, the border is drawn outside the layer box. */
-			'outerBorder': { default: false, animatable: false },
+			/** When `true`, the border is drawn inside the layer box (`box-sizing: border-box`). */
+			'innerBorder': { default: false, animatable: false },
 			/**
 			 * Corner radius. Unitless = `em`. Use `%` for proportional
 			 * rounding (e.g. `50%` = perfect circle on a square). Single number
