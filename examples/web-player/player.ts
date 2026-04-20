@@ -13,6 +13,8 @@ import { createProject as imageBackground } from '../02-image-background.js';
 import { createProject as videoWithAudio } from '../03-video-with-audio.js';
 import { createProject as captions } from '../04-captions.js';
 import { createProject as parallelAnimations } from '../05-parallel-animations.js';
+import { createProject as transitions } from '../08-transitions.js';
+import { createProject as effects } from '../09-effects.js';
 
 const EXAMPLES: Record<string, () => any> = {
 	'01 — Basic Text': basicText,
@@ -20,6 +22,8 @@ const EXAMPLES: Record<string, () => any> = {
 	'03 — Video with Audio': videoWithAudio,
 	'04 — Captions': captions,
 	'05 — Parallel Animations': parallelAnimations,
+	'08 — Transitions': transitions,
+	'09 — Effects': effects,
 };
 
 const $status = document.getElementById('status')!;
@@ -128,6 +132,21 @@ document.addEventListener('keydown', (e) => {
 	if (e.code === 'Space') {
 		e.preventDefault();
 		togglePlayback();
+	} else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+		if (!renderer) return;
+		e.preventDefault();
+		if (renderer.playing) {
+			renderer.stop();
+			$btnPlay.textContent = 'Play';
+			$btnPlay.classList.remove('active');
+		}
+		const total = renderer.totalFrames;
+		if (total === 0) return;
+		const delta = e.code === 'ArrowRight' ? 1 : -1;
+		const next = ((renderer.currentFrame + delta) % total + total) % total;
+		renderer.renderFrame(next);
+		$seek.value = String(next);
+		updateTimeDisplay();
 	}
 });
 
