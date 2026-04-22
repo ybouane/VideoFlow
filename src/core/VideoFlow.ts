@@ -672,17 +672,35 @@ export default class VideoFlow {
 			return comp.type.charAt(0).toUpperCase() + comp.type.slice(1);
 		};
 
-		// Convert to VideoJSON
+		// Convert to VideoJSON. Properties that only have a single keyframe
+		// (creation-time values or one-off `.set()` calls that were never
+		// animated) go into the static `properties` map. Properties with two
+		// or more keyframes go into `animations`.
+		//
+		// Easing serialization: missing easing means `'linear'` at the library
+		// level, so we strip `'linear'` from keyframes and keep everything
+		// else (including `'step'`, which is load-bearing — it's what holds
+		// animation end values steady until the next keyframe).
 		const layers = sortedLayers.map(comp => {
-			const animations = Object.entries(comp.properties).map(([prop, keyframes]) => ({
-				property: prop,
-				// Keyframes are already stored in absolute source seconds.
-				keyframes: (keyframes as any[]).map(kf => ({
-					time: kf.time,
-					value: kf.value,
-					...(kf.easing && kf.easing !== 'step' ? { easing: kf.easing } : {}),
-				})),
-			}));
+			const staticProps: Record<string, any> = {};
+			const animations: any[] = [];
+
+			for (const [prop, keyframes] of Object.entries(comp.properties)) {
+				const kfs = keyframes as any[];
+				if (kfs.length === 1) {
+					staticProps[prop] = kfs[0].value;
+					continue;
+				}
+				animations.push({
+					property: prop,
+					// Keyframes are already stored in absolute source seconds.
+					keyframes: kfs.map(kf => ({
+						time: kf.time,
+						value: kf.value,
+						...(kf.easing && kf.easing !== 'linear' ? { easing: kf.easing } : {}),
+					})),
+				});
+			}
 
 			const startTimeSec = comp.startTimeFrames / fps;
 			const endTimeSec = (comp.endTimeFrames as number) / fps;
@@ -713,7 +731,7 @@ export default class VideoFlow {
 							.map(key => [key, comp.settings[key]])
 					),
 				},
-				properties: {},
+				properties: staticProps,
 				animations,
 				...(comp.transitionIn ? { transitionIn: comp.transitionIn } : {}),
 				...(comp.transitionOut ? { transitionOut: comp.transitionOut } : {}),
