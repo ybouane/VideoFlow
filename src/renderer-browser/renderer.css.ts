@@ -113,6 +113,14 @@ textual-layer {
 	paint-order: stroke;
 	line-height: 1;
 }
+[data-element="shape"] {
+	/* Wrapper div is sized in JS to match the shape's display box; the
+	   inline svg inside fills it and uses a matching viewBox for crisp
+	   vector drawing at any scale. */
+	display: block;
+	box-sizing: border-box;
+	line-height: 0;
+}
 `;
 
 export default RENDERER_CSS;

@@ -15,6 +15,7 @@ import RuntimeMediaLayer from './RuntimeMediaLayer.js';
 import RuntimeImageLayer from './RuntimeImageLayer.js';
 import RuntimeVideoLayer from './RuntimeVideoLayer.js';
 import RuntimeAudioLayer from './RuntimeAudioLayer.js';
+import RuntimeShapeLayer from './RuntimeShapeLayer.js';
 
 /** Registry mapping layer type strings to runtime classes. */
 const RUNTIME_LAYER_CLASSES: Record<string, typeof RuntimeBaseLayer> = {
@@ -23,6 +24,7 @@ const RUNTIME_LAYER_CLASSES: Record<string, typeof RuntimeBaseLayer> = {
 	image: RuntimeImageLayer,
 	video: RuntimeVideoLayer,
 	audio: RuntimeAudioLayer,
+	shape: RuntimeShapeLayer,
 };
 
 /**
@@ -49,4 +51,5 @@ export {
 	RuntimeImageLayer,
 	RuntimeVideoLayer,
 	RuntimeAudioLayer,
+	RuntimeShapeLayer,
 };
