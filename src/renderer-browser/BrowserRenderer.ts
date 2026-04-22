@@ -78,7 +78,7 @@ import WORKER_SOURCE from './workerBundle.js';
 // ---------------------------------------------------------------------------
 
 import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer,
+	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer,
 } from '@videoflow/core';
 
 /**
@@ -91,6 +91,7 @@ const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
 	image: ImageLayer.propertiesDefinition,
 	video: VideoLayer.propertiesDefinition,
 	audio: AudioLayer.propertiesDefinition,
+	shape: ShapeLayer.propertiesDefinition,
 };
 
 // ---------------------------------------------------------------------------

@@ -27,7 +27,15 @@ import type RuntimeBaseLayer from './layers/RuntimeBaseLayer.js';
 /** Builds the per-layer `@font-face` CSS block to embed in a tier-3 SVG. */
 export type FontCssForLayerFn = (layer: RuntimeBaseLayer) => Promise<string>;
 
-const MEDIA_TYPES = new Set(['image', 'video']);
+/**
+ * Layer types whose `$element` is a canvas (or canvas-like) at its exact
+ * display size — these are eligible for the tier-1 direct-draw path. Only
+ * media layers (image / video) qualify: their `$element` is a canvas with
+ * `dimensions` = media pixel size, sized onto the project via `fit`.
+ *
+ * Shape layers render via inline SVG and always take the tier-3 path.
+ */
+const DIRECT_DRAWABLE_TYPES = new Set(['image', 'video']);
 
 function extractNumber(v: any): number | null {
 	if (typeof v === 'number') return v;
@@ -139,7 +147,7 @@ export default class LayerRasterizer {
 	/** Classify the layer for this frame: 1 = direct draw, 3 = foreignObject. */
 	pickRasterTier(layer: RuntimeBaseLayer, props: Record<string, any>): 1 | 3 {
 		if (layer.hasEffects) return 3;
-		if (!MEDIA_TYPES.has(layer.json.type)) return 3;
+		if (!DIRECT_DRAWABLE_TYPES.has(layer.json.type)) return 3;
 		const dims = (layer as any).dimensions as [number, number] | undefined;
 		if (!dims || !dims[0] || !dims[1]) return 3;
 		const el = layer.$element;
@@ -201,8 +209,7 @@ export default class LayerRasterizer {
 
 		const el = layer.$element as HTMLCanvasElement;
 		const [mw, mh] = (layer as any).dimensions as [number, number];
-		const fit = props.fit ?? 'cover';
-		const [ow, oh] = fitDims(pw, ph, mw, mh, fit);
+		const [ow, oh] = fitDims(pw, ph, mw, mh, props.fit ?? 'cover');
 
 		const [sx, sy] = normalizeScale(props.scale);
 		const [ax, ay] = normalizePair(props.anchor, 0.5);

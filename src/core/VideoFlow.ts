@@ -42,6 +42,8 @@ import AudioLayer from './layers/AudioLayer.js';
 import type { AudioLayerProperties, AudioLayerSettings } from './layers/AudioLayer.js';
 import CaptionsLayer from './layers/CaptionsLayer.js';
 import type { CaptionsLayerProperties, CaptionsLayerSettings } from './layers/CaptionsLayer.js';
+import ShapeLayer from './layers/ShapeLayer.js';
+import type { ShapeLayerProperties, ShapeLayerSettings } from './layers/ShapeLayer.js';
 
 // ---------------------------------------------------------------------------
 //  Default project settings
@@ -216,6 +218,11 @@ export default class VideoFlow {
 	/** Add a captions layer with pre-defined timed captions. */
 	addCaptions(properties?: CaptionsLayerProperties, settings?: CaptionsLayerSettings, options?: AddLayerOptions): CaptionsLayer {
 		return this.addLayer(CaptionsLayer, properties, settings, options);
+	}
+
+	/** Add a vector shape layer (rectangle, ellipse, polygon, or star). */
+	addShape(properties?: ShapeLayerProperties, settings?: ShapeLayerSettings, options?: AddLayerOptions): ShapeLayer {
+		return this.addLayer(ShapeLayer, properties, settings, options);
 	}
 
 	// -----------------------------------------------------------------------

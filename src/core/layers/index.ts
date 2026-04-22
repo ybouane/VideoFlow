@@ -44,3 +44,6 @@ export type { AuditoryLayerSettings, AuditoryLayerProperties } from './AuditoryL
 
 export { default as AudioLayer } from './AudioLayer.js';
 export type { AudioLayerSettings, AudioLayerProperties } from './AudioLayer.js';
+
+export { default as ShapeLayer } from './ShapeLayer.js';
+export type { ShapeLayerSettings, ShapeLayerProperties, ShapeType } from './ShapeLayer.js';
