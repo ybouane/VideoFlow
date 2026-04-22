@@ -22,7 +22,7 @@
  */
 
 import type { LayerJSON, LayerEffectJSON, PropertyDefinition } from '@videoflow/core/types';
-import { getTransition } from '../transitions.js';
+import { getTransitionDefinition } from '../transitions.js';
 
 /** Regex that matches an animated effect-param key (`effects.name.param` or `effects.name[idx].param`). */
 const EFFECT_PARAM_PATH_RE = /^effects\.([a-zA-Z_][\w-]*)(?:\[(\d+)\])?\.([a-zA-Z_]\w*)$/;
@@ -158,19 +158,32 @@ export default class RuntimeBaseLayer {
 	// -- Transitions --------------------------------------------------------
 
 	/**
-	 * Compute the clamped `{ pIn, pOut }` completeness values at a given frame.
+	 * Compute the clamped, *signed* `{ pIn, pOut }` transition values at a
+	 * given frame.
 	 *
-	 * - `pIn`  = 1 outside the in-window, rises 0→1 across the in-window.
-	 * - `pOut` = 1 outside the out-window, falls 1→0 across the out-window.
+	 * The transition system uses a single signed parameter `p` across the
+	 * layer's lifetime:
 	 *
-	 * If the two windows would overlap (in.duration + out.duration >
-	 * timelineDuration), both are scaled down proportionally so they meet in
-	 * the middle without overlap.
+	 * - `p = -1` at the very start of the `transitionIn` window
+	 * - `p =  0` at rest (between transitions — layer is in its original state)
+	 * - `p = +1` at the very end of the `transitionOut` window
+	 *
+	 * Because the two windows don't overlap, we split this single axis into
+	 * two values to allow different presets and easings at each end:
+	 *
+	 * - `pIn`  rises from `-1` → `0` across the in-window; `0` elsewhere.
+	 * - `pOut` rises from  `0` → `+1` across the out-window; `0` elsewhere.
+	 *
+	 * Raw values are returned (not eased) — the caller applies the
+	 * appropriate easing to each. If `transitionIn.duration +
+	 * transitionOut.duration` exceeds the layer's timeline duration, both
+	 * are scaled down proportionally so they meet in the middle without
+	 * overlap.
 	 */
 	getTransitionProgress(frame: number): { pIn: number; pOut: number } {
 		const tIn = this.json.transitionIn;
 		const tOut = this.json.transitionOut;
-		if (!tIn && !tOut) return { pIn: 1, pOut: 1 };
+		if (!tIn && !tOut) return { pIn: 0, pOut: 0 };
 
 		let dIn = tIn?.duration ?? 0;
 		let dOut = tOut?.duration ?? 0;
@@ -184,19 +197,21 @@ export default class RuntimeBaseLayer {
 
 		const elapsed = (frame / this.fps) - this.startTime;
 
-		let pIn = 1;
-		if (dIn > 0) {
-			pIn = elapsed / dIn;
-			if (pIn < 0) pIn = 0;
-			if (pIn > 1) pIn = 1;
+		// pIn: -1 at the start of the in-window, rising linearly to 0 at its
+		// end. Outside the window (including before the layer starts), stays 0
+		// so presets are a natural no-op.
+		let pIn = 0;
+		if (dIn > 0 && elapsed < dIn) {
+			const t = Math.max(0, elapsed / dIn);
+			pIn = -1 + t;
 		}
 
-		let pOut = 1;
-		if (dOut > 0) {
-			const timeLeft = total - elapsed;
-			pOut = timeLeft / dOut;
-			if (pOut < 0) pOut = 0;
-			if (pOut > 1) pOut = 1;
+		// pOut: 0 at the start of the out-window, rising linearly to +1 at the
+		// layer's end. Outside the window, stays 0.
+		let pOut = 0;
+		if (dOut > 0 && elapsed > total - dOut) {
+			const t = Math.min(1, (elapsed - (total - dOut)) / dOut);
+			pOut = t;
 		}
 
 		return { pIn, pOut };
@@ -206,6 +221,10 @@ export default class RuntimeBaseLayer {
 	 * Apply `transitionIn` and `transitionOut` presets to the resolved
 	 * property map for this frame. Called between `getPropertiesAtFrame` and
 	 * `applyProperties`. Unknown presets are silently skipped.
+	 *
+	 * Each preset receives the signed `p` so a single function body handles
+	 * both enter and exit — e.g. a `rise` preset that moves the layer
+	 * continuously upward through `p ∈ [-1, +1]` just works for both windows.
 	 */
 	applyTransitions(frame: number, props: Record<string, any>): Record<string, any> {
 		const tIn = this.json.transitionIn;
@@ -214,13 +233,24 @@ export default class RuntimeBaseLayer {
 
 		const { pIn, pOut } = this.getTransitionProgress(frame);
 
-		if (tIn && pIn < 1) {
-			const fn = getTransition(tIn.transition);
-			if (fn) props = fn(pIn, props, tIn.params ?? {}) ?? props;
+		// In-window: pIn ∈ [-1, 0). Ease the progress portion (0..1) then
+		// shift back into the signed range.
+		if (tIn && pIn < 0) {
+			const def = getTransitionDefinition(tIn.transition);
+			if (def) {
+				const easing = tIn.easing ?? def.defaultEasing;
+				const pEased = -1 + this.applyEasing(pIn + 1, easing);
+				props = def.fn(pEased, props, tIn.params ?? {}) ?? props;
+			}
 		}
-		if (tOut && pOut < 1) {
-			const fn = getTransition(tOut.transition);
-			if (fn) props = fn(pOut, props, tOut.params ?? {}) ?? props;
+		// Out-window: pOut ∈ (0, 1]. Ease directly.
+		if (tOut && pOut > 0) {
+			const def = getTransitionDefinition(tOut.transition);
+			if (def) {
+				const easing = tOut.easing ?? def.defaultEasing;
+				const pEased = this.applyEasing(pOut, easing);
+				props = def.fn(pEased, props, tOut.params ?? {}) ?? props;
+			}
 		}
 		return props;
 	}
@@ -366,7 +396,7 @@ export default class RuntimeBaseLayer {
 		}
 
 		const t = (time - kf2.time) / (kf1.time - kf2.time);
-		return this.interpolate(kf2.value, kf1.value, t, kf2.easing ?? 'step', definition);
+		return this.interpolate(kf2.value, kf1.value, t, kf2.easing ?? 'linear', definition);
 	}
 
 	// -- Unit handling --

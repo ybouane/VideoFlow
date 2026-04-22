@@ -478,6 +478,7 @@ export default class VideoFlow {
 							return {
 								transition: String(spec.transition),
 								duration: durationSec,
+								...(spec.easing ? { easing: spec.easing } : {}),
 								...(spec.params ? { params: { ...spec.params } } : {}),
 							};
 						};

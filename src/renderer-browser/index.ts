@@ -26,8 +26,11 @@ export {
 export {
 	registerTransition,
 	getTransition,
+	getTransitionDefinition,
 	listTransitions,
 	type TransitionFn,
+	type TransitionDefinition,
+	type RegisterTransitionOptions,
 } from './transitions.js';
 
 export {

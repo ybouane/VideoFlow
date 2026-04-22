@@ -129,7 +129,12 @@ player.fps              // number — frames per second
 
 ## Transitions
 
-`DomRenderer` fully supports transitions declared on layers. Built-in presets (`fade`, `zoom`, `blur`, `slideLeft`, `slideRight`, `slideUp`, `slideDown`, `riseFade`) animate automatically in live preview — no extra setup needed.
+`DomRenderer` fully supports transitions declared on layers. Built-in presets animate automatically in live preview — no extra setup needed:
+
+- **Symmetric:** `fade`, `zoom`, `blur`, `slideFromTop`, `slideFromBottom`, `slideFromLeft`, `slideFromRight`
+- **Continuous motion:** `rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`
+
+See [`@videoflow/renderer-browser` → Transitions](../renderer-browser/README.md#transitions) for the full preset table and the signed-`p` contract.
 
 Custom presets can be registered with `DomRenderer.registerTransition`, which writes to the same shared registry as `BrowserRenderer.registerTransition`:
 
@@ -137,10 +142,12 @@ Custom presets can be registered with `DomRenderer.registerTransition`, which wr
 import DomRenderer from '@videoflow/renderer-dom';
 
 DomRenderer.registerTransition('spin', (p, properties, params) => {
-  properties.rotation = (properties.rotation ?? 0) + (1 - p) * (params.angle ?? 360);
-  properties.opacity = (properties.opacity ?? 1) * p;
+  // |p| is 0 at rest and 1 at the edges of the window, so the same body
+  // runs as both a transition-in and transition-out.
+  properties.rotation = (properties.rotation ?? 0) + Math.abs(p) * (params.angle ?? 360);
+  properties.opacity  = (properties.opacity  ?? 1) * (1 - Math.abs(p));
   return properties;
-});
+}, { defaultEasing: 'easeOut' });
 ```
 
 ---
