@@ -377,6 +377,7 @@ export default class BaseLayer {
 		return {
 			transition: spec.transition,
 			duration: durationSec,
+			...(spec.easing ? { easing: spec.easing } : {}),
 			...(spec.params ? { params: spec.params } : {}),
 		};
 	}

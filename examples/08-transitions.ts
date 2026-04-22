@@ -1,9 +1,11 @@
 /**
  * Example 08 — Transitions
  *
- * Demonstrates the bundled transition presets — `fade`, `zoom`, `slideUp`,
- * `blur`, `riseFade` — attached via the `transitionIn` / `transitionOut`
- * entries on each layer's settings.
+ * Demonstrates the bundled transition presets — `fade`, `zoom`, `blur`,
+ * `rise` / `fall` / `driftLeft` / `driftRight` (continuous motion),
+ * `slideFromTop` / `slideFromBottom` / `slideFromLeft` / `slideFromRight`
+ * (symmetric), and the `riseFade` composite — attached via the
+ * `transitionIn` / `transitionOut` entries on each layer's settings.
  *
  * Run:
  *   npx tsx examples/08-transitions.ts
@@ -48,7 +50,7 @@ export function createProject() {
 		},
 	);
 
-	// Subtitle slides in from the right
+	// Subtitle drifts continuously leftward — in from the right, out to the left
 	$.addText(
 		{
 			text: 'Built-in presets, no manual keyframes',
@@ -60,8 +62,8 @@ export function createProject() {
 		{
 			startTime: 1.0,
 			sourceDuration: 3.5,
-			transitionIn:  { transition: 'slideLeft',  duration: '600ms', params: { distance: 0.1 } },
-			transitionOut: { transition: 'slideRight', duration: '600ms', params: { distance: 0.1 } },
+			transitionIn:  { transition: 'driftLeft', duration: '600ms', params: { distance: 0.1 } },
+			transitionOut: { transition: 'driftLeft', duration: '600ms', params: { distance: 0.1 } },
 		},
 	);
 

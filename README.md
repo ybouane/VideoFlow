@@ -194,20 +194,37 @@ const title = $.addText(
 );
 ```
 
-The `duration` defaults to `200ms` and accepts any [Time format](#time-formats). If `transitionIn.duration + transitionOut.duration` would exceed the layer's own duration, both are scaled proportionally.
+The `duration` defaults to `200ms` and accepts any [Time format](#time-formats). If `transitionIn.duration + transitionOut.duration` would exceed the layer's own duration, both are scaled proportionally. Each spec also accepts an `easing` field (e.g. `'easeInOut'`) to override the preset's default curve for that direction only.
+
+### How `p` works
+
+Presets receive a signed progress parameter `p ∈ [-1, +1]`:
+
+- `p = -1` — start of the `transitionIn` window (layer fully "transitioned in")
+- `p =  0` — layer at rest, original properties
+- `p = +1` — end of the `transitionOut` window (layer fully "transitioned out")
+
+`p` is continuous across the layer's life, which gives you two useful modes:
+
+- **Symmetric** presets use `|p|` — the layer does the same thing on enter and exit (`fade`: `opacity *= (1 - |p|)`).
+- **Asymmetric** presets use the sign of `p` — the layer moves *through* rest without reversing. `rise` starts below its resting position, rises through rest, and keeps rising above rest on exit: one pattern, no snap-back.
 
 ### Built-in transition presets
 
-| Name | Effect | Params |
-| --- | --- | --- |
-| `fade` | Crossfade opacity | — |
-| `zoom` | Scale in/out from `from` | `from?: number` (default `0.8`) |
-| `blur` | Gaussian blur sweeps in/out | `amount?: number` (peak blur in `em`, default `4`) |
-| `slideLeft` | Slides in from the right | `distance?: number` (fraction of canvas, default `0.25`) |
-| `slideRight` | Slides in from the left | `distance?: number` |
-| `slideUp` | Slides in from below | `distance?: number` |
-| `slideDown` | Slides in from above | `distance?: number` |
-| `riseFade` | Combines `slideUp` + `fade` | `distance?: number` (default `0.08`) |
+| Name | Kind | Effect | Params |
+| --- | --- | --- | --- |
+| `fade` | symmetric | Opacity `0` at `|p| = 1`, `1` at rest | — |
+| `zoom` | symmetric | Scale through rest from `from` at `|p| = 1` | `from?: number` (default `0.8`) |
+| `blur` | symmetric | Gaussian blur peaks at `|p| = 1` | `amount?: number` (peak blur in `em`, default `4`) |
+| `rise` | continuous | Continuously moves upward through rest | `distance?: number` (fraction of canvas, default `0.15`) |
+| `fall` | continuous | Continuously moves downward through rest | `distance?: number` |
+| `driftLeft` | continuous | Continuously moves leftward through rest | `distance?: number` |
+| `driftRight` | continuous | Continuously moves rightward through rest | `distance?: number` |
+| `slideFromTop` | symmetric | Enters from and exits to the top | `distance?: number` (default `0.15`) |
+| `slideFromBottom` | symmetric | Enters from and exits to the bottom | `distance?: number` |
+| `slideFromLeft` | symmetric | Enters from and exits to the left | `distance?: number` |
+| `slideFromRight` | symmetric | Enters from and exits to the right | `distance?: number` |
+| `riseFade` | composite | `rise` + `fade` — rises continuously while fading | `distance?: number` (default `0.08`) |
 
 Transitions work in both `BrowserRenderer` (export) and `DomRenderer` (live preview). Custom presets can be registered with `BrowserRenderer.registerTransition(name, fn)`.
 
@@ -343,7 +360,7 @@ See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) fol
 | [05-parallel-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/05-parallel-animations.ts) | Staggered parallel animations |
 | [06-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-render-frame-and-audio.ts) | Render a single frame or audio track |
 | [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
-| [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, zoom, blur, slide, riseFade) |
+| [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, zoom, blur, rise/fall, driftLeft/Right, slideFromX, riseFade) |
 | [09-effects.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/09-effects.ts) | GLSL effects with animated params (pixelate, chromatic aberration, vignette) |
 
 Run any example with:

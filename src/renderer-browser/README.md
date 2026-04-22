@@ -76,20 +76,39 @@ const audioBuffer = await VideoRenderer.renderAudio(videoJSON);
 
 ## Transitions
 
-Transition presets are registered globally and referenced by name in the layer's settings. Built-in presets (`fade`, `zoom`, `blur`, `slideLeft`, `slideRight`, `slideUp`, `slideDown`, `riseFade`) are auto-registered on import.
+Transition presets are registered globally and referenced by name in the layer's settings. Built-in presets are auto-registered on import.
+
+### The signed `p` contract
+
+Every preset receives a **signed** progress value `p ∈ [-1, +1]`:
+
+- `p = -1` — start of the `transitionIn` window
+- `p =  0` — layer at rest (original properties; preset must be a no-op)
+- `p = +1` — end of the `transitionOut` window
+
+`p` is pre-eased by the renderer (per-direction easing), so preset bodies stay linear in their math. Presets must multiply / add onto the incoming property values so they compose with keyframed animation.
+
+Presets fall into two flavours:
+
+- **Symmetric** — use `|p|` to behave identically on enter and exit (`fade`, `zoom`, `blur`, all `slideFrom*`).
+- **Asymmetric / continuous** — use signed `p` to travel in one direction across the entire layer lifetime (`rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`).
 
 ### Built-in presets
 
-| Preset | Effect | Params |
-| --- | --- | --- |
-| `fade` | Crossfades opacity | — |
-| `zoom` | Scales in/out | `from?: number` (default `0.8`) |
-| `blur` | Gaussian blur sweep | `amount?: number` (peak blur in `em`, default `4`) |
-| `slideLeft` | Slides in from the right | `distance?: number` (fraction of canvas, default `0.25`) |
-| `slideRight` | Slides in from the left | `distance?: number` |
-| `slideUp` | Slides in from below | `distance?: number` |
-| `slideDown` | Slides in from above | `distance?: number` |
-| `riseFade` | `slideUp` + `fade` | `distance?: number` (default `0.08`) |
+| Preset | Kind | Effect | Params |
+| --- | --- | --- | --- |
+| `fade` | symmetric | Fades opacity in and out | — |
+| `zoom` | symmetric | Scales in/out from `from` factor | `from?: number` (default `0.8`) |
+| `blur` | symmetric | Gaussian blur sweep | `amount?: number` (peak blur in `em`, default `4`) |
+| `rise` | continuous | Travels upward through rest | `distance?: number` (default `0.15`) |
+| `fall` | continuous | Travels downward through rest | `distance?: number` |
+| `driftLeft` | continuous | Drifts left through rest | `distance?: number` |
+| `driftRight` | continuous | Drifts right through rest | `distance?: number` |
+| `slideFromTop` | symmetric | Enters & exits off the top | `distance?: number` (default `0.15`) |
+| `slideFromBottom` | symmetric | Enters & exits off the bottom | `distance?: number` |
+| `slideFromLeft` | symmetric | Enters & exits off the left | `distance?: number` |
+| `slideFromRight` | symmetric | Enters & exits off the right | `distance?: number` |
+| `riseFade` | continuous | Continuous upward motion + symmetric fade | `distance?: number` (default `0.08`) |
 
 ### Custom transitions
 
@@ -98,17 +117,20 @@ Register a custom preset with `BrowserRenderer.registerTransition`. The same reg
 ```typescript
 import BrowserRenderer from '@videoflow/renderer-browser';
 
+// Symmetric: spin back to rest on enter and exit
 BrowserRenderer.registerTransition('spin', (p, properties, params) => {
-  properties.rotation = (properties.rotation ?? 0) + (1 - p) * (params.angle ?? 360);
-  properties.opacity = (properties.opacity ?? 1) * p;
+  properties.rotation = (properties.rotation ?? 0) + Math.abs(p) * (params.angle ?? 360);
+  properties.opacity  = (properties.opacity  ?? 1) * (1 - Math.abs(p));
   return properties;
-});
+}, { defaultEasing: 'easeOut' });
 ```
 
 The function receives:
-- `p` — completeness `0..1`. For `transitionIn`, `p` rises from 0 (layer start) to 1 (window end). For `transitionOut`, `p` falls from 1 (window start) to 0 (layer end).
+- `p` — signed progress in `[-1, +1]`, already eased. `-1` is the start of `transitionIn`, `0` is rest, `+1` is the end of `transitionOut`.
 - `properties` — the layer's resolved properties at this frame. Mutate in place or return a new object.
 - `params` — values from the layer's `transitionIn.params` / `transitionOut.params`.
+
+`options.defaultEasing` sets the easing applied to `|p|` when the layer doesn't specify one. Layers can always override via the `easing` field on their transition spec.
 
 ---
 

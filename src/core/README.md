@@ -466,22 +466,41 @@ const title = $.addText(
 );
 ```
 
-`duration` defaults to `200ms` and accepts any [Time format](#time-format). If the combined in+out duration would exceed the layer's own duration, both are scaled proportionally.
+`duration` defaults to `200ms` and accepts any [Time format](#time-format). If the combined in+out duration would exceed the layer's own duration, both are scaled proportionally. Each spec also accepts an `easing` field ([Easing](#easing)) applied to the progress magnitude.
+
+### How `p` works
+
+A transition preset is a pure function that receives a **signed** progress `p ∈ [-1, +1]`:
+
+- `p = -1` — start of the `transitionIn` window (layer fully "transitioned in")
+- `p =  0` — layer at rest, original properties (no transition applied)
+- `p = +1` — end of the `transitionOut` window (layer fully "transitioned out")
+
+Because `p` is continuous through rest, presets fall into two flavours:
+
+- **Symmetric** (`fade`, `blur`, `zoom`, all `slideFrom*`) use `|p|` so they behave identically on enter and exit — e.g. `opacity *= (1 - |p|)` fades in *and* out with the same body.
+- **Asymmetric / continuous motion** (`rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`) use the signed `p` to travel in one direction throughout the layer's life — `rise` starts below rest, moves up through rest, and keeps rising above rest on exit. No direction reversal.
+
+Presets must multiply / add onto incoming property values so they compose with keyframed animation, and must be a no-op at `p = 0`.
 
 ### Built-in transition presets
 
-| Preset | Effect | Params |
-| --- | --- | --- |
-| `fade` | Crossfades opacity | — |
-| `zoom` | Scales in/out from `from` factor | `from?: number` (default `0.8`) |
-| `blur` | Sweeps a Gaussian blur in/out | `amount?: number` (peak blur in `em`, default `4`) |
-| `slideLeft` | Slides in from the right | `distance?: number` (fraction of canvas width, default `0.25`) |
-| `slideRight` | Slides in from the left | `distance?: number` |
-| `slideUp` | Slides in from below | `distance?: number` |
-| `slideDown` | Slides in from above | `distance?: number` |
-| `riseFade` | `slideUp` + `fade` combined | `distance?: number` (default `0.08`) |
+| Preset | Kind | Effect | Params |
+| --- | --- | --- | --- |
+| `fade` | symmetric | Fades opacity in and out | — |
+| `zoom` | symmetric | Scales in/out from `from` factor | `from?: number` (default `0.8`; use `>1` for pop-from-large) |
+| `blur` | symmetric | Sweeps a Gaussian blur in and out | `amount?: number` (peak blur in `em`, default `4`) |
+| `rise` | continuous | Travels upward through rest | `distance?: number` (fraction of canvas height, default `0.15`) |
+| `fall` | continuous | Travels downward through rest | `distance?: number` |
+| `driftLeft` | continuous | Drifts left through rest | `distance?: number` |
+| `driftRight` | continuous | Drifts right through rest | `distance?: number` |
+| `slideFromTop` | symmetric | Enters and exits off the top | `distance?: number` (default `0.15`) |
+| `slideFromBottom` | symmetric | Enters and exits off the bottom | `distance?: number` |
+| `slideFromLeft` | symmetric | Enters and exits off the left | `distance?: number` |
+| `slideFromRight` | symmetric | Enters and exits off the right | `distance?: number` |
+| `riseFade` | continuous | Continuous upward motion + symmetric fade | `distance?: number` (default `0.08`) |
 
-The same preset name works for both `transitionIn` and `transitionOut` — the transition function receives `p` rising from 0→1 on entry and falling from 1→0 on exit, so `opacity *= p` is a fade-in *and* a fade-out with the same code.
+Registering a custom preset: `BrowserRenderer.registerTransition(name, fn, { defaultEasing })` (also available on `DomRenderer`). The registry is shared, so preview and export always agree.
 
 ---
 

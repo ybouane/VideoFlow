@@ -143,17 +143,24 @@ export type LayerSettingsJSON = {
 export type LayerTransitionJSON = {
 	transition: string;
 	duration: number;
+	/**
+	 * Easing applied to the transition's progress `p` before it is passed to
+	 * the preset function. Missing → the preset's declared default → `'linear'`.
+	 */
+	easing?: Easing;
 	params?: Record<string, any>;
 };
 
 /**
  * User-facing transition spec passed in a layer's `settings`. `duration`
  * accepts any {@link Time} format (e.g. `'400ms'`, `'1s'`, `0.4`) and is
- * normalised to seconds at compile time.
+ * normalised to seconds at compile time. `easing` overrides the preset's
+ * default easing curve applied to `p`.
  */
 export type LayerTransitionSpec = {
 	transition: string;
 	duration?: Time;
+	easing?: Easing;
 	params?: Record<string, any>;
 };
 
