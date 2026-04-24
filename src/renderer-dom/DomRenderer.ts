@@ -87,6 +87,15 @@ export default class DomRenderer implements ILayerRenderer {
 	private rendering = false;
 	private pendingFrame: number | false = false;
 
+	/**
+	 * Set by `destroy()`. Queued mutations that were enqueued before destroy
+	 * (or that are mid-flight when destroy lands) check this flag and bail
+	 * without touching the shadow — otherwise they fight a newer DomRenderer
+	 * instance constructed on the same host element (React StrictMode's
+	 * double-mount being the canonical trigger).
+	 */
+	private destroyed = false;
+
 	/** Google Fonts already loaded into the shadow DOM. */
 	private loadedFonts: Record<string, string> = {};
 
@@ -199,6 +208,11 @@ export default class DomRenderer implements ILayerRenderer {
 		// can't interleave and leave stale state (e.g., multiple [data-renderer]
 		// canvases in the shadow, orphaned layer refs, etc.).
 		return this.enqueueMutation(async () => {
+			// Destroyed before we even started — don't touch the shadow. It
+			// may already belong to a replacement DomRenderer on the same host
+			// element (React StrictMode / fast-refresh remount).
+			if (this.destroyed) return;
+
 			// Stop playback / pending audio, but DO NOT destroy old layers yet —
 			// we want to keep their cache references alive while the new layers
 			// acquire theirs, so any source present in both old and new JSONs
@@ -211,6 +225,7 @@ export default class DomRenderer implements ILayerRenderer {
 			// could finish mid-swap and paint into the wrong canvas.
 			while (this.rendering) {
 				await new Promise<void>(r => queueMicrotask(r));
+				if (this.destroyed) return;
 			}
 
 			const oldLayers = this.layers;
@@ -225,6 +240,11 @@ export default class DomRenderer implements ILayerRenderer {
 			//    its source from the global media cache. Sources shared with the
 			//    outgoing layers are reused, not re-fetched.
 			await Promise.all(newLayers.map(layer => layer.initialize()));
+			if (this.destroyed) {
+				// Release what we just acquired; don't touch the shadow.
+				for (const layer of newLayers) layer.destroy();
+				return;
+			}
 
 			// 3. Resolve any deferred sourceEnd → sourceDuration now that intrinsic
 			//    durations are known.
@@ -282,27 +302,38 @@ export default class DomRenderer implements ILayerRenderer {
 				//    into it. The old canvas is still on screen during this step.
 				await this.renderFrame(0, true);
 			} finally {
-				// 8. Atomic swap: remove every [data-renderer] except the new one.
-				//    Using querySelectorAll (instead of just oldCanvas) makes this
-				//    self-healing — if a previous loadVideo was interrupted and
-				//    left a stray canvas behind, it gets cleaned up here too.
-				const canvases = this.shadow.querySelectorAll('[data-renderer]');
-				for (const el of Array.from(canvases)) {
-					if (el !== newCanvas) el.remove();
-				}
-				newCanvas.style.removeProperty('position');
-				newCanvas.style.removeProperty('visibility');
+				if (this.destroyed) {
+					// Destroyed mid-render. A newer DomRenderer on the same
+					// host has taken ownership of the shadow — do NOT run the
+					// cleanup below, or we'll delete its canvas. Just detach
+					// ours (if still in the shadow) and release our layers.
+					if (newCanvas.parentNode === this.shadow) {
+						newCanvas.remove();
+					}
+					for (const layer of newLayers) layer.destroy();
+				} else {
+					// 8. Atomic swap: remove every [data-renderer] except the new one.
+					//    Using querySelectorAll (instead of just oldCanvas) makes this
+					//    self-healing — if a previous loadVideo was interrupted and
+					//    left a stray canvas behind, it gets cleaned up here too.
+					const canvases = this.shadow.querySelectorAll('[data-renderer]');
+					for (const el of Array.from(canvases)) {
+						if (el !== newCanvas) el.remove();
+					}
+					newCanvas.style.removeProperty('position');
+					newCanvas.style.removeProperty('visibility');
 
-				// 9. Release the old layers AFTER the new ones are holding their
-				//    refs AND the handoff is visually complete. Sources unique to
-				//    the old set drop to refCount === 0 and enter the cache's 5 s
-				//    eviction grace window — if the user quickly reloads a project
-				//    that needs them again, the timer is canceled and there is no
-				//    re-fetch. Done in `finally` so refs are released even when
-				//    renderFrame(0) throws, and ignored if oldLayers === newLayers
-				//    (shouldn't happen, but cheap to guard).
-				if (oldLayers !== newLayers) {
-					for (const layer of oldLayers) layer.destroy();
+					// 9. Release the old layers AFTER the new ones are holding their
+					//    refs AND the handoff is visually complete. Sources unique to
+					//    the old set drop to refCount === 0 and enter the cache's 5 s
+					//    eviction grace window — if the user quickly reloads a project
+					//    that needs them again, the timer is canceled and there is no
+					//    re-fetch. Done in `finally` so refs are released even when
+					//    renderFrame(0) throws, and ignored if oldLayers === newLayers
+					//    (shouldn't happen, but cheap to guard).
+					if (oldLayers !== newLayers) {
+						for (const layer of oldLayers) layer.destroy();
+					}
 				}
 			}
 		});
@@ -822,6 +853,7 @@ export default class DomRenderer implements ILayerRenderer {
 	 * @param clearShadow - Whether to clear the shadow DOM (default true).
 	 */
 	destroy(clearShadow = true): void {
+		this.destroyed = true;
 		this.stop();
 		for (const layer of this.layers) layer.destroy();
 		this.layers = [];
