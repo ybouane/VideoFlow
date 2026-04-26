@@ -39,7 +39,7 @@ import {
 	type EffectParamDefinition,
 } from '@videoflow/renderer-browser';
 import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer,
+	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer,
 } from '@videoflow/core';
 import RENDERER_CSS from './renderer.css.js';
 
@@ -53,6 +53,7 @@ const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
 	image: ImageLayer.propertiesDefinition,
 	video: VideoLayer.propertiesDefinition,
 	audio: AudioLayer.propertiesDefinition,
+	shape: ShapeLayer.propertiesDefinition,
 };
 
 // ---------------------------------------------------------------------------
