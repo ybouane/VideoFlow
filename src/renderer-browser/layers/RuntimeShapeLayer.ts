@@ -1,40 +1,57 @@
 /**
  * RuntimeShapeLayer — runtime class for vector shape layers.
  *
- * The `$element` is a `<div>` wrapping an inline `<svg>` that draws the
- * silhouette (`<rect>`, `<ellipse>`, `<polygon>`). Keeping the root as an
- * `HTMLElement` (not an `SVGSVGElement`) lets the shape flow through the
- * same CSS transform / filter / shadow pipeline as every other visual
- * layer; the SVG inside handles the actual drawing.
+ * The element is a div wrapping an inline svg that draws the silhouette
+ * (rect, ellipse, polygon). Keeping the root as an HTMLElement (not an
+ * SVGSVGElement) lets the shape flow through the same CSS transform /
+ * filter / shadow pipeline as every other visual layer; the SVG inside
+ * handles the actual drawing.
  *
- * The whole layer rasterizes through the tier-3 `foreignObject` path. The
+ * The whole layer rasterizes through the tier-3 foreignObject path. The
  * per-layer cache still shortcuts frames where the resolved properties do
  * not change, so static shapes cost one rasterization total.
  *
- * `stroke` is implicit: whenever `strokeWidth > 0` a stroke is drawn. We
- * inset the path by `strokeWidth/2` so the *outer* edge of the stroke sits
- * on the shape's box boundary (matches CSS `box-sizing: border-box`).
+ * Stroke is implicit: whenever strokeWidth > 0 a stroke is drawn. Fill and
+ * stroke are emitted as two separate SVG primitives so stroke alignment
+ * (inner / center / outer) can move the stroke independently of the fill,
+ * which always sits at the layer's box size.
  *
- * All sizes are project-relative — `em` resolves via `--vw`, `%` uses the
- * corresponding project axis, `vmin` / `vmax` the respective min/max — so
- * scaling the project up or down leaves shapes visually identical.
+ * All sizes are project-relative. The shape layer's em unit resolves to
+ * min(projectWidth, projectHeight) / 100 — so 100em always spans the
+ * project's shorter axis. At width: 100em, height: 100em an ellipse is
+ * a circle and a rectangle is a square inscribed in the project's shorter
+ * side, regardless of the project's aspect ratio. Scaling the project up
+ * or down leaves shapes visually identical.
  */
 
 import RuntimeVisualLayer from './RuntimeVisualLayer.js';
 
-type SizeAxis = 'width' | 'height' | 'min';
-
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
 const SHAPE_DRAW_KEYS = new Set([
-	'width', 'height', 'fill', 'strokeColor', 'strokeWidth',
+	'width', 'height', 'fill', 'strokeColor', 'strokeWidth', 'strokeAlignment',
+	'strokeDash', 'strokeGap', 'strokeLinejoin',
 	'cornerRadius', 'sides', 'innerRadius',
 ]);
 
+type StrokeAlignment = 'inner' | 'center' | 'outer';
+type StrokeLinejoin = 'miter' | 'round' | 'bevel';
+
+type ShapeDrawState = {
+	/** Raw em values — used for CSS calc() so the wrapper scales with --vmin. */
+	emW: number; emH: number;
+	/** Intrinsic user-space pixels (em * vmin-in-project-px). Used for viewBox and inner SVG coordinates. */
+	w: number; h: number;
+	fill: string; strokeColor: string; strokeWidth: number;
+	cornerRadius: number; sides: number; innerRadius: number;
+	strokeAlignment: StrokeAlignment;
+	strokeDash: number; strokeGap: number;
+	strokeLinejoin: StrokeLinejoin;
+};
+
 export default class RuntimeShapeLayer extends RuntimeVisualLayer {
 	private $svg: SVGSVGElement | null = null;
-	private $shape: SVGElement | null = null;
-	/** Last drawing key — identical key = DOM already reflects this state. */
+	/** Last drawing key — identical key = SVG primitives already reflect this state. */
 	private lastDrawKey = '';
 
 	get shapeType(): string {
@@ -56,6 +73,7 @@ export default class RuntimeShapeLayer extends RuntimeVisualLayer {
 		svg.style.display = 'block';
 		svg.style.width = '100%';
 		svg.style.height = '100%';
+		// Allow outer-aligned strokes to render past the viewBox edge.
 		svg.style.overflow = 'visible';
 		wrapper.appendChild(svg);
 
@@ -70,118 +88,118 @@ export default class RuntimeShapeLayer extends RuntimeVisualLayer {
 	 * transform, filter, border, shadow, …).
 	 */
 	async applyProperties(props: Record<string, any>): Promise<void> {
-		const pw = this.projectWidth;
-		const ph = this.projectHeight;
-		const shapeType = this.shapeType;
-
-		const sizeW = this.resolveToPx(props.width, pw, ph, 'width')
-			?? (shapeType === 'rectangle' ? pw : Math.min(pw, ph));
-		const sizeH = this.resolveToPx(props.height, pw, ph, 'height')
-			?? (shapeType === 'rectangle' ? ph : Math.min(pw, ph));
-
-		const fill = (props.fill ?? '#ffffff') as string;
-		const strokeColor = (props.strokeColor ?? '#000000') as string;
-		const strokeWidthPx = this.resolveToPx(props.strokeWidth, pw, ph, 'min') ?? 0;
-		const cornerRadiusPx = this.resolveToPx(props.cornerRadius, sizeW, sizeH, 'min') ?? 0;
-		const sides = Math.max(3, Math.round(Number(props.sides ?? 6)));
-		const innerRadius = Math.max(0, Math.min(1, Number(props.innerRadius ?? 0.5)));
-
-		this.drawShape(sizeW, sizeH, fill, strokeColor, strokeWidthPx, cornerRadiusPx, sides, innerRadius);
+		const emW = this.emNumber(props.width);
+		const emH = this.emNumber(props.height);
+		const state: ShapeDrawState = {
+			emW, emH,
+			w: this.emToPx(emW),
+			h: this.emToPx(emH),
+			fill: (props.fill ?? '#ffffff') as string,
+			strokeColor: (props.strokeColor ?? '#000000') as string,
+			strokeWidth: this.emToPx(this.emNumber(props.strokeWidth)),
+			cornerRadius: this.emToPx(this.emNumber(props.cornerRadius)),
+			sides: Math.max(3, Math.round(Number(props.sides ?? 6))),
+			innerRadius: Math.max(0, Math.min(1, Number(props.innerRadius ?? 0.5))),
+			strokeAlignment: ((props.strokeAlignment ?? 'inner') as StrokeAlignment),
+			strokeDash: this.emToPx(this.emNumber(props.strokeDash)),
+			strokeGap: this.emToPx(this.emNumber(props.strokeGap)),
+			strokeLinejoin: ((props.strokeLinejoin ?? 'miter') as StrokeLinejoin),
+		};
 
 		// Strip shape-specific props so the CSS pipeline ignores them.
 		for (const k of SHAPE_DRAW_KEYS) delete props[k];
 
-		return super.applyProperties(props);
+		// Run the base CSS pipeline first — it resets cssText on the wrapper,
+		// so width/height must be (re)applied after it runs.
+		await super.applyProperties(props);
+
+		this.drawShape(state);
+	}
+
+	/** Parse a raw em number off a prop value (accepts numbers and "Nem" strings). */
+	private emNumber(v: any): number {
+		const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
+		return Number.isFinite(n) ? n : 0;
 	}
 
 	/**
-	 * Resolve a dimension value to pixels, respecting the unit. Returns
-	 * `null` when the value is unset so the caller can pick a default.
-	 *
-	 * `axis` controls how `%` resolves:
-	 * - `'width'` → percent of `refW`
-	 * - `'height'` → percent of `refH`
-	 * - `'min'` → percent of `min(refW, refH)`
+	 * Resolve an em number to intrinsic project pixels. `1em` equals
+	 * `min(projectWidth, projectHeight) / 100` — so 100em spans the
+	 * shorter axis. These pixels drive the SVG's user-space (viewBox and
+	 * inner coordinates); the outer wrapper uses CSS `calc(V * var(--vmin))`
+	 * so the shape scales with the renderer root in DOM preview.
 	 */
-	private resolveToPx(v: any, refW: number, refH: number, axis: SizeAxis): number | null {
-		if (v == null || v === '') return null;
-		const s = String(v);
-		const m = s.match(/^(-?[0-9.]+)([a-z%]*)$/i);
-		if (!m) return null;
-		const n = parseFloat(m[1]);
-		const unit = (m[2] || 'em').toLowerCase();
-		const pw = this.projectWidth;
-		const ph = this.projectHeight;
-		switch (unit) {
-			case 'em':   return n * 0.01 * pw;              // em = --vw = 1% project width
-			case 'px':   return n;
-			case '%':    return n * 0.01 * (
-				axis === 'height' ? refH :
-				axis === 'min'    ? Math.min(refW, refH) :
-				refW
-			);
-			case 'vw':   return n * 0.01 * pw;
-			case 'vh':   return n * 0.01 * ph;
-			case 'vmin': return n * 0.01 * Math.min(pw, ph);
-			case 'vmax': return n * 0.01 * Math.max(pw, ph);
-			default:     return n;
-		}
+	private emToPx(n: number): number {
+		const axis = Math.min(this.projectWidth, this.projectHeight);
+		return n * 0.01 * axis;
 	}
 
-	/** Update the SVG to reflect the current shape state. Skips work if nothing changed. */
-	private drawShape(
-		w: number, h: number,
-		fill: string, strokeColor: string, strokeWidthPx: number,
-		cornerRadiusPx: number, sides: number, innerRadius: number,
-	): void {
+	/**
+	 * Update the SVG to reflect the current shape state. Wrapper size and
+	 * viewBox are always reapplied (the base pipeline wiped cssText); the
+	 * SVG primitive rebuild is skipped if nothing else changed.
+	 */
+	private drawShape(s: ShapeDrawState): void {
 		const wrapper = this.$element;
 		const svg = this.$svg;
 		if (!wrapper || !svg) return;
 
-		const key = [
-			this.shapeType, w, h,
-			fill, strokeColor, strokeWidthPx,
-			cornerRadiusPx, sides, innerRadius,
-		].join('|');
+		// Wrapper box drives layout. Size via CSS calc() so it scales with
+		// the renderer root (DomRenderer scales --vmin to fit the container;
+		// BrowserRenderer uses intrinsic project pixels — same expression
+		// produces the right value in both).
+		wrapper.style.width = `calc(${s.emW} * var(--vmin))`;
+		wrapper.style.height = `calc(${s.emH} * var(--vmin))`;
+		svg.setAttribute('viewBox', `0 0 ${Math.max(1, s.w)} ${Math.max(1, s.h)}`);
+
+		const key = JSON.stringify([this.shapeType, s]);
 		if (key === this.lastDrawKey) return;
 		this.lastDrawKey = key;
 
-		// Wrapper box drives layout; the SVG fills it and uses a viewBox
-		// matching the same size so user-space coordinates are in px.
-		wrapper.style.width = `${w}px`;
-		wrapper.style.height = `${h}px`;
-		svg.setAttribute('viewBox', `0 0 ${Math.max(1, w)} ${Math.max(1, h)}`);
+		const sw = s.strokeWidth > 0 ? s.strokeWidth : 0;
+		const hasFill = !!s.fill && s.fill !== 'transparent' && s.fill !== 'none';
+		const hasStroke = sw > 0 && !!s.strokeColor && s.strokeColor !== 'transparent' && s.strokeColor !== 'none';
 
-		// Inset so the outer edge of the stroke sits on the box boundary.
-		const sw = strokeWidthPx > 0 ? strokeWidthPx : 0;
-		const inset = sw / 2;
-		const innerW = Math.max(0, w - sw);
-		const innerH = Math.max(0, h - sw);
-
-		const shape = this.buildShapeElement(innerW, innerH, cornerRadiusPx, sides, innerRadius);
-		shape.setAttribute('transform', `translate(${inset} ${inset})`);
-
-		const hasFill = fill && fill !== 'transparent' && fill !== 'none';
-		shape.setAttribute('fill', hasFill ? fill : 'none');
-
-		const hasStroke = sw > 0 && strokeColor && strokeColor !== 'transparent' && strokeColor !== 'none';
+		// Stroke alignment shifts the stroke path relative to the fill box.
+		// Positive inset = stroke moves inward (inner alignment).
+		// Negative inset = stroke moves outward (outer alignment).
+		let strokeInset = 0;
 		if (hasStroke) {
-			shape.setAttribute('stroke', strokeColor);
-			shape.setAttribute('stroke-width', String(sw));
-			shape.setAttribute('stroke-linejoin', 'miter');
-			shape.setAttribute('stroke-miterlimit', '4');
-		} else {
-			shape.setAttribute('stroke', 'none');
+			if (s.strokeAlignment === 'inner') strokeInset = sw / 2;
+			else if (s.strokeAlignment === 'outer') strokeInset = -sw / 2;
 		}
 
-		// Replace the previous shape element wholesale — cheaper and safer
-		// than mutating attributes across shape-type changes.
-		if (this.$shape) this.$shape.remove();
-		svg.appendChild(shape);
-		this.$shape = shape;
+		while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+		if (hasFill) {
+			const fillEl = this.buildShapeElement(s.w, s.h, s.cornerRadius, s.sides, s.innerRadius);
+			fillEl.setAttribute('fill', s.fill);
+			fillEl.setAttribute('stroke', 'none');
+			svg.appendChild(fillEl);
+		}
+
+		if (hasStroke) {
+			const strokeW = Math.max(0, s.w - 2 * strokeInset);
+			const strokeH = Math.max(0, s.h - 2 * strokeInset);
+			// Adjust corner radius so the visible outer/inner edge keeps the user-set radius.
+			const strokeR = Math.max(0, s.cornerRadius - strokeInset);
+			const strokeEl = this.buildShapeElement(strokeW, strokeH, strokeR, s.sides, s.innerRadius);
+			strokeEl.setAttribute('transform', `translate(${strokeInset} ${strokeInset})`);
+			strokeEl.setAttribute('fill', 'none');
+			strokeEl.setAttribute('stroke', s.strokeColor);
+			strokeEl.setAttribute('stroke-width', String(sw));
+			strokeEl.setAttribute('stroke-linejoin', s.strokeLinejoin);
+			if (s.strokeLinejoin === 'miter') strokeEl.setAttribute('stroke-miterlimit', '4');
+			if (s.strokeDash > 0) {
+				const gap = s.strokeGap > 0 ? s.strokeGap : s.strokeDash;
+				strokeEl.setAttribute('stroke-dasharray', `${s.strokeDash} ${gap}`);
+				strokeEl.setAttribute('stroke-linecap', 'butt');
+			}
+			svg.appendChild(strokeEl);
+		}
 	}
 
-	/** Build the SVG primitive for the current shapeType at the given inner size. */
+	/** Build the SVG primitive for the current shapeType at the given size. */
 	private buildShapeElement(w: number, h: number, cornerRadius: number, sides: number, innerRatio: number): SVGElement {
 		switch (this.shapeType) {
 			case 'ellipse': {
