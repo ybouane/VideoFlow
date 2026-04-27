@@ -86,9 +86,9 @@ export default class RuntimeBaseLayer {
 	 */
 	get cacheable(): boolean { return true; }
 
-	/** Whether this layer has any registered effects attached. */
+	/** Whether this layer has any *enabled* registered effects attached. */
 	get hasEffects(): boolean {
-		return !!this.json.effects && this.json.effects.length > 0;
+		return !!this.json.effects && this.json.effects.some(e => e.enabled !== false);
 	}
 
 	// -- Timing helpers -----------------------------------------------------
@@ -329,11 +329,15 @@ export default class RuntimeBaseLayer {
 	resolveEffectsForProps(props: Record<string, any> | null | undefined): LayerEffectJSON[] {
 		const declared = this.json.effects;
 		if (!declared || declared.length === 0) return [];
-		// Clone each entry so we never mutate the compiled JSON.
-		const resolved: LayerEffectJSON[] = declared.map(e => ({
-			effect: e.effect,
-			params: { ...(e.params ?? {}) },
-		}));
+		// Clone each entry so we never mutate the compiled JSON. Disabled
+		// entries are dropped here — both renderers consume this list and so
+		// transparently respect `enabled: false`.
+		const resolved: LayerEffectJSON[] = declared
+			.filter(e => e.enabled !== false)
+			.map(e => ({
+				effect: e.effect,
+				params: { ...(e.params ?? {}) },
+			}));
 		if (!props) return resolved;
 
 		// Index the n-th occurrence of each effect name so [idx] lookups
