@@ -27,6 +27,7 @@ export {
 	AuditoryLayer,
 	AudioLayer,
 	ShapeLayer,
+	GroupLayer,
 } from './layers/index.js';
 
 // Layer setting / property types
@@ -42,6 +43,7 @@ export type {
 	AuditoryLayerSettings, AuditoryLayerProperties,
 	AudioLayerSettings, AudioLayerProperties,
 	ShapeLayerSettings, ShapeLayerProperties, ShapeType,
+	GroupLayerSettings, GroupLayerProperties,
 } from './layers/index.js';
 
 // Core types

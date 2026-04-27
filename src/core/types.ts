@@ -190,6 +190,15 @@ export type LayerEffectJSON = {
  * layer's timeline edges; they modify the final (post-keyframe) properties
  * during the transition window. `effects` attaches registered GLSL effects
  * that run on the rasterized layer texture before it is composited.
+ *
+ * `children` is only populated when `type === 'group'`. A group layer has no
+ * source content of its own — it composites its children onto a private
+ * project-sized surface, then runs the group's own transform / opacity /
+ * filter / transition / effects pipeline on that surface, exactly as if the
+ * group were a single visual layer. Children's `settings.startTime` are
+ * **absolute timeline seconds** (resolved at compile time from their
+ * group-relative positions inside the flow), so the runtime can look up a
+ * child's state at any frame without knowing about the enclosing group.
  */
 export type LayerJSON = {
 	id: Id;
@@ -201,6 +210,8 @@ export type LayerJSON = {
 	transitionIn?: LayerTransitionJSON;
 	transitionOut?: LayerTransitionJSON;
 	effects?: LayerEffectJSON[];
+	/** Nested layers (only for `type === 'group'`). */
+	children?: LayerJSON[];
 };
 
 /**
@@ -257,6 +268,7 @@ export type Action =
 	| { statement: 'wait'; duration: Time }
 	| { statement: 'parallel'; actions: Action[][] }
 	| { statement: 'addLayer'; id: Id; type: string; settings: Record<string, any>; properties: Record<string, any>; options?: AddLayerOptions }
+	| { statement: 'group'; id: Id; settings: Record<string, any>; properties: Record<string, any>; options?: AddLayerOptions; actions: Action[] }
 	| { statement: 'removeLayer'; id: Id }
 	| { statement: 'set'; id: Id; value: Record<string, any> }
 	| { statement: 'animate'; id: Id; from: Record<string, any>; to: Record<string, any>; settings: { duration: Time; easing?: Easing; wait?: boolean } };

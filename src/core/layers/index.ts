@@ -8,9 +8,11 @@
  *   │  ├─ TextualLayer
  *   │  │  ├─ TextLayer
  *   │  │  └─ CaptionsLayer
- *   │  └─ MediaLayer
- *   │     ├─ ImageLayer
- *   │     └─ VideoLayer  (also has auditory properties)
+ *   │  ├─ MediaLayer
+ *   │  │  ├─ ImageLayer
+ *   │  │  └─ VideoLayer  (also has auditory properties)
+ *   │  ├─ ShapeLayer
+ *   │  └─ GroupLayer (composites nested children as a single visual layer)
  *   └─ AuditoryLayer
  *      └─ AudioLayer
  */
@@ -47,3 +49,6 @@ export type { AudioLayerSettings, AudioLayerProperties } from './AudioLayer.js';
 
 export { default as ShapeLayer } from './ShapeLayer.js';
 export type { ShapeLayerSettings, ShapeLayerProperties, ShapeType } from './ShapeLayer.js';
+
+export { default as GroupLayer } from './GroupLayer.js';
+export type { GroupLayerSettings, GroupLayerProperties } from './GroupLayer.js';
