@@ -33,7 +33,8 @@ const EFFECT_PARAM_PATH_RE = /^effects\.([a-zA-Z_][\w-]*)(?:\[(\d+)\])?\.([a-zA-
 // ---------------------------------------------------------------------------
 
 export interface ILayerRenderer {
-	/** All runtime layers in render order. Used for z-index calculation. */
+	/** All runtime layers in render order. Drives DOM/iteration order; z-index
+	 *  itself is derived per-layer from `LayerJSON.track` when set. */
 	layers: RuntimeBaseLayer[];
 	/** Return the full propertiesDefinition for the given layer type. */
 	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined;
@@ -629,7 +630,7 @@ export default class RuntimeBaseLayer {
 	 * Apply interpolated property values to the DOM element.
 	 *
 	 * 1. Reset CSS
-	 * 2. Set z-index
+	 * 2. Set z-index (from `json.track` when set, otherwise unset)
 	 * 3. For each property:
 	 *    - cssProperty === false → applyProperty() (non-CSS, e.g. text)
 	 *    - otherwise → applyCSSProperty() (CSS property or variable)
@@ -643,7 +644,12 @@ export default class RuntimeBaseLayer {
 		this.resetCSSProperties();
 		const propertiesDefinition = this.getPropertiesDefinition();
 
-		this.$element.style.setProperty('z-index', String(this.getLayerIndex() + 1));
+		const track = this.json.track;
+		if (typeof track === 'number') {
+			this.$element.style.setProperty('z-index', String(track + 1));
+		} else {
+			this.$element.style.removeProperty('z-index');
+		}
 
 		for (const prop of Object.keys(props)) {
 			// Effect param dot-paths never drive CSS — they're consumed by the
@@ -704,7 +710,8 @@ export default class RuntimeBaseLayer {
 		return this.getPropertiesDefinition()[prop];
 	}
 
-	/** Get this layer's index in the parent layers array (for z-ordering). */
+	/** Get this layer's index in the parent layers array (drives DOM/render
+	 *  order; z-index itself comes from `json.track`). */
 	getLayerIndex(): number {
 		return this.renderer.layers.indexOf(this);
 	}
