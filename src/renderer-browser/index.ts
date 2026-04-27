@@ -20,6 +20,8 @@ export {
 	RuntimeImageLayer,
 	RuntimeVideoLayer,
 	RuntimeAudioLayer,
+	RuntimeShapeLayer,
+	RuntimeGroupLayer,
 	type ILayerRenderer,
 } from './layers/index.js';
 

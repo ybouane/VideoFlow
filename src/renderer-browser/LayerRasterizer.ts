@@ -29,13 +29,17 @@ export type FontCssForLayerFn = (layer: RuntimeBaseLayer) => Promise<string>;
 
 /**
  * Layer types whose `$element` is a canvas (or canvas-like) at its exact
- * display size — these are eligible for the tier-1 direct-draw path. Only
- * media layers (image / video) qualify: their `$element` is a canvas with
- * `dimensions` = media pixel size, sized onto the project via `fit`.
+ * display size — these are eligible for the tier-1 direct-draw path.
+ *
+ * - `image` / `video`: their `$element` is a canvas with `dimensions` = media
+ *   pixel size, sized onto the project via `fit`.
+ * - `group`: their `$element` is a project-sized canvas onto which children
+ *   have already been composited; tier-1 draws the canvas with the group's
+ *   own translate/scale/opacity transform.
  *
  * Shape layers render via inline SVG and always take the tier-3 path.
  */
-const DIRECT_DRAWABLE_TYPES = new Set(['image', 'video']);
+const DIRECT_DRAWABLE_TYPES = new Set(['image', 'video', 'group']);
 
 function extractNumber(v: any): number | null {
 	if (typeof v === 'number') return v;
