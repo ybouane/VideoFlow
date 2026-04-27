@@ -610,16 +610,23 @@ export default class DomRenderer implements ILayerRenderer {
 	}
 
 	/**
-	 * Patch top-level video properties (width, height, backgroundColor).
+	 * Patch top-level video properties (width, height, backgroundColor, name,
+	 * duration).
 	 *
-	 * `fps` and `duration` changes are not supported here — they invalidate
-	 * frame numbers across the pipeline and require a full `loadVideo()`.
+	 * `fps` changes are not supported here — they invalidate frame numbers
+	 * across the pipeline and require a full `loadVideo()`. `duration` is
+	 * safe to update incrementally: it's only used as the loop bound in
+	 * `play()` and the divisor in the `totalFrames` getter; layer frame
+	 * numbers depend on `fps`, not `duration`. An in-flight `play()` call
+	 * captures `durationSec` at start, so the new bound takes effect on the
+	 * next `play()` invocation.
 	 */
 	async updateVideo(patch: {
 		width?: number;
 		height?: number;
 		backgroundColor?: string;
 		name?: string;
+		duration?: number;
 	}): Promise<void> {
 		return this.enqueueMutation(async () => {
 			if (!this.videoJSON || !this.$canvas) return;
@@ -638,6 +645,9 @@ export default class DomRenderer implements ILayerRenderer {
 			}
 			if (patch.name !== undefined) {
 				this.videoJSON.name = patch.name;
+			}
+			if (patch.duration !== undefined) {
+				this.videoJSON.duration = patch.duration;
 			}
 
 			await this.renderFrame(this.currentFrame < 0 ? 0 : this.currentFrame, true);
