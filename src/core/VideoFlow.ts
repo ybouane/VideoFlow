@@ -44,6 +44,8 @@ import CaptionsLayer from './layers/CaptionsLayer.js';
 import type { CaptionsLayerProperties, CaptionsLayerSettings } from './layers/CaptionsLayer.js';
 import ShapeLayer from './layers/ShapeLayer.js';
 import type { ShapeLayerProperties, ShapeLayerSettings } from './layers/ShapeLayer.js';
+import GroupLayer from './layers/GroupLayer.js';
+import type { GroupLayerProperties, GroupLayerSettings } from './layers/GroupLayer.js';
 
 // ---------------------------------------------------------------------------
 //  Default project settings
@@ -225,6 +227,74 @@ export default class VideoFlow {
 		return this.addLayer(ShapeLayer, properties, settings, options);
 	}
 
+	/**
+	 * Add a layer group — a container that nests other layers and treats them
+	 * as one. Inside `fn`, the flow's time pointer resets to `0` (relative to
+	 * the group's start), so children's timing is authored independently of
+	 * where the group sits on the project timeline. The flow pointer of the
+	 * outer scope advances by the group's `waitFor` (default `'finish'` = the
+	 * group's full footprint).
+	 *
+	 * The group itself is a {@link VisualLayer}, so its `position`, `scale`,
+	 * `rotation`, `opacity`, filters, transitions and effects all apply to the
+	 * composited child sub-tree.
+	 *
+	 * ```ts
+	 * const card = $.group({ position: [0.5, 0.5], scale: 1 }, {}, () => {
+	 *   $.addShape({ width: 60, height: 30, fill: '#fff' });
+	 *   $.addText({ text: 'Hello' });
+	 * });
+	 * card.animate({ scale: 1 }, { scale: 1.1 }, { duration: '500ms' });
+	 * ```
+	 *
+	 * Group timing is auto-derived: `startTime` defaults to the current flow
+	 * time, and `sourceDuration` defaults to the latest child's end (so a
+	 * group whose last child finishes at +5s lasts 5s). Both can still be
+	 * overridden in `settings` if you need to.
+	 *
+	 * @param properties - Visual properties applied to the group as a whole.
+	 * @param settings   - Layer settings (timing, transitions, …). `startTime`
+	 *                     and `sourceDuration` are normally auto-derived; pass
+	 *                     them explicitly only to override.
+	 * @param fn         - Builder callback. Children added inside this callback
+	 *                     belong to the group; their flow timing is relative
+	 *                     to the group's start.
+	 * @param options    - Flow options. `waitFor` defaults to `'finish'`, so
+	 *                     the next layer added after the group starts when the
+	 *                     group ends. Pass a {@link Time} to add a delay
+	 *                     instead.
+	 */
+	group(
+		properties: GroupLayerProperties = {},
+		settings: GroupLayerSettings = {},
+		fn: (group: GroupLayer) => void = () => {},
+		options: AddLayerOptions = {},
+	): GroupLayer {
+		const layer = new GroupLayer(this, properties, settings);
+		this.layers.push(layer);
+
+		// Capture the children's flow into a private branch — same idea as
+		// `parallel()`, but with a single sub-flow rather than several.
+		const initialPointer = this._flowPointer;
+		const childActions: Action[] = [];
+		this._flowPointer = childActions;
+		try {
+			fn(layer);
+		} finally {
+			this._flowPointer = initialPointer;
+		}
+
+		this.pushAction({
+			statement: 'group',
+			id: layer.id,
+			settings,
+			properties,
+			options,
+			actions: childActions,
+		});
+		return layer;
+	}
+
 	// -----------------------------------------------------------------------
 	//  Compilation
 	// -----------------------------------------------------------------------
@@ -278,6 +348,10 @@ export default class VideoFlow {
 			transitionOut?: LayerTransitionJSON;
 			/** Effects declared at creation time (from properties.effects). */
 			effects?: LayerEffectJSON[];
+			/** Parent group id, when this layer is nested inside a group. */
+			parentGroupId?: string;
+			/** Compiled child ids, in flow order (only set on group layers). */
+			childIds?: string[];
 		};
 
 		const compiled: Map<string, CompiledLayer> = new Map();
@@ -293,6 +367,8 @@ export default class VideoFlow {
 			for (const action of actions) {
 				if (action.statement === 'parallel') {
 					for (const branch of action.actions) collectMediaActions(branch);
+				} else if (action.statement === 'group') {
+					collectMediaActions(action.actions);
 				} else if (action.statement === 'addLayer') {
 					if (action.type !== 'video' && action.type !== 'audio') continue;
 					const s = action.settings || {};
@@ -431,9 +507,10 @@ export default class VideoFlow {
 
 		/**
 		 * Parse a series of flow actions, advancing the time pointer `t`.
-		 * Returns the final time pointer value.
+		 * Returns the final time pointer value. `parentGroupId`, when set,
+		 * marks every layer added in this branch as a child of that group.
 		 */
-		const parseSeries = async (actions: Action[], t: number = 0): Promise<number> => {
+		const parseSeries = async (actions: Action[], t: number = 0, parentGroupId?: string): Promise<number> => {
 			for (const action of actions) {
 				switch (action.statement) {
 					case 'wait': {
@@ -443,9 +520,125 @@ export default class VideoFlow {
 
 					case 'parallel': {
 						const times = await Promise.all(
-							action.actions.map(branch => parseSeries(branch, t))
+							action.actions.map(branch => parseSeries(branch, t, parentGroupId))
 						);
 						t = Math.max(...times);
+						break;
+					}
+
+					case 'group': {
+						const layerObj = this.layers.find(l => l.id === action.id);
+						if (!layerObj) throw new Error(`Group layer ${action.id} not found`);
+
+						// Group's start frame: respect explicit `startTime` like a
+						// regular layer; otherwise it begins at the current flow t.
+						const groupStartFrames: number = action.settings?.startTime != null
+							? timeToFrames(action.settings.startTime, fps)
+							: t;
+
+						// Extract transitions on the group itself (in/out apply to
+						// the composited sub-tree).
+						const normalizeTransition = (spec: any): LayerTransitionJSON | undefined => {
+							if (!spec || typeof spec !== 'object' || !spec.transition) return undefined;
+							const durationSec = spec.duration != null ? parseTime(spec.duration, fps) : 0.2;
+							return {
+								transition: String(spec.transition),
+								duration: durationSec,
+								...(spec.easing ? { easing: spec.easing } : {}),
+								...(spec.params ? { params: { ...spec.params } } : {}),
+							};
+						};
+						const groupTransitionIn = normalizeTransition(action.settings?.transitionIn);
+						const groupTransitionOut = normalizeTransition(action.settings?.transitionOut);
+
+						// Effects declared at group creation time apply to the
+						// rasterized group surface — same shape as on any layer.
+						let groupEffects: LayerEffectJSON[] | undefined;
+						const rawGroupEffects = action.properties?.effects;
+						if (Array.isArray(rawGroupEffects) && rawGroupEffects.length > 0) {
+							groupEffects = rawGroupEffects
+								.filter((e: any) => e && typeof e === 'object' && typeof e.effect === 'string')
+								.map((e: any) => ({
+									effect: String(e.effect),
+									...(e.params ? { params: { ...e.params } } : {}),
+								}));
+							if (groupEffects.length === 0) groupEffects = undefined;
+						}
+
+						const groupComp: CompiledLayer = {
+							id: action.id,
+							type: 'group',
+							startTimeFrames: groupStartFrames,
+							endTimeFrames: false, // resolved below from children
+							speed: 1,
+							sourceStartSec: 0,
+							name: action.settings?.name,
+							enabled: action.settings?.enabled ?? true,
+							settings: action.settings,
+							properties: {},
+							index: action.options?.index ?? 0,
+							layerObj,
+							childIds: [],
+							...(parentGroupId ? { parentGroupId } : {}),
+							...(groupTransitionIn ? { transitionIn: groupTransitionIn } : {}),
+							...(groupTransitionOut ? { transitionOut: groupTransitionOut } : {}),
+							...(groupEffects ? { effects: groupEffects } : {}),
+						};
+						compiled.set(action.id, groupComp);
+						indexes[action.id] = action.options?.index ?? 0;
+						if (parentGroupId) {
+							const parent = compiled.get(parentGroupId);
+							parent?.childIds?.push(action.id);
+						}
+
+						// Initial group properties → step keyframe at t=0
+						// (groups have no source, so source-time always == 0).
+						if (action.properties) {
+							for (const [prop, value] of Object.entries(action.properties)) {
+								if (prop === 'effects') continue;
+								groupComp.properties[prop] = [{ time: 0, value, easing: 'step' as Easing }];
+							}
+						}
+
+						// Recurse — children's frame timing is absolute (anchored
+						// at groupStartFrames) so the renderer treats them as
+						// regular timed layers without group-aware lookups.
+						const childEndT = await parseSeries(action.actions, groupStartFrames, action.id);
+
+						// If user gave an explicit sourceDuration, honor it.
+						// Otherwise the group spans from its start to the end of
+						// its last child (or to the project's end at finalization
+						// time when no children are bounded yet).
+						if (action.settings?.sourceDuration != null) {
+							const explicitFrames = timeToFrames(action.settings.sourceDuration, fps);
+							groupComp.endTimeFrames = groupStartFrames + explicitFrames;
+						} else if (groupComp.childIds!.length > 0) {
+							let maxEnd = groupStartFrames;
+							let anyBounded = false;
+							for (const cid of groupComp.childIds!) {
+								const child = compiled.get(cid);
+								if (!child) continue;
+								if (child.endTimeFrames !== false) {
+									anyBounded = true;
+									if (child.endTimeFrames > maxEnd) maxEnd = child.endTimeFrames;
+								}
+							}
+							groupComp.endTimeFrames = anyBounded ? maxEnd : false;
+						}
+
+						// Advance the outer flow pointer. `waitFor` on a group
+						// defaults to `'finish'` (the whole composite is treated
+						// as one unit on the outer timeline), mirroring how
+						// `$.parallel()` advances to its longest branch.
+						const groupEndForWait = groupComp.endTimeFrames !== false
+							? groupComp.endTimeFrames
+							: childEndT;
+						const waitFor = action.options?.waitFor ?? 'finish';
+						if (waitFor === 'finish') {
+							t = groupEndForWait;
+						} else {
+							t += timeToFrames(waitFor, fps);
+						}
 						break;
 					}
 
@@ -522,12 +715,17 @@ export default class VideoFlow {
 							layerObj,
 							mediaDurationSec: timings.mediaDurationSec,
 							sourceEndUnresolvedSec: timings.sourceEndUnresolvedSec,
+							...(parentGroupId ? { parentGroupId } : {}),
 							...(transitionIn ? { transitionIn } : {}),
 							...(transitionOut ? { transitionOut } : {}),
 							...(effects ? { effects } : {}),
 						};
 						compiled.set(action.id, comp);
 						indexes[action.id] = action.options?.index ?? 0;
+						if (parentGroupId) {
+							const parent = compiled.get(parentGroupId);
+							parent?.childIds?.push(action.id);
+						}
 
 						// Initial properties → keyframe at sourceStart (i.e. the
 						// source-time at which the segment starts playing).
@@ -651,11 +849,27 @@ export default class VideoFlow {
 			}
 		}
 
-		// Build sorted layers array
-		const sortedLayers = [...compiled.values()].sort((a, b) => {
-			if (a.index !== b.index) return a.index - b.index;
-			return 0;
-		});
+		// Third pass: clamp children to their parent group's footprint. A child
+		// can never visually persist past the moment the group itself ends —
+		// the renderer would skip it anyway, but emitting an out-of-range
+		// endTime in the JSON is misleading for editors and tools.
+		for (const comp of compiled.values()) {
+			if (!comp.parentGroupId) continue;
+			const parent = compiled.get(comp.parentGroupId);
+			if (!parent || parent.endTimeFrames === false) continue;
+			if (typeof comp.endTimeFrames === 'number' && comp.endTimeFrames > parent.endTimeFrames) {
+				comp.endTimeFrames = parent.endTimeFrames;
+			}
+		}
+
+		// Build sorted layers array — only top-level. Layers nested inside
+		// groups are surfaced as `children` of their group.
+		const sortedLayers = [...compiled.values()]
+			.filter(c => !c.parentGroupId)
+			.sort((a, b) => {
+				if (a.index !== b.index) return a.index - b.index;
+				return 0;
+			});
 
 		// Deduce a human-readable name for a layer when none was explicitly set.
 		const deduceLayerName = (comp: CompiledLayer): string => {
@@ -689,7 +903,11 @@ export default class VideoFlow {
 		// level, so we strip `'linear'` from keyframes and keep everything
 		// else (including `'step'`, which is load-bearing — it's what holds
 		// animation end values steady until the next keyframe).
-		const layers = sortedLayers.map(comp => {
+		//
+		// Group layers carry their nested layers as `children`, recursively. The
+		// top-level `layers` array only contains layers that aren't inside a
+		// group; nested layers surface via their parent's `children`.
+		const serializeLayer = (comp: CompiledLayer): any => {
 			const staticProps: Record<string, any> = {};
 			const animations: any[] = [];
 
@@ -718,6 +936,20 @@ export default class VideoFlow {
 			const speedAbs = Math.abs(comp.speed) || 1;
 			const sourceDurationSec = timelineDurSec * speedAbs;
 
+			// Resolve nested children recursively (groups only). Children are
+			// emitted in the same order they were declared in the flow.
+			let children: any[] | undefined;
+			if (comp.type === 'group' && comp.childIds && comp.childIds.length > 0) {
+				children = comp.childIds
+					.map(id => compiled.get(id))
+					.filter((c): c is CompiledLayer => !!c)
+					.sort((a, b) => {
+						if (a.index !== b.index) return a.index - b.index;
+						return 0;
+					})
+					.map(serializeLayer);
+			}
+
 			return {
 				id: comp.id,
 				type: comp.type,
@@ -744,8 +976,11 @@ export default class VideoFlow {
 				...(comp.transitionIn ? { transitionIn: comp.transitionIn } : {}),
 				...(comp.transitionOut ? { transitionOut: comp.transitionOut } : {}),
 				...(comp.effects ? { effects: comp.effects } : {}),
+				...(children ? { children } : {}),
 			};
-		});
+		};
+
+		const layers = sortedLayers.map(serializeLayer);
 
 		return {
 			name: this.settings.name,
