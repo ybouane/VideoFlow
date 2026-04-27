@@ -52,6 +52,7 @@ import {
 } from 'mediabunny';
 
 import { createRuntimeLayer, RuntimeBaseLayer, type ILayerRenderer } from './layers/index.js';
+import RuntimeGroupLayer from './layers/RuntimeGroupLayer.js';
 import LayerRasterizer from './LayerRasterizer.js';
 import WebGLEffectCompositor from './WebGLEffectCompositor.js';
 import {
@@ -78,7 +79,7 @@ import WORKER_SOURCE from './workerBundle.js';
 // ---------------------------------------------------------------------------
 
 import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer,
+	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer, GroupLayer,
 } from '@videoflow/core';
 
 /**
@@ -92,6 +93,7 @@ const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
 	video: VideoLayer.propertiesDefinition,
 	audio: AudioLayer.propertiesDefinition,
 	shape: ShapeLayer.propertiesDefinition,
+	group: GroupLayer.propertiesDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -232,12 +234,62 @@ export default class BrowserRenderer implements ILayerRenderer {
 			const $el = await layer.generateElement();
 			if ($el) {
 				this.$canvas.appendChild($el);
+				if (layer instanceof RuntimeGroupLayer) {
+					// Mount the group's children into its hidden virtualRoot.
+					// Children's DOMs live there (off-screen) so CSS / Web
+					// Animations resolve the same as for top-level layers, but
+					// the visible / exported DOM stays clean — only the group's
+					// composited canvas is at the top level.
+					await layer.mountVirtualChildren();
+				}
 				if (layer.hasEffects) {
 					this.mountEffectOverlay(layer, $el);
 				}
 			}
 		}
 		this.elementsSetup = true;
+	}
+
+	// -----------------------------------------------------------------------
+	//  Group support — virtual host & per-child compositor
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Where group layers should park their hidden child host. For the export
+	 * renderer we use `document.body` directly so the children's CSS resolves
+	 * against the page's layout context (the same context the main `$canvas`
+	 * uses).
+	 */
+	getVirtualLayerHost(): Node {
+		return document.body;
+	}
+
+	/**
+	 * Rasterize a single layer (cached when possible), pipe it through the
+	 * WebGL effect compositor if it declares effects, and `drawImage` the
+	 * result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
+	 * each child onto the group's canvas — the same path that
+	 * `captureFrame` uses for top-level layers.
+	 */
+	async compositeLayerInto(
+		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+		layer: RuntimeBaseLayer,
+	): Promise<void> {
+		if (!layer.$element || !layer.lastAppliedProps) return;
+		const rasterizer = this.ensureRasterizer();
+		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
+		const w = this.videoJSON.width;
+		const h = this.videoJSON.height;
+		const effects = layer.hasEffects ? layer.resolveEffectsForProps(layer.lastAppliedProps) : [];
+		if (effects.length > 0) {
+			if (!this.effectCompositor) {
+				this.effectCompositor = new WebGLEffectCompositor(w, h);
+			}
+			const effected = this.effectCompositor.apply(surface, effects);
+			ctx.drawImage(effected, 0, 0, w, h);
+		} else {
+			ctx.drawImage(surface, 0, 0, w, h);
+		}
 	}
 
 	/**

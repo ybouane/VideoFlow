@@ -16,6 +16,7 @@ import RuntimeImageLayer from './RuntimeImageLayer.js';
 import RuntimeVideoLayer from './RuntimeVideoLayer.js';
 import RuntimeAudioLayer from './RuntimeAudioLayer.js';
 import RuntimeShapeLayer from './RuntimeShapeLayer.js';
+import RuntimeGroupLayer from './RuntimeGroupLayer.js';
 
 /** Registry mapping layer type strings to runtime classes. */
 const RUNTIME_LAYER_CLASSES: Record<string, typeof RuntimeBaseLayer> = {
@@ -25,6 +26,7 @@ const RUNTIME_LAYER_CLASSES: Record<string, typeof RuntimeBaseLayer> = {
 	video: RuntimeVideoLayer,
 	audio: RuntimeAudioLayer,
 	shape: RuntimeShapeLayer,
+	group: RuntimeGroupLayer,
 };
 
 /**
@@ -41,6 +43,11 @@ export function createRuntimeLayer(
 	return new Cls(json, fps, width, height, renderer);
 }
 
+// Inject the factory into RuntimeGroupLayer so it can recursively build
+// children without importing the registry directly (which would create a
+// load-time cycle since the registry imports this class).
+RuntimeGroupLayer.setChildFactory(createRuntimeLayer);
+
 export {
 	RuntimeBaseLayer,
 	RuntimeVisualLayer,
@@ -52,4 +59,5 @@ export {
 	RuntimeVideoLayer,
 	RuntimeAudioLayer,
 	RuntimeShapeLayer,
+	RuntimeGroupLayer,
 };

@@ -89,7 +89,7 @@ const RENDERER_CSS = `
 	border-width:0px;
 	color:#FFFFFF;
 }
-[data-element="image"], [data-element="video"] {
+[data-element="image"], [data-element="video"], [data-element="group"] {
 	--object-actual-width:var(--project-width);
 	--object-actual-height:var(--project-height);
 	width:calc(1px * var(--object-actual-width));
