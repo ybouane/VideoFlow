@@ -181,10 +181,10 @@ export type LayerEffectJSON = {
  * A single layer as it appears in the compiled JSON model.
  *
  * `track` is optional editor metadata: it groups layers into rows in a timeline
- * UI but has no effect on the renderer, which continues to z-order layers by
- * their position in the parent `layers` array (later = on top). Editors are
- * free to pack layers into tracks and write the assignment back here; non-editor
- * consumers can ignore the field entirely.
+ * UI. When set, the renderer also uses it to z-order the layer (`z-index =
+ * track + 1`); layers without a `track` are stacked by document order with no
+ * explicit z-index. Editors are free to pack layers into tracks and write the
+ * assignment back here; non-editor consumers can ignore the field entirely.
  *
  * `transitionIn` / `transitionOut` attach registered transition presets to the
  * layer's timeline edges; they modify the final (post-keyframe) properties
@@ -217,11 +217,10 @@ export type LayerJSON = {
 /**
  * Optional editor metadata for a single track row.
  *
- * Tracks are a purely editor-side concept — the renderer still z-orders
- * layers by their position in `layers`. When an editor groups layers into
- * tracks (via `LayerJSON.track`), this parallel array can carry per-track
- * display state (name, enable toggle) without embedding that state on every
- * layer. Disabling a track hides **both** its visual and audio output — the
+ * When an editor groups layers into tracks (via `LayerJSON.track`), the
+ * renderer uses that index for z-ordering and this parallel array can carry
+ * per-track display state (name, enable toggle) without embedding that state
+ * on every layer. Disabling a track hides **both** its visual and audio output — the
  * editor deliberately does not expose a separate mute control.
  *
  * Indices line up with the track numbers used by `LayerJSON.track`. Entries

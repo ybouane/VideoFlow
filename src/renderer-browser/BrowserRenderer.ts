@@ -323,7 +323,10 @@ export default class BrowserRenderer implements ILayerRenderer {
 		canvas.style.width = '100%';
 		canvas.style.height = '100%';
 		canvas.style.pointerEvents = 'none';
-		canvas.style.zIndex = String(this.layers.indexOf(layer) + 1);
+		const track = layer.json.track;
+		if (typeof track === 'number') {
+			canvas.style.zIndex = String(track + 1);
+		}
 		if ($el.nextSibling) {
 			this.$canvas.insertBefore(canvas, $el.nextSibling);
 		} else {

@@ -487,7 +487,9 @@ export default class DomRenderer implements ILayerRenderer {
 			this.videoJSON.layers.splice(insertAt, 0, layerJSON);
 
 			// Mount the layer's DOM element inside $canvas at the matching
-			// position so z-ordering (via DOM order) matches the layers array.
+			// position. Layers without a `track` rely on DOM order for
+			// z-ordering; layers with a `track` carry an explicit z-index
+			// (`track + 1`) written in `applyProperties`.
 			if (this.elementsSetup && layer.json.settings.enabled && this.isLayerEnabled(layer)) {
 				const $el = await layer.generateElement();
 				if ($el) {
@@ -550,9 +552,11 @@ export default class DomRenderer implements ILayerRenderer {
 	 * Reorder layers to match the given id sequence.
 	 *
 	 * The runtime layers and the backing `videoJSON.layers` array are reordered,
-	 * and the layers' `$element`s are re-appended to `$canvas` in the new order
-	 * (DOM order drives z-index via the `z-index` style written in
-	 * `applyProperties`). No media is touched.
+	 * and the layers' `$element`s are re-appended to `$canvas` in the new order.
+	 * For layers without a `track`, DOM order drives paint order. Layers with a
+	 * `track` carry an explicit z-index (`track + 1`) written in
+	 * `applyProperties`, so reordering them in the array without changing their
+	 * `track` only changes DOM order, not visual stacking. No media is touched.
 	 *
 	 * @param orderedIds - The new layer order. Must contain exactly the set of
 	 *   currently-loaded layer ids, in any order. Extra/missing ids throw.
@@ -590,7 +594,12 @@ export default class DomRenderer implements ILayerRenderer {
 						const overlay = this.effectCanvases.get(layer.json.id);
 						if (overlay && overlay.parentNode === this.$canvas) {
 							this.$canvas.appendChild(overlay);
-							overlay.style.zIndex = String(next.indexOf(layer) + 1);
+							const track = layer.json.track;
+							if (typeof track === 'number') {
+								overlay.style.zIndex = String(track + 1);
+							} else {
+								overlay.style.removeProperty('z-index');
+							}
 						}
 					}
 				}
@@ -1052,7 +1061,10 @@ export default class DomRenderer implements ILayerRenderer {
 		canvas.style.width = '100%';
 		canvas.style.height = '100%';
 		canvas.style.pointerEvents = 'none';
-		canvas.style.zIndex = String(this.layers.indexOf(layer) + 1);
+		const track = layer.json.track;
+		if (typeof track === 'number') {
+			canvas.style.zIndex = String(track + 1);
+		}
 		// Insert immediately after $el so DOM order (hence paint order)
 		// matches the layer order without shifting unrelated layers.
 		if ($el.nextSibling) {
