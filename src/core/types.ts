@@ -171,9 +171,15 @@ export type LayerTransitionSpec = {
  *
  * A layer may declare multiple effects; they run in array order, each pass
  * reading the previous pass's output.
+ *
+ * `enabled` defaults to `true` when absent. Setting it to `false` keeps the
+ * entry in the JSON (so editors can preserve user configuration) but skips
+ * the pass entirely at render time — equivalent to removing the entry, but
+ * non-destructive.
  */
 export type LayerEffectJSON = {
 	effect: string;
+	enabled?: boolean;
 	params?: Record<string, any>;
 };
 
