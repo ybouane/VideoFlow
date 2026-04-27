@@ -40,6 +40,7 @@ URL.revokeObjectURL(url);
 - **Client-side rendering** — video data never leaves the user's device
 - **Works with any VideoFlow JSON** — same format used by all VideoFlow renderers
 - **Per-layer caching** — static layers are rasterized once and reused across frames
+- **Layer groups** — composite a sub-tree of layers as one, with shared transitions / effects / animations applied to the whole composite
 - **WebGL effects** — registered GLSL effects run only for layers that need them; zero overhead for the rest
 
 ## API
