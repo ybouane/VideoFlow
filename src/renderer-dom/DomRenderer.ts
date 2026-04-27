@@ -28,6 +28,7 @@ import { loadedMedia } from '@videoflow/core';
 import {
 	createRuntimeLayer,
 	RuntimeBaseLayer,
+	RuntimeGroupLayer,
 	LayerRasterizer,
 	WebGLEffectCompositor,
 	FontEmbedder,
@@ -39,7 +40,7 @@ import {
 	type EffectParamDefinition,
 } from '@videoflow/renderer-browser';
 import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer,
+	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer, GroupLayer,
 } from '@videoflow/core';
 import RENDERER_CSS from './renderer.css.js';
 
@@ -54,6 +55,7 @@ const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
 	video: VideoLayer.propertiesDefinition,
 	audio: AudioLayer.propertiesDefinition,
 	shape: ShapeLayer.propertiesDefinition,
+	group: GroupLayer.propertiesDefinition,
 };
 
 // ---------------------------------------------------------------------------
@@ -497,6 +499,9 @@ export default class DomRenderer implements ILayerRenderer {
 						this.$canvas.insertBefore($el, nextEl);
 					} else {
 						this.$canvas.appendChild($el);
+					}
+					if (layer instanceof RuntimeGroupLayer) {
+						await layer.mountVirtualChildren();
 					}
 					if (layer.hasEffects) {
 						this.mountEffectOverlay(layer, $el);
@@ -955,6 +960,14 @@ export default class DomRenderer implements ILayerRenderer {
 			if (!this.$canvas) return;
 			if ($el) {
 				this.$canvas.appendChild($el);
+				if (layer instanceof RuntimeGroupLayer) {
+					// Children's DOMs are mounted into the group's hidden
+					// virtualRoot (parked under the shadow root) so that
+					// renderer-scoped CSS still applies to them, while the
+					// visible shadow tree only contains the group's
+					// composited canvas at the top level.
+					await layer.mountVirtualChildren();
+				}
 				if (layer.hasEffects) {
 					this.mountEffectOverlay(layer, $el);
 				}
@@ -962,6 +975,48 @@ export default class DomRenderer implements ILayerRenderer {
 		}
 
 		this.elementsSetup = true;
+	}
+
+	// -----------------------------------------------------------------------
+	//  Group support — virtual host & per-child compositor
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Where group layers should park their hidden child host. We use the
+	 * shadow root so renderer CSS (which is shadow-scoped) still applies to
+	 * the group's children — without this, descendants would lose their
+	 * `--vw` / `--project-*` context and render at the wrong scale.
+	 */
+	getVirtualLayerHost(): Node {
+		return this.shadow;
+	}
+
+	/**
+	 * Rasterize a single layer (cached when possible), pipe it through the
+	 * WebGL effect compositor if it declares effects, and `drawImage` the
+	 * result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
+	 * each child onto the group's canvas.
+	 */
+	async compositeLayerInto(
+		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+		layer: RuntimeBaseLayer,
+	): Promise<void> {
+		if (!layer.$element || !layer.lastAppliedProps) return;
+		if (!this.videoJSON) return;
+		const rasterizer = this.ensureRasterizer();
+		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
+		const w = this.videoJSON.width;
+		const h = this.videoJSON.height;
+		const effects = layer.hasEffects ? layer.resolveEffectsForProps(layer.lastAppliedProps) : [];
+		if (effects.length > 0) {
+			if (!this.effectCompositor) {
+				this.effectCompositor = new WebGLEffectCompositor(w, h);
+			}
+			const effected = this.effectCompositor.apply(surface, effects);
+			ctx.drawImage(effected, 0, 0, w, h);
+		} else {
+			ctx.drawImage(surface, 0, 0, w, h);
+		}
 	}
 
 	/**
