@@ -71,6 +71,8 @@ BaseLayer              → id, timing (startTime, sourceDuration, speed, sourceS
  │    ├── MediaLayer   → source, fit
  │    │    ├── ImageLayer
  │    │    └── VideoLayer (+ volume, pan, pitch, mute)
+ │    ├── ShapeLayer   → shape, width, height, fill, stroke, strokeWidth, borderRadius
+ │    ├── GroupLayer   → children[] — composites a sub-tree of layers as one
  │    └── TextualLayer → font*, color, text stroke / shadow, letterSpacing, lineHeight, …
  │         ├── TextLayer     (+ text)
  │         └── CaptionsLayer (+ captions[], maxCharsPerLine, maxLines)
@@ -327,6 +329,96 @@ const subs = $.addCaptions(
   }
 );
 ```
+
+---
+
+### addShape — vector shape layer
+
+Renders a vector silhouette (rectangle, ellipse, polygon, or star). Inherits from `VisualLayer` → `BaseLayer`.
+
+The choice of silhouette is a **setting** (`shapeType`, fixed for the layer's lifetime). All size/colour/stroke parameters are properties and therefore animatable.
+
+```typescript
+const card = $.addShape(
+  {
+    // --- Shape box (sized in em — `1em = 1% of project width` at root) ---
+    width: 50,                   // Default: 100
+    height: 30,                  // Default: 100
+
+    // --- Fill / stroke ---
+    fill: '#1c2233',             // Default: '#ffffff'. Use 'transparent' for outline-only.
+    strokeColor: '#3a4257',      // Default: '#000000'
+    strokeWidth: 0.2,            // Default: 0 (no stroke). Animatable.
+    strokeAlignment: 'inner',    // 'inner' | 'center' | 'outer'. Default: 'inner'
+    strokeDash: 0,               // Dash length in em. 0 = solid. Default: 0
+    strokeGap: 0,                // Gap length in em (defaults to strokeDash if 0). Default: 0
+    strokeLinejoin: 'miter',     // 'miter' | 'round' | 'bevel'. Default: 'miter'
+
+    // --- Shape-specific ---
+    cornerRadius: 1.5,           // Rectangles only. In em. Default: 0
+    sides: 6,                    // polygon / star. Integer ≥ 3. Default: 6
+    innerRadius: 0.5,            // Stars only. Inner/outer ratio (0..1). Default: 0.5
+
+    // --- VisualLayer (inherited) ---
+    position: [0.5, 0.5],
+    rotation: 0,
+    opacity: 1,
+    // …plus border*, boxShadow*, outline*, filter*, perspective, effects
+  },
+  {
+    shapeType: 'rectangle',      // 'rectangle' | 'ellipse' | 'polygon' | 'star'. Default: 'rectangle'
+    startTime: 0,
+    sourceDuration: '3s',
+  }
+);
+```
+
+---
+
+### $.group — composite a sub-tree as one
+
+Wraps a builder callback whose layers are nested **inside** the returned group. The group itself is a regular visual layer — it has its own `position`, `scale`, `rotation`, `opacity`, `transitionIn`/`transitionOut`, and `effects` — and at render time the group's children are first composited onto a private project-sized surface, then that surface is drawn onto the parent canvas with the group's transform / transitions / effects applied as a single pass.
+
+```typescript
+$.group(
+  // --- Group properties (same set as VisualLayer: position, scale,
+  //     rotation, opacity, filter*, border*, boxShadow*, perspective, effects)
+  { position: [0.5, 0.5], scale: 1 },
+  // --- Group settings. `startTime` and `sourceDuration` are auto-derived
+  //     from the flow position and the children's end times — you typically
+  //     do NOT pass them. Override only if you need to.
+  {
+    transitionIn:  { transition: 'riseFade', duration: '500ms' },
+    transitionOut: { transition: 'fade',     duration: '500ms' },
+  },
+  // --- Builder callback. The flow's time pointer resets to 0 inside,
+  //     so child timings are relative to the group's start. The argument
+  //     is the group layer itself, so animations attached to the group
+  //     as a whole live alongside its children.
+  (group) => {
+    $.addImage({ fit: 'cover' }, { source: './bg.jpg', sourceDuration: '3s' });
+    $.addText({ text: 'Hello' }, { sourceDuration: '3s' });
+
+    $.wait('400ms');                    // 400ms relative to the group's start
+    $.addText({ text: 'world' }, { sourceDuration: '2.6s' });
+
+    // Animate the group itself — children come along for the ride.
+    group.animate({ scale: 1 }, { scale: 1.04 }, { duration: '3s', wait: false });
+  },
+  // --- AddLayer options. `waitFor` defaults to 'finish' on groups, so the
+  //     next layer added after this call starts when the group ends. Pass a
+  //     Time (e.g. '500ms') to add a fixed delay instead.
+);
+```
+
+Key semantics:
+
+- **Auto timing.** A group's `startTime` defaults to the flow's current time when `$.group(...)` is called, and `sourceDuration` defaults to the end of its latest child. So a group whose last child finishes at +5s lasts 5s — no manual bookkeeping. Pass them explicitly only to override.
+- **`waitFor` defaults to `'finish'`.** Unlike `$.addText` / `$.addImage` (which leave the flow pointer where it was), `$.group(...)` advances the outer flow pointer to the group's end. The next layer added after a group call starts when the group ends — `$.wait()` between groups is normally not needed.
+- **Relative timing inside the group.** A `wait('1s')` inside the callback advances the **group-local** timeline, not the project timeline. At compile time, child `startTime`s are resolved into absolute project seconds.
+- **Group-level transitions and effects.** `transitionIn`, `transitionOut`, and `effects` on the group apply to the composited sub-tree as a whole. Children may also declare their own — those run before the group's pass.
+- **Nested groups.** Groups can contain other groups. Each level composites independently; transitions/effects stack outward.
+- **DOM preview.** In `DomRenderer`, a group renders as a single `<canvas>` element — children live in a hidden virtual root and never appear in the visible DOM tree.
 
 ---
 

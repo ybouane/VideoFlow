@@ -34,6 +34,7 @@ await player.play();
 - **Build custom video editors** — seek to any frame, scrub the timeline, inspect layers
 - **Interactive playback with audio sync** — play, pause, and seek with frame-accurate audio
 - **Full transition & effect support** — layers with `transitionIn`/`transitionOut` animate in live preview; `effects` layers are rendered via WebGL on a per-layer overlay canvas
+- **Layer groups in DOM** — group layers render as a single `<canvas>` element. Their children live in a hidden virtual root and never appear in the visible DOM tree
 
 ## API
 
@@ -155,6 +156,8 @@ DomRenderer.registerTransition('spin', (p, properties, params) => {
 ## GLSL Effects
 
 `DomRenderer` also supports `effects` layers. When a layer declares effects, the renderer substitutes a project-sized `<canvas>` overlay for that layer's normal DOM output. Each frame, the layer is rasterized off-screen and piped through the shared WebGL compositor, and the result is painted onto the overlay canvas. Non-effect layers stay on the fast DOM-mutation path, so there is no regression for the common case.
+
+Effects also flow through groups: an `effects` array on a `$.group(...)` runs against the group's composited surface, so a single shader pass can apply to a whole sub-tree of children at once.
 
 Custom effects can be registered with `DomRenderer.registerEffect`:
 

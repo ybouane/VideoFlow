@@ -7,7 +7,8 @@ An open-source TypeScript library for generating videos programmatically. Define
 - **Fluent API** — build videos with a sequential, chainable TypeScript interface
 - **JSON video format** — compile to a portable JSON model that any renderer can consume
 - **Browser & server rendering** — render to MP4 client-side or server-side
-- **Layer types** — Text, Image, Video, Audio, Captions
+- **Layer types** — Text, Image, Video, Audio, Captions, Shape, Group
+- **Groups** — composite multiple layers into a single visual unit; transitions, effects, and animations apply to the whole composite
 - **Keyframe animations** — animate any visual/auditory property with multiple easing functions
 - **Transitions** — attach built-in (or custom) enter/exit presets to any layer via `transitionIn` / `transitionOut` settings
 - **GLSL effects** — apply WebGL shader effects (pixelate, chromatic aberration, vignette, …) to individual layers; effect params are animatable
@@ -122,6 +123,8 @@ const $ = new VideoFlow(settings?: ProjectSettings);
 - `$.addVideo(properties?, settings?, options?)` — add a video layer
 - `$.addAudio(properties?, settings?, options?)` — add an audio layer
 - `$.addCaptions(properties?, settings?, options?)` — add a captions layer
+- `$.addShape(properties?, settings?, options?)` — add a shape layer
+- `$.group(properties?, settings?, fn?, options?)` — composite a sub-tree of layers as a single unit
 - `$.wait(time)` — advance the timeline
 - `$.parallel([...fns])` — run animation branches simultaneously
 - `$.compile()` — compile to `VideoJSON`
@@ -227,6 +230,39 @@ Presets receive a signed progress parameter `p ∈ [-1, +1]`:
 | `riseFade` | composite | `rise` + `fade` — rises continuously while fading | `distance?: number` (default `0.08`) |
 
 Transitions work in both `BrowserRenderer` (export) and `DomRenderer` (live preview). Custom presets can be registered with `BrowserRenderer.registerTransition(name, fn)`.
+
+## Groups
+
+Wrap any sub-tree of layers in `$.group(...)` to composite them as a single visual unit. The group itself is a layer — it accepts the same visual properties (position, scale, rotation, opacity, filters), the same `transitionIn` / `transitionOut`, and the same `effects` array as a normal layer. Anything declared inside the group's builder callback becomes a child of the group; their flow timing is **relative to the group's start**.
+
+```ts
+const card = $.group(
+  { position: [0.5, 0.5], scale: 1 },
+  {
+    transitionIn:  { transition: 'riseFade', duration: '500ms' },
+    transitionOut: { transition: 'fade',     duration: '500ms' },
+  },
+  (group) => {
+    // Child timings are relative to the group's start, so this image
+    // begins at the start of the group, not project time 0.
+    $.addImage({ fit: 'cover', opacity: 0.6 }, { source: './bg.jpg', sourceDuration: '3s' });
+    $.addText({ text: 'Hello', fontSize: 4 }, { sourceDuration: '3s' });
+
+    // Animate the group itself — children come along for the ride.
+    group.animate({ scale: 1 }, { scale: 1.04 }, { duration: '3s', wait: false });
+  },
+);
+```
+
+How groups behave:
+
+- **Auto timing** — like every other layer, the group's `startTime` defaults to the current flow time, and its `sourceDuration` defaults to the latest child's end (so a group whose last child finishes at +5s lasts 5s). Pass `startTime` / `sourceDuration` explicitly only if you need to override.
+- **Composite as one** — children are rendered into a project-sized off-screen surface, then the surface is drawn onto the final canvas with the group's transform / opacity / filters / transitions / effects applied as a single pass.
+- **Relative timing** — `$.wait('400ms')` *inside* the builder advances the group's local timeline, not the project timeline.
+- **Group-level transitions and effects** — `transitionIn` / `transitionOut` and `effects` on the group apply to the whole composite (e.g. one fade for the whole card), not to each child individually. Children may also have their own transitions and effects, which run before the group's pass.
+- **Flow advance** — `$.group(...)` advances the outer flow pointer to the group's end, the same way `$.parallel()` advances to the longest branch. The next layer added after a group starts when the group ends — no `$.wait()` needed in between.
+- **Nesting is supported** — groups can contain other groups; each level composites independently.
+- **DOM preview** — in `DomRenderer`, groups render to a `<canvas>` element at the top of the rendered DOM. Child layers live in a hidden virtual root and never appear in the visible DOM tree.
 
 ## GLSL Effects
 
@@ -362,6 +398,7 @@ See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) fol
 | [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
 | [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, zoom, blur, rise/fall, driftLeft/Right, slideFromX, riseFade) |
 | [09-effects.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/09-effects.ts) | GLSL effects with animated params (pixelate, chromatic aberration, vignette) |
+| [10-groups.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/10-groups.ts) | Layer groups — composite layers as one with shared transitions, animations, and nested groups |
 
 Run any example with:
 
