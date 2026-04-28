@@ -623,6 +623,24 @@ export default class RuntimeBaseLayer {
 		return null; // Subclasses provide the element
 	}
 
+	// -- Smooth playback hooks ----------------------------------------------
+
+	/**
+	 * Switch the layer to "smooth playback" mode for live preview. The default
+	 * is a no-op; only `RuntimeVideoLayer` overrides this to drive its
+	 * underlying `<video>` element via native `play()` instead of
+	 * seek-per-frame.
+	 *
+	 * Called by `DomRenderer.play()` once at the start of each playback
+	 * session. Renderers must call {@link exitSmoothPlayback} on `stop()` /
+	 * `seek()` so subsequent renders fall back to the deterministic per-frame
+	 * path used for scrubbing and export.
+	 */
+	enterSmoothPlayback(): void {}
+
+	/** Exit smooth-playback mode. See {@link enterSmoothPlayback}. */
+	exitSmoothPlayback(): void {}
+
 	// -- Frame rendering ----------------------------------------------------
 
 	/**
