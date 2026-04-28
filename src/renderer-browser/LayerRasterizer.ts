@@ -14,6 +14,19 @@
  *   `<div>` containing just that layer's DOM. Same CSS as the live renderer,
  *   so the output is pixel-identical to the current whole-project pipeline.
  *
+ * Two ways to consume the rasterizer:
+ *
+ * - {@link rasterize} — produces a per-layer `OffscreenCanvas` surface.
+ *   Required when the layer has effects (the WebGL compositor needs a
+ *   sampleable bitmap) or for tier-3 layers (text, shapes, anything CSS-
+ *   only).
+ *
+ * - {@link canDrawDirect} + {@link drawDirectInto} — fast path for tier-1
+ *   layers with no effects. Skips the per-layer surface entirely and
+ *   paints the layer's `$element` straight onto the caller's final canvas,
+ *   saving one full-frame blit per layer per frame. Used by
+ *   `BrowserRenderer.captureFrame` and both renderers' `compositeLayerInto`.
+ *
  * The rasterizer owns one `OffscreenCanvas` per layer (keyed by
  * `layer.json.id`) which doubles as the cache. Cacheable layers re-use the
  * surface when `props` match the last render. Video layers (non-cacheable)
@@ -124,13 +137,40 @@ export default class LayerRasterizer {
 	private surfaces: Map<string, OffscreenCanvas> = new Map();
 	/** Last cache-key per layer — identical key = surface already shows that props state. */
 	private keys: Map<string, string> = new Map();
+	/**
+	 * Resampling quality applied during the tier-1 `drawImage`. `'high'`
+	 * runs Lanczos / bicubic in Chrome (slow but pixel-accurate — used by
+	 * `BrowserRenderer` for export); `'low'` runs bilinear (fast — used by
+	 * `DomRenderer` for live preview, where draft-grade resampling is
+	 * imperceptible against the moving image).
+	 */
+	private quality: ImageSmoothingQuality;
 
+	/**
+	 * @param videoJSON       - The compiled VideoJSON whose `width` / `height`
+	 *                          define the per-layer surface size.
+	 * @param $canvas         - The renderer's live `<div data-renderer>` element;
+	 *                          used as the tier-3 SVG wrapper's parent context
+	 *                          so embedded `--vw` / `--project-*` resolve.
+	 * @param rendererCss     - The renderer stylesheet inlined into every
+	 *                          tier-3 SVG so the foreignObject paints
+	 *                          identically to the live DOM.
+	 * @param fontCssForLayer - Callback that returns the `@font-face` CSS
+	 *                          block needed by `layer` (text/captions only)
+	 *                          for tier-3 SVG rasterization.
+	 * @param options.quality - Tier-1 resampling quality. Defaults to
+	 *                          `'low'`. Pass `'high'` from export-grade
+	 *                          renderers.
+	 */
 	constructor(
 		private videoJSON: VideoJSON,
 		private $canvas: HTMLDivElement,
 		private rendererCss: string,
 		private fontCssForLayer: FontCssForLayerFn,
-	) {}
+		options: { quality?: ImageSmoothingQuality } = {},
+	) {
+		this.quality = options.quality ?? 'low';
+	}
 
 	/** Forget the cache key for one layer so the next `rasterize` re-renders it. */
 	invalidate(layerId: string): void {
@@ -172,7 +212,13 @@ export default class LayerRasterizer {
 
 	/**
 	 * Rasterize the layer into its private surface using the best tier and
-	 * return it. On cache hit the surface is returned unchanged.
+	 * return the surface. On cache hit (cacheable layers only) the surface
+	 * is returned unchanged without touching the canvas.
+	 *
+	 * Use this when the caller needs a sampleable bitmap (the WebGL effect
+	 * compositor) or when the layer is tier-3 (text, shapes, anything that
+	 * goes through the foreignObject path). For tier-1 layers with no
+	 * effects, prefer {@link drawDirectInto} to skip this surface copy.
 	 */
 	async rasterize(layer: RuntimeBaseLayer, props: Record<string, any>): Promise<OffscreenCanvas> {
 		const id = layer.json.id;
@@ -195,11 +241,37 @@ export default class LayerRasterizer {
 
 		const tier = this.pickRasterTier(layer, props);
 		if (tier === 1) {
-			this.rasterizeDirect(layer, props, surface);
+			const ctx = surface.getContext('2d')!;
+			ctx.setTransform(1, 0, 0, 1, 0, 0);
+			ctx.clearRect(0, 0, this.videoJSON.width, this.videoJSON.height);
+			this.drawTier1(layer, props, ctx);
 		} else {
 			await this.rasterizeForeignObject(layer, surface);
 		}
 		return surface;
+	}
+
+	/**
+	 * Whether the layer can be drawn directly onto a caller-owned final canvas
+	 * without an intermediate per-layer surface. Returns true only for tier-1
+	 * layers; the caller is responsible for checking that no effects are
+	 * declared (effects need a sampleable surface for the WebGL compositor).
+	 */
+	canDrawDirect(layer: RuntimeBaseLayer, props: Record<string, any>): boolean {
+		return this.pickRasterTier(layer, props) === 1;
+	}
+
+	/**
+	 * Draw the layer directly onto `ctx` using its tier-1 transform. Skips the
+	 * per-layer `OffscreenCanvas` copy entirely. Caller must have verified via
+	 * `canDrawDirect` and ensured `ctx` is sized to the project canvas.
+	 */
+	drawDirectInto(
+		layer: RuntimeBaseLayer,
+		props: Record<string, any>,
+		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
+	): void {
+		this.drawTier1(layer, props, ctx);
 	}
 
 	private getSurface(id: string): OffscreenCanvas {
@@ -215,16 +287,20 @@ export default class LayerRasterizer {
 	//  Tier 1 — direct canvas drawImage with a 2D affine
 	// -----------------------------------------------------------------------
 
-	private rasterizeDirect(
+	/**
+	 * Core tier-1 draw: paints the layer's `$element` onto `ctx` using the
+	 * layer's resolved transform / opacity. The caller is responsible for
+	 * setting up `ctx` (clearing if needed, identity transform). Used both by
+	 * `rasterize` (target = per-layer surface) and `drawDirectInto`
+	 * (target = final composite canvas).
+	 */
+	private drawTier1(
 		layer: RuntimeBaseLayer,
 		props: Record<string, any>,
-		surface: OffscreenCanvas,
+		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
 	): void {
 		const pw = this.videoJSON.width;
 		const ph = this.videoJSON.height;
-		const ctx = surface.getContext('2d')!;
-		ctx.setTransform(1, 0, 0, 1, 0, 0);
-		ctx.clearRect(0, 0, pw, ph);
 
 		const el = layer.$element as HTMLCanvasElement;
 		const [mw, mh] = (layer as any).dimensions as [number, number];
@@ -246,7 +322,7 @@ export default class LayerRasterizer {
 		ctx.save();
 		ctx.globalAlpha = Math.max(0, Math.min(1, Number(props.opacity ?? 1)));
 		ctx.imageSmoothingEnabled = true;
-		ctx.imageSmoothingQuality = 'high';
+		ctx.imageSmoothingQuality = this.quality;
 		ctx.setTransform(sx, 0, 0, sy, tx, ty);
 		ctx.drawImage(el, 0, 0, ow, oh);
 		ctx.restore();
