@@ -38,23 +38,72 @@ export type EffectParamType =
 	| 'option';
 
 /**
+ * Editor-facing UI hint on a numeric param. Driven by `EffectParamFieldConfig.unit`.
+ *
+ * - `'em'`   — value is in **em** units, where `1em = 1% of the project width`
+ *              (matches the renderer's CSS `--vw`). Converted to pixels at
+ *              uniform-bind time via `value × width × 0.01`. Use for shader
+ *              uniforms that expect pixel distances (blur radius, block size,
+ *              streak length, …) so the visual size stays identical regardless
+ *              of render resolution.
+ * - `'%'`    — value is a percentage. Documentation only; passed through. Use
+ *              for values whose internal scale is already 0..1 / 0..100 ratios
+ *              that the user thinks of as a percent.
+ * - `'deg'`  — value is in degrees. Passed through unchanged; shaders convert
+ *              to radians internally with `radians()` where needed.
+ * - `'rad'`  — value is in radians. Passed through.
+ *
+ * Counts, multipliers, exponents and thresholds should leave `unit` unset.
+ */
+export type EffectParamUnit = 'em' | '%' | 'deg' | 'rad';
+
+/** Editor-facing field types. Inferred from the param's GLSL `type` if absent. */
+export type EffectParamFieldType = 'number' | 'toggle' | 'option' | 'color' | 'text';
+
+/**
+ * Editor UI metadata for a single effect parameter. Carries everything an
+ * editor needs to render a sensible input control (numeric step, integer
+ * coercion, option labels, unit suffix). `unit: 'em'` additionally drives a
+ * runtime em → px conversion so authored values stay resolution-independent.
+ */
+export type EffectParamFieldConfig = {
+	/** UI control type. Inferred from the param's GLSL `type` if absent. */
+	type?: EffectParamFieldType;
+	/** Numeric step (e.g. `0.01` for fractions, `1` for integer counts). */
+	step?: number;
+	/** Force integer numeric input (rounds in the editor). */
+	integer?: boolean;
+	/**
+	 * For `option`-typed params: ordered map of value → display label. Insertion
+	 * order defines the GLSL int index, so don't shuffle keys after release.
+	 */
+	options?: Record<string, string>;
+	/** Unit suffix shown next to the input. `'em'` triggers em → px conversion. */
+	unit?: EffectParamUnit;
+};
+
+/**
  * Metadata describing a single effect parameter.
  *
  * `default` is used when the layer's JSON does not override it. For `color`,
  * the value is a CSS colour string (`"#rrggbb"` / `"rgba(..)"`), converted to
  * a `vec4` by the compositor at draw time. For `option`, the value is one of
- * the strings in `options`; the compositor resolves it to its index and binds
- * it as an `int u_<name>` uniform.
+ * the keys of `fieldConfig.options`; the compositor resolves it to its index
+ * and binds it as an `int u_<name>` uniform.
+ *
+ * `fieldConfig` carries all editor UI hints — step, integer coercion, unit,
+ * option labels — and also drives runtime unit conversion (`unit: 'em'` →
+ * pixels). See {@link EffectParamFieldConfig}.
  */
 export type EffectParamDefinition = {
 	type: EffectParamType;
 	default: any;
 	min?: number;
 	max?: number;
-	/** For `option` type: list of allowed string values (index → GLSL int). */
-	options?: string[];
 	/** Reserved for future animation support (currently all are animatable). */
 	animatable?: boolean;
+	/** Editor-facing field config (units, step, options, …). */
+	fieldConfig?: EffectParamFieldConfig;
 };
 
 /**
@@ -135,12 +184,33 @@ export function parseColorToVec4(value: any): [number, number, number, number] {
 }
 
 /**
+ * Convert an authored param value into its on-shader form, given the project
+ * resolution. Currently only `unit: 'em'` triggers a numeric conversion (em →
+ * pixels via `× width × 0.01`); other units are pure documentation and pass
+ * through. Non-numeric values, vectors, colours and options pass through too —
+ * vectors are converted component-wise.
+ */
+export function convertParamValue(
+	def: EffectParamDefinition,
+	value: any,
+	width: number,
+): any {
+	const unit = def.fieldConfig?.unit;
+	if (!unit || unit !== 'em') return value;
+	const factor = width * 0.01;
+	if (typeof value === 'number') return value * factor;
+	if (Array.isArray(value)) return value.map(v => (typeof v === 'number' ? v * factor : v));
+	const n = Number(value);
+	return Number.isFinite(n) ? n * factor : value;
+}
+
+/**
  * Resolve an `option`-typed value to its integer index. Accepts either a
  * string from the registered list or a numeric value already in range. Falls
  * back to the default's index, or 0 if the default isn't in the list either.
  */
 export function resolveOptionIndex(def: EffectParamDefinition, value: any): number {
-	const options = def.options ?? [];
+	const options = def.fieldConfig?.options ? Object.keys(def.fieldConfig.options) : [];
 	if (typeof value === 'number' && Number.isFinite(value)) {
 		return Math.max(0, Math.min(options.length - 1, value | 0));
 	}

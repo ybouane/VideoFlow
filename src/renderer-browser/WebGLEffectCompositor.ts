@@ -24,6 +24,7 @@ import {
 	getEffect,
 	parseColorToVec4,
 	resolveOptionIndex,
+	convertParamValue,
 	type EffectDefinition,
 	type EffectParamDefinition,
 } from './effects.js';
@@ -125,6 +126,7 @@ function buildFragmentShader(effect: EffectDefinition, passGlsl: string, hasOrig
 precision highp float;
 uniform sampler2D u_texture;
 ${originalDecl}uniform vec2      u_resolution;
+uniform float     u_time;
 ${uniforms}varying vec2 v_uv;
 ${SHADER_PREAMBLE}
 ${passGlsl}
@@ -138,6 +140,7 @@ type ProgramEntry = {
 	uTexture: WebGLUniformLocation | null;
 	uOriginal: WebGLUniformLocation | null;
 	uResolution: WebGLUniformLocation | null;
+	uTime: WebGLUniformLocation | null;
 	paramLocs: Record<string, WebGLUniformLocation | null>;
 };
 
@@ -258,6 +261,7 @@ void main() { gl_FragColor = texture2D(u_texture, v_uv); }`;
 			uTexture: gl.getUniformLocation(program, 'u_texture'),
 			uOriginal: null,
 			uResolution: null,
+			uTime: null,
 			paramLocs: {},
 		};
 		return this.blitProgram;
@@ -304,6 +308,7 @@ void main() { gl_FragColor = texture2D(u_texture, v_uv); }`;
 			uTexture: gl.getUniformLocation(program, 'u_texture'),
 			uOriginal: gl.getUniformLocation(program, 'u_originalTexture'),
 			uResolution: gl.getUniformLocation(program, 'u_resolution'),
+			uTime: gl.getUniformLocation(program, 'u_time'),
 			paramLocs,
 		};
 		this.programs.set(cacheKey, entry);
@@ -317,7 +322,10 @@ void main() { gl_FragColor = texture2D(u_texture, v_uv); }`;
 		value: any,
 	): void {
 		if (!loc) return;
-		const v = value === undefined ? def.default : value;
+		const raw = value === undefined ? def.default : value;
+		// Apply unit conversion (em → px, etc.) before binding so the shader
+		// always receives values in its native space regardless of project size.
+		const v = convertParamValue(def, raw, this.width);
 		switch (def.type) {
 			case 'float':
 				gl.uniform1f(loc, Number(v));
@@ -361,10 +369,16 @@ void main() { gl_FragColor = texture2D(u_texture, v_uv); }`;
 	 * canvas. The returned canvas is the compositor's own drawing surface —
 	 * its contents are overwritten on the next `apply()` call, so callers
 	 * must consume or copy the pixels before invoking `apply()` again.
+	 *
+	 * `time` is the current playhead in seconds (typically `frame / fps`),
+	 * exposed to shaders as `u_time` so effects can produce frame-to-frame
+	 * variation (film grain, vhs noise, glitch reseeds, …) without baking
+	 * a fixed pattern into the output.
 	 */
 	apply(
 		source: CanvasImageSource,
 		effects: Array<{ effect: string; params?: Record<string, any> }>,
+		time: number = 0,
 	): OffscreenCanvas | HTMLCanvasElement {
 		const w = this.width;
 		const h = this.height;
@@ -468,6 +482,7 @@ void main() { gl_FragColor = texture2D(u_texture, v_uv); }`;
 				gl.bindTexture(gl.TEXTURE_2D, read);
 				if (entry.uTexture) gl.uniform1i(entry.uTexture, 0);
 				if (entry.uResolution) gl.uniform2f(entry.uResolution, w, h);
+				if (entry.uTime) gl.uniform1f(entry.uTime, time);
 
 				if (pass.readsOriginal && originalTex) {
 					gl.activeTexture(gl.TEXTURE1);

@@ -54,10 +54,10 @@ registerEffect('gaussianBlur', [
 	{ glsl: gaussianBlurPass('h') },
 	{ glsl: gaussianBlurPass('v') },
 ], {
-	radius:     { type: 'float',  default: 8,  min: 0, max: 200, animatable: true },
-	quality:    { type: 'float',  default: 8,  min: 1, max: 32,  animatable: true },
-	direction:  { type: 'option', default: 'both', options: ['both', 'horizontal', 'vertical'] },
-	edgeMode:   { type: 'option', default: 'clamp', options: ['clamp', 'transparent', 'mirror'] },
+	radius:     { type: 'float',  default: 0.4, min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	quality:    { type: 'float',  default: 8,   min: 1, max: 32, animatable: true, fieldConfig: { step: 1, integer: true } },
+	direction:  { type: 'option', default: 'both', fieldConfig: { options: { both: 'Both', horizontal: 'Horizontal', vertical: 'Vertical' } } },
+	edgeMode:   { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 	alphaAware: { type: 'bool',   default: true },
 });
 
@@ -84,11 +84,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return sum / max(wSum, 0.0001);
 }`, {
-	amount:     { type: 'float',  default: 24, min: 0,   max: 200, animatable: true },
-	angle:      { type: 'float',  default: 0,  min: 0,   max: 360, animatable: true },
-	samples:    { type: 'float',  default: 16, min: 2,   max: 64,  animatable: true },
-	centerBias: { type: 'float',  default: 0,  min: 0,   max: 1,   animatable: true },
-	edgeMode:   { type: 'option', default: 'clamp', options: ['clamp', 'transparent', 'mirror'] },
+	amount:     { type: 'float',  default: 1.25, min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	angle:      { type: 'float',  default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	samples:    { type: 'float',  default: 16,   min: 2, max: 64,  animatable: true, fieldConfig: { step: 1, integer: true } },
+	centerBias: { type: 'float',  default: 0,    min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	edgeMode:   { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -115,12 +115,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return sum / max(wSum, 0.0001);
 }`, {
-	amount:  { type: 'float',  default: 0.4, min: 0, max: 2,  animatable: true },
-	centerX: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true },
-	centerY: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true },
-	samples: { type: 'float',  default: 24,  min: 2, max: 64, animatable: true },
-	falloff: { type: 'float',  default: 1,   min: 0, max: 4,  animatable: true },
-	mode:    { type: 'option', default: 'out', options: ['in', 'out'] },
+	amount:  { type: 'float',  default: 0.4, min: 0, max: 2,  animatable: true, fieldConfig: { step: 0.05 } },
+	centerX: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true, fieldConfig: { step: 0.01 } },
+	centerY: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true, fieldConfig: { step: 0.01 } },
+	samples: { type: 'float',  default: 24,  min: 2, max: 64, animatable: true, fieldConfig: { step: 1, integer: true } },
+	falloff: { type: 'float',  default: 1,   min: 0, max: 4,  animatable: true, fieldConfig: { step: 0.1 } },
+	mode:    { type: 'option', default: 'out', fieldConfig: { options: { in: 'Zoom In', out: 'Zoom Out' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -149,11 +149,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float a = texture2D(tex, mid).a;
 	return vec4(r, g, b, a);
 }`, {
-	intensity:    { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true },
-	angle:        { type: 'float',  default: 0,     min: 0, max: 360, animatable: true },
-	centerX:      { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true },
-	centerY:      { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true },
-	edgeFalloff:  { type: 'float',  default: 0,     min: 0, max: 1,   animatable: true },
+	intensity:    { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true, fieldConfig: { step: 0.001 } },
+	angle:        { type: 'float',  default: 0,     min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	centerX:      { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:      { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	edgeFalloff:  { type: 'float',  default: 0,     min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
 	radial:       { type: 'bool',   default: false },
 });
 
@@ -170,7 +170,10 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	bool preserveLuma = u_preserveLuminance;
 
 	float band = (axis == 1) ? floor(uv.x / bandSize) : floor(uv.y / bandSize);
-	float bRand = hash21(vec2(band, 7.31));
+	// Reseed each band every frame so the glitch pulses temporally rather
+	// than printing one fixed band layout for the whole clip.
+	float tFrame = floor(u_time * 60.0);
+	float bRand = hash21(vec2(band, 7.31 + tFrame * 0.93));
 	float pulse = mix(0.0, (bRand - 0.5) * 2.0, randomness);
 	float bandShift = bandOffset * pulse;
 
@@ -191,11 +194,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(result, a);
 }`, {
-	amount:            { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true },
-	bandSize:          { type: 'float',  default: 0.05,  min: 0.001, max: 1, animatable: true },
-	bandOffset:        { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true },
-	randomness:        { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true },
-	axis:              { type: 'option', default: 'horizontal', options: ['horizontal', 'vertical', 'both'] },
+	amount:            { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true, fieldConfig: { step: 0.001 } },
+	bandSize:          { type: 'float',  default: 0.05,  min: 0.001, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	bandOffset:        { type: 'float',  default: 0.005, min: 0, max: 0.1, animatable: true, fieldConfig: { step: 0.001 } },
+	randomness:        { type: 'float',  default: 0.5,   min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	axis:              { type: 'option', default: 'horizontal', fieldConfig: { options: { horizontal: 'Horizontal', vertical: 'Vertical', both: 'Both' } } },
 	preserveLuminance: { type: 'bool',   default: false },
 });
 
@@ -220,13 +223,16 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	if (edgeWidth > 0.0) {
 		edge = exp(-pow(diff / edgeWidth, 2.0)) * edgeColor.a;
 	}
-	vec3 result = mix(c.rgb, edgeColor.rgb, edge);
+	// Premultiply edge by c.a so the glow only paints where content exists —
+	// otherwise transparent regions of the layer pick up white edge pixels
+	// with alpha=0, which compositors render as visible white blobs.
+	vec3 result = mix(c.rgb, edgeColor.rgb * c.a, edge);
 	return vec4(result * mask, c.a * mask);
 }`, {
-	progress:  { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	angle:     { type: 'float', default: 0,   min: 0, max: 360, animatable: true },
-	softness:  { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true },
-	edgeWidth: { type: 'float', default: 0,    min: 0, max: 0.5, animatable: true },
+	progress:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	angle:     { type: 'float', default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	softness:  { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	edgeWidth: { type: 'float', default: 0,    min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
 	edgeColor: { type: 'color', default: '#ffffff' },
 	invert:    { type: 'bool',  default: false },
 });
@@ -250,13 +256,16 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	if (edgeWidth > 0.0) {
 		edge = exp(-pow(diff / edgeWidth, 2.0)) * edgeColor.a;
 	}
-	vec3 result = mix(c.rgb, edgeColor.rgb, edge);
+	// Premultiply edge by c.a so the glow only paints where content exists —
+	// otherwise transparent regions of the layer pick up white edge pixels
+	// with alpha=0, which compositors render as visible white blobs.
+	vec3 result = mix(c.rgb, edgeColor.rgb * c.a, edge);
 	return vec4(result * mask, c.a * mask);
 }`, {
-	progress:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	noiseScale: { type: 'float', default: 8,    min: 0.5, max: 64, animatable: true },
-	softness:   { type: 'float', default: 0.05, min: 0.0001, max: 1, animatable: true },
-	edgeWidth:  { type: 'float', default: 0.05, min: 0, max: 0.5, animatable: true },
+	progress:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	noiseScale: { type: 'float', default: 8,    min: 0.5, max: 64, animatable: true, fieldConfig: { step: 0.5 } },
+	softness:   { type: 'float', default: 0.05, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	edgeWidth:  { type: 'float', default: 0.05, min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
 	edgeColor:  { type: 'color', default: '#ffffff' },
 	invert:     { type: 'bool',  default: false },
 });
@@ -274,7 +283,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	int axis = int(u_axis);
 	vec2 disp = vec2(0.0);
 	if (mode == 0) {
-		vec2 p = uv * scale;
+		// Slow continuous drift on the noise field so the displacement evolves
+		// each frame instead of locking the same pattern for the whole clip.
+		vec2 p = uv * scale + vec2(u_time * 0.35, -u_time * 0.27);
 		disp = vec2(fbm(p) - 0.5, fbm(p + vec2(13.7, 91.3)) - 0.5) * 2.0 * noiseStr;
 		if (angle != 0.0) disp = rotate2d(angle) * disp;
 	} else if (mode == 1) {
@@ -292,12 +303,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 sUv = uv + disp * amount;
 	return texture2D(tex, clamp(sUv, 0.0, 1.0));
 }`, {
-	amount:         { type: 'float',  default: 0.05, min: 0, max: 1, animatable: true },
-	scale:          { type: 'float',  default: 4,    min: 0.001, max: 64, animatable: true },
-	angle:          { type: 'float',  default: 0,    min: 0, max: 360, animatable: true },
-	noiseStrength:  { type: 'float',  default: 1,    min: 0, max: 4, animatable: true },
-	mode:           { type: 'option', default: 'noise', options: ['noise', 'waves', 'swirl'] },
-	axis:           { type: 'option', default: 'both',  options: ['x', 'y', 'both'] },
+	amount:         { type: 'float',  default: 0.05, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	scale:          { type: 'float',  default: 4,    min: 0.001, max: 64, animatable: true, fieldConfig: { step: 0.5 } },
+	angle:          { type: 'float',  default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	noiseStrength:  { type: 'float',  default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	mode:           { type: 'option', default: 'noise', fieldConfig: { options: { noise: 'Noise', waves: 'Waves', swirl: 'Swirl' } } },
+	axis:           { type: 'option', default: 'both',  fieldConfig: { options: { x: 'X', y: 'Y', both: 'Both' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -318,12 +329,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	newD.x *= resolution.y / resolution.x;
 	return sampleEdge(tex, center + newD, edgeMode);
 }`, {
-	distortion: { type: 'float',  default: 0.3, min: -1, max: 1, animatable: true },
-	centerX:    { type: 'float',  default: 0.5, min: 0,  max: 1, animatable: true },
-	centerY:    { type: 'float',  default: 0.5, min: 0,  max: 1, animatable: true },
-	zoom:       { type: 'float',  default: 1,   min: 0.1, max: 4, animatable: true },
-	curve:      { type: 'float',  default: 2,   min: 0.5, max: 6, animatable: true },
-	edgeMode:   { type: 'option', default: 'clamp', options: ['clamp', 'transparent', 'mirror'] },
+	distortion: { type: 'float',  default: 0.3, min: -1, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:    { type: 'float',  default: 0.5, min: 0,  max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:    { type: 'float',  default: 0.5, min: 0,  max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	zoom:       { type: 'float',  default: 1,   min: 0.1, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	curve:      { type: 'float',  default: 2,   min: 0.5, max: 6, animatable: true, fieldConfig: { step: 0.1 } },
+	edgeMode:   { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -347,12 +358,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	newD.x *= resolution.y / resolution.x;
 	return sampleEdge(tex, center + newD, edgeMode);
 }`, {
-	strength: { type: 'float',  default: 0.5, min: -1.5, max: 1.5, animatable: true },
-	centerX:  { type: 'float',  default: 0.5, min: 0,    max: 1,   animatable: true },
-	centerY:  { type: 'float',  default: 0.5, min: 0,    max: 1,   animatable: true },
-	radius:   { type: 'float',  default: 0.5, min: 0.01, max: 2,   animatable: true },
-	zoom:     { type: 'float',  default: 1,   min: 0.1,  max: 4,   animatable: true },
-	edgeMode: { type: 'option', default: 'clamp', options: ['clamp', 'transparent', 'mirror'] },
+	strength: { type: 'float',  default: 0.5, min: -1.5, max: 1.5, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:  { type: 'float',  default: 0.5, min: 0,    max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:  { type: 'float',  default: 0.5, min: 0,    max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
+	radius:   { type: 'float',  default: 0.5, min: 0.01, max: 2,   animatable: true, fieldConfig: { step: 0.01 } },
+	zoom:     { type: 'float',  default: 1,   min: 0.1,  max: 4,   animatable: true, fieldConfig: { step: 0.05 } },
+	edgeMode: { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -421,12 +432,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	return vec4(result, max(orig.a, glow.a));
 }` },
 ], {
-	intensity: { type: 'float',  default: 1,    min: 0, max: 4, animatable: true },
-	radius:    { type: 'float',  default: 12,   min: 0, max: 200, animatable: true },
-	threshold: { type: 'float',  default: 0.6,  min: 0, max: 1, animatable: true },
+	intensity: { type: 'float',  default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	radius:    { type: 'float',  default: 0.6,  min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	threshold: { type: 'float',  default: 0.6,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	color:     { type: 'color',  default: '#ffffff' },
-	source:    { type: 'option', default: 'alpha', options: ['alpha', 'brightness'] },
-	blendMode: { type: 'option', default: 'screen', options: ['add', 'screen', 'normal'] },
+	source:    { type: 'option', default: 'alpha', fieldConfig: { options: { alpha: 'Alpha', brightness: 'Brightness' } } },
+	blendMode: { type: 'option', default: 'screen', fieldConfig: { options: { add: 'Add', screen: 'Screen', normal: 'Normal' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -457,11 +468,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	return vec4(result, orig.a);
 }` },
 ], {
-	threshold: { type: 'float',  default: 0.7,  min: 0, max: 1.5, animatable: true },
-	intensity: { type: 'float',  default: 0.8,  min: 0, max: 4, animatable: true },
-	radius:    { type: 'float',  default: 16,   min: 0, max: 200, animatable: true },
-	knee:      { type: 'float',  default: 0.1,  min: 0.0001, max: 1, animatable: true },
-	blendMode: { type: 'option', default: 'add', options: ['add', 'screen'] },
+	threshold: { type: 'float',  default: 0.7, min: 0, max: 1.5, animatable: true, fieldConfig: { step: 0.05 } },
+	intensity: { type: 'float',  default: 0.8, min: 0, max: 4,   animatable: true, fieldConfig: { step: 0.1 } },
+	radius:    { type: 'float',  default: 0.8, min: 0, max: 10,  animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	knee:      { type: 'float',  default: 0.1, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	blendMode: { type: 'option', default: 'add', fieldConfig: { options: { add: 'Add', screen: 'Screen' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -482,12 +493,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	col = pow(max(col, 0.0), vec3(1.0 / max(u_gamma, 0.0001)));
 	return vec4(col * c.a, c.a);
 }`, {
-	exposure:    { type: 'float', default: 0,   min: -4, max: 4, animatable: true },
-	contrast:    { type: 'float', default: 0,   min: -1, max: 2, animatable: true },
-	saturation:  { type: 'float', default: 0,   min: -1, max: 2, animatable: true },
-	temperature: { type: 'float', default: 0,   min: -2, max: 2, animatable: true },
-	tint:        { type: 'float', default: 0,   min: -2, max: 2, animatable: true },
-	gamma:       { type: 'float', default: 1,   min: 0.1, max: 4, animatable: true },
+	exposure:    { type: 'float', default: 0, min: -4, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	contrast:    { type: 'float', default: 0, min: -1, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	saturation:  { type: 'float', default: 0, min: -1, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	temperature: { type: 'float', default: 0, min: -2, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	tint:        { type: 'float', default: 0, min: -2, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	gamma:       { type: 'float', default: 1, min: 0.1, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -512,13 +523,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec3 result = mix(c.rgb, u_color.rgb * c.a, falloff * u_intensity * u_color.a);
 	return vec4(result, c.a);
 }`, {
-	intensity: { type: 'float',  default: 0.6, min: 0, max: 1, animatable: true },
-	radius:    { type: 'float',  default: 0.8, min: 0, max: 2, animatable: true },
-	softness:  { type: 'float',  default: 0.4, min: 0.0001, max: 2, animatable: true },
-	centerX:   { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:   { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
+	intensity: { type: 'float',  default: 0.6, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	radius:    { type: 'float',  default: 0.8, min: 0, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	softness:  { type: 'float',  default: 0.4, min: 0.0001, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	centerX:   { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:   { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	color:     { type: 'color',  default: '#000000' },
-	shape:     { type: 'option', default: 'circle', options: ['circle', 'ellipse', 'rectangle'] },
+	shape:     { type: 'option', default: 'circle', fieldConfig: { options: { circle: 'Circle', ellipse: 'Ellipse', rectangle: 'Rectangle' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -542,13 +553,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	else result = mix(c.rgb, u_color.rgb * c.a, band);
 	return vec4(result, c.a);
 }`, {
-	progress:  { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	angle:     { type: 'float',  default: 30,  min: 0, max: 360, animatable: true },
-	width:     { type: 'float',  default: 0.15, min: 0.001, max: 1, animatable: true },
-	softness:  { type: 'float',  default: 0.06, min: 0.0001, max: 1, animatable: true },
-	intensity: { type: 'float',  default: 1,   min: 0, max: 4, animatable: true },
+	progress:  { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	angle:     { type: 'float',  default: 30,   min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	width:     { type: 'float',  default: 0.15, min: 0.001, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	softness:  { type: 'float',  default: 0.06, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	intensity: { type: 'float',  default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
 	color:     { type: 'color',  default: '#ffffff' },
-	blendMode: { type: 'option', default: 'add', options: ['add', 'screen', 'normal'] },
+	blendMode: { type: 'option', default: 'add', fieldConfig: { options: { add: 'Add', screen: 'Screen', normal: 'Normal' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -564,21 +575,28 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float bandDist = abs(along - progress);
 	float band = 1.0 - smoothstep(u_bandWidth * 0.5, u_bandWidth * 0.5 + u_softness, bandDist);
 	vec2 perp = vec2(-dir.y, dir.x);
-	vec2 distort = perp * u_edgeDistortion * band * (hash21(uv * 50.0) - 0.5) * 2.0;
+	// Reseed the edge-distortion noise each frame so the scan band scintillates.
+	// mod() keeps the time offset bounded so 32-bit float precision in fract()
+	// stays stable at long timestamps.
+	float tFrame = floor(u_time * 60.0);
+	vec2 tOff = vec2(mod(tFrame * 53.17, 977.0), mod(tFrame * 71.93, 991.0));
+	vec2 distort = perp * u_edgeDistortion * band * (hash21(uv * 50.0 + tOff) - 0.5) * 2.0;
 	vec4 c = texture2D(tex, clamp(uv + distort, 0.0, 1.0));
 	float reveal = invert ? step(progress, along) : step(along, progress);
 	float softReveal = invert
 		? smoothstep(progress - u_softness, progress + u_softness, along)
 		: smoothstep(progress + u_softness, progress - u_softness, along);
-	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * band;
+	// Gate the additive glow by c.a so transparent regions don't pick up white
+	// edge contributions with alpha=0 (invalid premultiplied → visible blobs).
+	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * band * c.a;
 	return vec4(result, c.a * softReveal);
 }`, {
-	progress:       { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	angle:          { type: 'float', default: 0,   min: 0, max: 360, animatable: true },
-	bandWidth:      { type: 'float', default: 0.04, min: 0, max: 0.5, animatable: true },
-	softness:       { type: 'float', default: 0.01, min: 0.0001, max: 1, animatable: true },
-	edgeGlow:       { type: 'float', default: 1,    min: 0, max: 4, animatable: true },
-	edgeDistortion: { type: 'float', default: 0.005, min: 0, max: 0.1, animatable: true },
+	progress:       { type: 'float', default: 0.5,   min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	angle:          { type: 'float', default: 0,     min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	bandWidth:      { type: 'float', default: 0.04,  min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
+	softness:       { type: 'float', default: 0.01,  min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	edgeGlow:       { type: 'float', default: 1,     min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	edgeDistortion: { type: 'float', default: 0.005, min: 0, max: 0.1, animatable: true, fieldConfig: { step: 0.001 } },
 	invert:         { type: 'bool',  default: false },
 });
 
@@ -600,14 +618,16 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float diff = invert ? (dist - radius) : (radius - dist);
 	float mask = smoothstep(-u_softness, u_softness, diff);
 	float edge = exp(-pow((dist - radius) / max(u_softness * 1.5, 0.0001), 2.0));
-	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * edge;
+	// Gate the additive glow by c.a so transparent regions don't pick up white
+	// edge contributions with alpha=0 (invalid premultiplied → visible blobs).
+	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * edge * c.a;
 	return vec4(result, c.a * mask);
 }`, {
-	progress: { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	centerX:  { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:  { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	softness: { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true },
-	edgeGlow: { type: 'float', default: 0.5, min: 0, max: 4, animatable: true },
+	progress: { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	softness: { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	edgeGlow: { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
 	invert:   { type: 'bool',  default: false },
 });
 
@@ -637,12 +657,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return sum / max(wSum, 0.0001);
 }`, {
-	amount:        { type: 'float',  default: 50, min: 0, max: 400, animatable: true },
-	angle:         { type: 'float',  default: 0,  min: 0, max: 360, animatable: true },
-	samples:       { type: 'float',  default: 24, min: 2, max: 64, animatable: true },
-	highlightBias: { type: 'float',  default: 2,  min: 0, max: 10, animatable: true },
-	falloff:       { type: 'float',  default: 1,  min: 0, max: 4, animatable: true },
-	edgeMode:      { type: 'option', default: 'transparent', options: ['clamp', 'transparent', 'mirror'] },
+	amount:        { type: 'float',  default: 2.5, min: 0, max: 20, animatable: true, fieldConfig: { step: 0.1, unit: 'em' } },
+	angle:         { type: 'float',  default: 0,   min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	samples:       { type: 'float',  default: 24,  min: 2, max: 64, animatable: true, fieldConfig: { step: 1, integer: true } },
+	highlightBias: { type: 'float',  default: 2,   min: 0, max: 10, animatable: true, fieldConfig: { step: 0.1 } },
+	falloff:       { type: 'float',  default: 1,   min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	edgeMode:      { type: 'option', default: 'transparent', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -676,12 +696,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return sum / wSum;
 }`, {
-	amount:         { type: 'float',  default: 12, min: 0, max: 180, animatable: true },
-	centerX:        { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:        { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	samples:        { type: 'float',  default: 24, min: 2, max: 64, animatable: true },
-	radiusFalloff:  { type: 'float',  default: 0,  min: 0, max: 4, animatable: true },
-	direction:      { type: 'option', default: 'clockwise', options: ['clockwise', 'counterClockwise'] },
+	amount:         { type: 'float',  default: 12,  min: 0, max: 180, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	centerX:        { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:        { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	samples:        { type: 'float',  default: 24,  min: 2, max: 64, animatable: true, fieldConfig: { step: 1, integer: true } },
+	radiusFalloff:  { type: 'float',  default: 0,   min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
+	direction:      { type: 'option', default: 'clockwise', fieldConfig: { options: { clockwise: 'Clockwise', counterClockwise: 'Counter-Clockwise' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -711,12 +731,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	offset *= window;
 	return texture2D(tex, clamp(uv + offset, 0.0, 1.0));
 }`, {
-	amplitude: { type: 'float',  default: 0.02, min: 0, max: 0.5, animatable: true },
-	frequency: { type: 'float',  default: 4,    min: 0.1, max: 64, animatable: true },
-	angle:     { type: 'float',  default: 0,    min: 0, max: 360, animatable: true },
-	phase:     { type: 'float',  default: 0,    min: 0, max: 6.2832, animatable: true },
-	falloff:   { type: 'float',  default: 0,    min: 0, max: 1, animatable: true },
-	axis:      { type: 'option', default: 'both', options: ['x', 'y', 'both'] },
+	amplitude: { type: 'float',  default: 0.02, min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
+	frequency: { type: 'float',  default: 4,    min: 0.1, max: 64, animatable: true, fieldConfig: { step: 0.5 } },
+	angle:     { type: 'float',  default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	phase:     { type: 'float',  default: 0,    min: 0, max: 6.2832, animatable: true, fieldConfig: { step: 0.1, unit: 'rad' } },
+	falloff:   { type: 'float',  default: 0,    min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	axis:      { type: 'option', default: 'both', fieldConfig: { options: { x: 'X', y: 'Y', both: 'Both' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -738,13 +758,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 offset = dir * wave * u_amplitude * falloff;
 	return texture2D(tex, clamp(uv + offset, 0.0, 1.0));
 }`, {
-	centerX:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	centerY:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	amplitude: { type: 'float', default: 0.02, min: 0, max: 0.5, animatable: true },
-	frequency: { type: 'float', default: 8,    min: 0.1, max: 64, animatable: true },
-	decay:     { type: 'float', default: 4,    min: 0, max: 32, animatable: true },
-	radius:    { type: 'float', default: 0.5,  min: 0.001, max: 2, animatable: true },
-	phase:     { type: 'float', default: 0,    min: 0, max: 6.2832, animatable: true },
+	centerX:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	amplitude: { type: 'float', default: 0.02, min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
+	frequency: { type: 'float', default: 8,    min: 0.1, max: 64, animatable: true, fieldConfig: { step: 0.5 } },
+	decay:     { type: 'float', default: 4,    min: 0, max: 32, animatable: true, fieldConfig: { step: 0.5 } },
+	radius:    { type: 'float', default: 0.5,  min: 0.001, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	phase:     { type: 'float', default: 0,    min: 0, max: 6.2832, animatable: true, fieldConfig: { step: 0.1, unit: 'rad' } },
 });
 
 // ---------------------------------------------------------------------------
@@ -772,12 +792,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 offset = dir * push;
 	return texture2D(tex, clamp(uv + offset, 0.0, 1.0));
 }`, {
-	progress: { type: 'float', default: 0.5, min: 0, max: 2, animatable: true },
-	centerX:  { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:  { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	strength: { type: 'float', default: 0.06, min: 0, max: 1, animatable: true },
-	width:    { type: 'float', default: 0.08, min: 0.0001, max: 1, animatable: true },
-	softness: { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true },
+	progress: { type: 'float', default: 0.5,  min: 0, max: 2, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	strength: { type: 'float', default: 0.06, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	width:    { type: 'float', default: 0.08, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	softness: { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
 	invert:   { type: 'bool',  default: false },
 });
 
@@ -794,19 +814,25 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float vF = mix(1.0, smoothstep(0.0, 1.0, 1.0 - uv.y), verticalFalloff);
 	vec2 dir = vec2(cos(waveAngle), sin(waveAngle));
 	vec2 perp = vec2(-dir.y, dir.x);
+	// Continuous time drives the wave and noise field so the haze shimmers
+	// every frame instead of looking like a frozen still.
+	float t = u_time;
 	vec2 disp = vec2(0.0);
-	disp += dir * sin(dot(uv, perp) * waveScale * 20.0) * 0.5;
-	disp += perp * sin(dot(uv, dir) * waveScale * 17.0 + 1.0) * 0.3;
-	vec2 nd = vec2(fbm(uv * waveScale * 3.0), fbm(uv * waveScale * 3.0 + vec2(31.7, 23.1)));
+	disp += dir * sin(dot(uv, perp) * waveScale * 20.0 + t * 4.7) * 0.5;
+	disp += perp * sin(dot(uv, dir) * waveScale * 17.0 + 1.0 + t * 3.9) * 0.3;
+	vec2 nd = vec2(
+		fbm(uv * waveScale * 3.0 + vec2(t * 0.6, -t * 0.4)),
+		fbm(uv * waveScale * 3.0 + vec2(31.7 - t * 0.5, 23.1 + t * 0.7))
+	);
 	disp += (nd - 0.5) * 2.0 * noiseAmount;
 	disp *= intensity * vF * 0.01;
 	return texture2D(tex, clamp(uv + disp, 0.0, 1.0));
 }`, {
-	intensity:       { type: 'float', default: 1,    min: 0, max: 8, animatable: true },
-	waveScale:       { type: 'float', default: 1,    min: 0.001, max: 16, animatable: true },
-	waveAngle:       { type: 'float', default: 0,    min: 0, max: 360, animatable: true },
-	noiseAmount:     { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true },
-	verticalFalloff: { type: 'float', default: 0.7,  min: 0, max: 1, animatable: true },
+	intensity:       { type: 'float', default: 1,   min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	waveScale:       { type: 'float', default: 1,   min: 0.001, max: 16, animatable: true, fieldConfig: { step: 0.1 } },
+	waveAngle:       { type: 'float', default: 0,   min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	noiseAmount:     { type: 'float', default: 0.5, min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	verticalFalloff: { type: 'float', default: 0.7, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -853,7 +879,10 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	vec3 baseRgb = blurred.a > 0.0001 ? blurred.rgb / blurred.a : blurred.rgb;
 	vec3 tinted = mix(baseRgb, u_tintColor.rgb, u_tintAmount * u_tintColor.a);
-	float frost = u_frostAmount * (hash21(uv * 200.0) * 0.2 - 0.1);
+	// Per-frame seed makes the frost speckle alive (the underlying blur and
+	// fbm highlight stay frozen because they should scroll with the layer).
+	float tFrame = floor(u_time * 60.0);
+	float frost = u_frostAmount * (hash21(uv * 200.0 + vec2(tFrame * 53.17, tFrame * 71.93)) * 0.2 - 0.1);
 	tinted += vec3(frost);
 	float h = fbm(uv * 8.0);
 	float highlight = u_highlightAmount * smoothstep(0.55, 0.95, h);
@@ -861,11 +890,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	return vec4(tinted * blurred.a, blurred.a);
 }` },
 ], {
-	blurRadius:      { type: 'float', default: 16, min: 0, max: 200, animatable: true },
-	distortion:      { type: 'float', default: 0.5, min: 0, max: 4, animatable: true },
-	frostAmount:     { type: 'float', default: 0.3, min: 0, max: 1, animatable: true },
-	tintAmount:      { type: 'float', default: 0.15, min: 0, max: 1, animatable: true },
-	highlightAmount: { type: 'float', default: 0.1, min: 0, max: 1, animatable: true },
+	blurRadius:      { type: 'float', default: 0.8,  min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	distortion:      { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	frostAmount:     { type: 'float', default: 0.3,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	tintAmount:      { type: 'float', default: 0.15, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	highlightAmount: { type: 'float', default: 0.1,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	tintColor:       { type: 'color', default: '#ffffff' },
 });
 
@@ -898,11 +927,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	c.rgb += vec3(smoothstep(0.5, 1.0, edgeMag) * edgeStrength);
 	return c;
 }`, {
-	refractionAmount: { type: 'float', default: 1,    min: 0, max: 8, animatable: true },
-	roughness:        { type: 'float', default: 0.2,  min: 0, max: 4, animatable: true },
-	highlightAmount:  { type: 'float', default: 0.6,  min: 0, max: 4, animatable: true },
-	edgeStrength:     { type: 'float', default: 0.3,  min: 0, max: 4, animatable: true },
-	ior:              { type: 'float', default: 1.45, min: 0.5, max: 3, animatable: true },
+	refractionAmount: { type: 'float', default: 1,    min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	roughness:        { type: 'float', default: 0.2,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	highlightAmount:  { type: 'float', default: 0.6,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	edgeStrength:     { type: 'float', default: 0.3,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	ior:              { type: 'float', default: 1.45, min: 0.5, max: 3, animatable: true, fieldConfig: { step: 0.01 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -936,12 +965,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(col, a);
 }`, {
-	amount:        { type: 'float', default: 0.01, min: 0, max: 0.2, animatable: true },
-	angle:         { type: 'float', default: 0,    min: 0, max: 360, animatable: true },
-	spectrumWidth: { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true },
-	centerX:       { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	centerY:       { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	falloff:       { type: 'float', default: 1,    min: 0, max: 4, animatable: true },
+	amount:        { type: 'float', default: 0.01, min: 0, max: 0.2, animatable: true, fieldConfig: { step: 0.005 } },
+	angle:         { type: 'float', default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	spectrumWidth: { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:       { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:       { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	falloff:       { type: 'float', default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.1 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -958,7 +987,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float along = (axis == 0) ? uv.y : uv.x;
 	float sliceFloat = along * float(sliceCount);
 	float sliceIdx = floor(sliceFloat);
-	float r = hash21(vec2(sliceIdx, 7.31));
+	// Reseed slice offsets every frame so the glitch dances rather than freezes.
+	float tFrame = floor(u_time * 60.0);
+	float r = hash21(vec2(sliceIdx, 7.31 + tFrame * 0.93));
 	float perSlice = mix(1.0, r * 2.0 - 1.0, randomness) * offsetAmount;
 	float withinSlice = fract(sliceFloat);
 	if (gap > 0.0 && (withinSlice < gap * 0.5 || withinSlice > 1.0 - gap * 0.5)) {
@@ -969,12 +1000,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	else sUv.y += perSlice;
 	return sampleEdge(tex, sUv, edgeMode);
 }`, {
-	sliceCount:   { type: 'float',  default: 30,   min: 2, max: 256, animatable: true },
-	offsetAmount: { type: 'float',  default: 0.04, min: 0, max: 0.5, animatable: true },
-	gap:          { type: 'float',  default: 0,    min: 0, max: 1, animatable: true },
-	randomness:   { type: 'float',  default: 0.7,  min: 0, max: 1, animatable: true },
-	axis:         { type: 'option', default: 'horizontal', options: ['horizontal', 'vertical'] },
-	edgeMode:     { type: 'option', default: 'transparent', options: ['clamp', 'transparent', 'mirror'] },
+	sliceCount:   { type: 'float',  default: 30,   min: 2, max: 256, animatable: true, fieldConfig: { step: 1, integer: true } },
+	offsetAmount: { type: 'float',  default: 0.04, min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
+	gap:          { type: 'float',  default: 0,    min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	randomness:   { type: 'float',  default: 0.7,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	axis:         { type: 'option', default: 'horizontal', fieldConfig: { options: { horizontal: 'Horizontal', vertical: 'Vertical' } } },
+	edgeMode:     { type: 'option', default: 'transparent', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -990,9 +1021,22 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	bool hideBlocks = u_hideBlocks;
 	vec2 blocks = resolution / blockSize;
 	vec2 blockUv = floor(uv * blocks);
-	float r = hash21(blockUv);
-	float r2 = hash21(blockUv + vec2(7.31, 13.7));
-	if (r >= blockAmount) return texture2D(tex, uv);
+	// Reseed per frame so glitchy blocks change pattern rather than freeze.
+	// mod() keeps the time offset bounded — at large tFrame values the raw
+	// product overflows into the regime where 32-bit float fract() quantises
+	// into structured patterns (vertical stripes), so we wrap it.
+	float tFrame = floor(u_time * 60.0);
+	vec2 tOff1 = vec2(mod(tFrame * 53.17, 977.0), mod(tFrame * 71.93, 991.0));
+	vec2 tOff2 = vec2(mod(tFrame * 0.91 + 7.31, 983.0), mod(tFrame * 1.27 + 13.7, 997.0));
+	vec2 tOff3 = vec2(mod(tFrame * 1.71 + 31.7, 971.0), mod(tFrame * 2.13 + 47.3, 967.0));
+	// Three independent hashes: gate, x-offset, y-offset. Reusing the gate
+	// hash for x-offset biases visible blocks toward negative x (since the
+	// gate keeps only blocks with r < blockAmount), producing the
+	// vertical-stripe pattern.
+	float gate = hash21(blockUv + tOff1);
+	float r  = hash21(blockUv + tOff2);
+	float r2 = hash21(blockUv + tOff3);
+	if (gate >= blockAmount) return texture2D(tex, uv);
 	if (hideBlocks && r2 < 0.3) return vec4(0.0);
 	vec2 offset = (vec2(r, r2) - 0.5) * 2.0 * offsetAmount * randomness;
 	vec2 sUv = uv + offset;
@@ -1002,11 +1046,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float chB = texture2D(tex, clamp(sUv - vec2(colorShift, 0.0), 0.0, 1.0)).b;
 	return vec4(chR, chG, chB, a);
 }`, {
-	blockSize:    { type: 'float', default: 24,   min: 1, max: 256, animatable: true },
-	blockAmount:  { type: 'float', default: 0.3,  min: 0, max: 1, animatable: true },
-	offsetAmount: { type: 'float', default: 0.03, min: 0, max: 0.5, animatable: true },
-	colorShift:   { type: 'float', default: 0.005, min: 0, max: 0.1, animatable: true },
-	randomness:   { type: 'float', default: 1,    min: 0, max: 1, animatable: true },
+	blockSize:    { type: 'float', default: 1.25,  min: 0.05, max: 16, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	blockAmount:  { type: 'float', default: 0.3,   min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	offsetAmount: { type: 'float', default: 0.03,  min: 0, max: 0.5, animatable: true, fieldConfig: { step: 0.005 } },
+	colorShift:   { type: 'float', default: 0.005, min: 0, max: 0.1, animatable: true, fieldConfig: { step: 0.001 } },
+	randomness:   { type: 'float', default: 1,     min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	hideBlocks:   { type: 'bool',  default: false },
 });
 
@@ -1024,7 +1068,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 dir = vec2(cos(angle), sin(angle)) / resolution;
 	vec2 blocks = resolution / blockSize;
 	vec2 blockUv = floor(uv * blocks);
-	float r = hash21(blockUv);
+	// Per-frame reseed lets blocks decide a fresh smear length each frame
+	// rather than printing the same trail for the whole clip. mod() keeps the
+	// time offset bounded so hash21 stays well-distributed at long timestamps.
+	float tFrame = floor(u_time * 60.0);
+	vec2 tOff = vec2(mod(tFrame * 53.17, 977.0), mod(tFrame * 71.93, 991.0));
+	float r = hash21(blockUv + tOff);
 	float perSmear = mix(smearLength, smearLength * r, randomness);
 	if (mode == 1) {
 		vec2 snapped = blockUv / blocks + 0.5 / blocks;
@@ -1044,12 +1093,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec4 off = texture2D(tex, clamp(uv - dir * amount * perSmear, 0.0, 1.0));
 	return mix(c, off, randomness);
 }`, {
-	amount:       { type: 'float',  default: 80,   min: 0, max: 400, animatable: true },
-	blockSize:    { type: 'float',  default: 24,   min: 1, max: 256, animatable: true },
-	angle:        { type: 'float',  default: 0,    min: 0, max: 360, animatable: true },
-	smearLength:  { type: 'float',  default: 0.5,  min: 0, max: 4, animatable: true },
-	randomness:   { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true },
-	mode:         { type: 'option', default: 'streak', options: ['soft', 'blocky', 'streak'] },
+	amount:       { type: 'float',  default: 4.2,  min: 0, max: 25, animatable: true, fieldConfig: { step: 0.1, unit: 'em' } },
+	blockSize:    { type: 'float',  default: 1.25, min: 0.05, max: 16, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	angle:        { type: 'float',  default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	smearLength:  { type: 'float',  default: 0.5,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	randomness:   { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	mode:         { type: 'option', default: 'streak', fieldConfig: { options: { soft: 'Soft', blocky: 'Blocky', streak: 'Streak' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1058,10 +1107,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 registerEffect('vhsDistortion', `
 vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 sUv = uv;
-	float rowNoise = (valueNoise(vec2(uv.y * 80.0, 0.0)) - 0.5) * 2.0;
+	// Per-frame seed reshapes tracking jitter, tear positions and noise speckle
+	// so the VHS artifacts breathe instead of looking like a single still frame.
+	float tFrame = floor(u_time * 60.0);
+	float rowNoise = (valueNoise(vec2(uv.y * 80.0 + tFrame * 17.3, tFrame * 0.27)) - 0.5) * 2.0;
 	sUv.x += rowNoise * u_trackingAmount * 0.02;
 	float tearKey = floor(uv.y / max(u_tearSize, 0.0001));
-	float tearBand = step(1.0 - clamp(u_tearAmount, 0.0, 1.0), hash21(vec2(tearKey, 1.7)));
+	float tearBand = step(1.0 - clamp(u_tearAmount, 0.0, 1.0), hash21(vec2(tearKey, 1.7) + tFrame * 0.93));
 	sUv.x += tearBand * u_tearAmount * 0.1;
 	float bleed = u_colorBleed * 0.004;
 	float r = texture2D(tex, clamp(sUv + vec2(bleed, 0.0), 0.0, 1.0)).r;
@@ -1070,16 +1122,17 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float a = texture2D(tex, clamp(sUv, 0.0, 1.0)).a;
 	float scan = 0.5 + 0.5 * cos(uv.y * resolution.y * 3.1415926);
 	vec3 col = vec3(r, g, b) * mix(1.0, scan, clamp(u_scanlineIntensity, 0.0, 1.0));
-	float n = (hash21(uv * resolution) - 0.5) * 2.0;
+	vec2 nOff = vec2(mod(tFrame * 53.17, 977.0), mod(tFrame * 71.93, 991.0));
+	float n = (hash21(uv * resolution + nOff) - 0.5) * 2.0;
 	col += vec3(n) * u_noiseAmount * 0.1;
 	return vec4(col, a);
 }`, {
-	trackingAmount:    { type: 'float', default: 1,    min: 0, max: 8, animatable: true },
-	tearAmount:        { type: 'float', default: 0.3,  min: 0, max: 1, animatable: true },
-	tearSize:          { type: 'float', default: 0.05, min: 0.001, max: 1, animatable: true },
-	colorBleed:        { type: 'float', default: 1,    min: 0, max: 8, animatable: true },
-	noiseAmount:       { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true },
-	scanlineIntensity: { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true },
+	trackingAmount:    { type: 'float', default: 1,    min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	tearAmount:        { type: 'float', default: 0.3,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	tearSize:          { type: 'float', default: 0.05, min: 0.001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	colorBleed:        { type: 'float', default: 1,    min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	noiseAmount:       { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	scanlineIntensity: { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1100,9 +1153,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec4 orig = texture2D(tex, uv);
 	return mix(orig, pix, mixAmt);
 }`, {
-	pixelSize:           { type: 'float', default: 16, min: 1, max: 256, animatable: true },
-	pixelAspect:         { type: 'float', default: 1,  min: 0.1, max: 8, animatable: true },
-	mix:                 { type: 'float', default: 1,  min: 0, max: 1, animatable: true },
+	pixelSize:           { type: 'float', default: 0.8, min: 0.05, max: 16, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	pixelAspect:         { type: 'float', default: 1,   min: 0.1, max: 8, animatable: true, fieldConfig: { step: 0.05 } },
+	mix:                 { type: 'float', default: 1,   min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	snapToIntegerPixels: { type: 'bool',  default: false },
 });
 
@@ -1132,11 +1185,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec4 c = texture2D(tex, uv);
 	return vec4(c.rgb * mask, c.a * mask);
 }`, {
-	progress:   { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	cellSize:   { type: 'float',  default: 32,  min: 1, max: 256, animatable: true },
-	randomness: { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	softness:   { type: 'float',  default: 0.05, min: 0.0001, max: 1, animatable: true },
-	direction:  { type: 'option', default: 'left', options: ['left', 'right', 'top', 'bottom', 'random'] },
+	progress:   { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	cellSize:   { type: 'float',  default: 1.6,  min: 0.05, max: 16, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	randomness: { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	softness:   { type: 'float',  default: 0.05, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	direction:  { type: 'option', default: 'left', fieldConfig: { options: { left: 'Left', right: 'Right', top: 'Top', bottom: 'Bottom', random: 'Random' } } },
 	invert:     { type: 'bool',   default: false },
 });
 
@@ -1159,14 +1212,16 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float edgeT = clamp(diff / edgeWidth, 0.0, 1.0);
 	vec3 ember = mix(hotColor.rgb, burnColor.rgb, edgeT);
 	vec3 result = mix(ember * c.a, c.rgb, edgeT);
-	float ash = smoothstep(softness, -softness, diff) * ashAmount;
+	// Gate ash by c.a so transparent regions of the layer don't pick up ash
+	// pigment with alpha=0 (invalid premultiplied → visible blobs/banding).
+	float ash = smoothstep(softness, -softness, diff) * ashAmount * c.a;
 	return vec4(result + (vec3(0.04, 0.03, 0.03) - result) * ash, c.a * max(alphaMask, ash * 0.4));
 }`, {
-	progress:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true },
-	noiseScale: { type: 'float', default: 6,    min: 0.5, max: 64, animatable: true },
-	edgeWidth:  { type: 'float', default: 0.05, min: 0.0001, max: 1, animatable: true },
-	softness:   { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true },
-	ashAmount:  { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true },
+	progress:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	noiseScale: { type: 'float', default: 6,    min: 0.5, max: 64, animatable: true, fieldConfig: { step: 0.5 } },
+	edgeWidth:  { type: 'float', default: 0.05, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	softness:   { type: 'float', default: 0.02, min: 0.0001, max: 1, animatable: true, fieldConfig: { step: 0.005 } },
+	ashAmount:  { type: 'float', default: 0.4,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	burnColor:  { type: 'color', default: '#3a0a00' },
 	hotColor:   { type: 'color', default: '#ffb347' },
 });
@@ -1183,10 +1238,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	int blendMode = int(u_blendMode);
 	bool monochrome = u_monochrome;
 	vec2 grainCoord = uv * resolution / grainSize;
-	float n = hash21(grainCoord) * 2.0 - 1.0;
+	// Reseed every frame so the grain pattern animates at the playhead's
+	// frame rate (60Hz cap to avoid identical frames at >60fps timelines).
+	vec2 timeSeed = vec2(floor(u_time * 60.0) * 53.17, floor(u_time * 60.0) * 71.93);
+	float n = hash21(grainCoord + timeSeed) * 2.0 - 1.0;
 	vec3 noise = monochrome
 		? vec3(n)
-		: vec3(n, hash21(grainCoord + vec2(7.7, 11.3)) * 2.0 - 1.0, hash21(grainCoord + vec2(13.4, 19.8)) * 2.0 - 1.0);
+		: vec3(n, hash21(grainCoord + timeSeed + vec2(7.7, 11.3)) * 2.0 - 1.0, hash21(grainCoord + timeSeed + vec2(13.4, 19.8)) * 2.0 - 1.0);
 	float lum = c.a > 0.0001 ? luminance(c.rgb / c.a) : 0.0;
 	float resp = mix(1.0, 1.0 - abs(lum - 0.5) * 2.0, lumResp);
 	noise *= amount * resp;
@@ -1211,10 +1269,10 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(clamp(result, 0.0, 1.0) * c.a, c.a);
 }`, {
-	amount:            { type: 'float',  default: 0.2, min: 0, max: 1, animatable: true },
-	grainSize:         { type: 'float',  default: 1.5, min: 0.5, max: 16, animatable: true },
-	luminanceResponse: { type: 'float',  default: 0.5, min: 0, max: 1, animatable: true },
-	blendMode:         { type: 'option', default: 'overlay', options: ['overlay', 'softLight', 'add'] },
+	amount:            { type: 'float',  default: 0.2,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	grainSize:         { type: 'float',  default: 0.08, min: 0.02, max: 1, animatable: true, fieldConfig: { step: 0.01, unit: 'em' } },
+	luminanceResponse: { type: 'float',  default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	blendMode:         { type: 'option', default: 'overlay', fieldConfig: { options: { overlay: 'Overlay', softLight: 'Soft Light', add: 'Add' } } },
 	monochrome:        { type: 'bool',   default: true },
 });
 
@@ -1248,11 +1306,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return c;
 }`, {
-	scanlineCount:     { type: 'float', default: 240, min: 10, max: 1080, animatable: true },
-	scanlineIntensity: { type: 'float', default: 0.4, min: 0, max: 1, animatable: true },
-	rgbMaskAmount:     { type: 'float', default: 0.3, min: 0, max: 1, animatable: true },
-	curvature:         { type: 'float', default: 0.1, min: 0, max: 1, animatable: true },
-	brightnessRollOff: { type: 'float', default: 0.4, min: 0, max: 1, animatable: true },
+	scanlineCount:     { type: 'float', default: 240, min: 10, max: 1080, animatable: true, fieldConfig: { step: 1, integer: true } },
+	scanlineIntensity: { type: 'float', default: 0.4, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	rgbMaskAmount:     { type: 'float', default: 0.3, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	curvature:         { type: 'float', default: 0.1, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	brightnessRollOff: { type: 'float', default: 0.4, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	flicker:           { type: 'bool',  default: false },
 });
 
@@ -1273,10 +1331,10 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 }`, {
 	shadowColor:    { type: 'color', default: '#1a1a3a' },
 	highlightColor: { type: 'color', default: '#ffd966' },
-	contrast:       { type: 'float', default: 0,    min: -1, max: 2, animatable: true },
-	brightness:     { type: 'float', default: 0,    min: -1, max: 1, animatable: true },
-	midtoneBias:    { type: 'float', default: 0,    min: -1, max: 1, animatable: true },
-	mix:            { type: 'float', default: 1,    min: 0,  max: 1, animatable: true },
+	contrast:       { type: 'float', default: 0, min: -1, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	brightness:     { type: 'float', default: 0, min: -1, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	midtoneBias:    { type: 'float', default: 0, min: -1, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	mix:            { type: 'float', default: 1, min: 0,  max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1318,12 +1376,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(result, alpha);
 }`, {
-	dotSize:   { type: 'float',  default: 1,   min: 0.1, max: 2, animatable: true },
-	spacing:   { type: 'float',  default: 8,   min: 2, max: 64, animatable: true },
-	angle:     { type: 'float',  default: 30,  min: 0, max: 180, animatable: true },
-	threshold: { type: 'float',  default: 0,   min: -0.5, max: 0.5, animatable: true },
-	softness:  { type: 'float',  default: 0.5, min: 0.001, max: 4, animatable: true },
-	colorMode: { type: 'option', default: 'blackWhite', options: ['blackWhite', 'duotone', 'original'] },
+	dotSize:   { type: 'float',  default: 1,   min: 0.1, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	spacing:   { type: 'float',  default: 0.4, min: 0.1, max: 4, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	angle:     { type: 'float',  default: 30,  min: 0, max: 180, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	threshold: { type: 'float',  default: 0,   min: -0.5, max: 0.5, animatable: true, fieldConfig: { step: 0.01 } },
+	softness:  { type: 'float',  default: 0.5, min: 0.001, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	colorMode: { type: 'option', default: 'blackWhite', fieldConfig: { options: { blackWhite: 'Black & White', duotone: 'Duotone', original: 'Original' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1352,19 +1410,19 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	rays *= u_color.rgb * u_color.a;
 	return vec4(c.rgb + rays, c.a);
 }`, {
-	intensity: { type: 'float', default: 1.5, min: 0, max: 8, animatable: true },
-	length:    { type: 'float', default: 0.3, min: 0, max: 1, animatable: true },
-	centerX:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	threshold: { type: 'float', default: 0.7, min: 0, max: 1, animatable: true },
-	samples:   { type: 'float', default: 32,  min: 4, max: 64, animatable: true },
+	intensity: { type: 'float', default: 1.5, min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	length:    { type: 'float', default: 0.3, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerX:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	threshold: { type: 'float', default: 0.7, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	samples:   { type: 'float', default: 32,  min: 4, max: 64, animatable: true, fieldConfig: { step: 1, integer: true } },
 	color:     { type: 'color', default: '#ffffff' },
 });
 
 // ---------------------------------------------------------------------------
-// 39. God Rays — Crytek-style volumetric accumulation toward a light center.
+// 39. Volumetric Light — Crytek-style radial accumulation toward a light center.
 // ---------------------------------------------------------------------------
-registerEffect('godRays', `
+registerEffect('volumetricLight', `
 vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec4 c = texture2D(tex, uv);
 	vec2 center = vec2(u_centerX, u_centerY);
@@ -1387,13 +1445,13 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(c.rgb + rays * intensity / float(n), c.a);
 }`, {
-	intensity: { type: 'float', default: 1.5, min: 0, max: 8, animatable: true },
-	decay:     { type: 'float', default: 0.95, min: 0, max: 1, animatable: true },
-	density:   { type: 'float', default: 1,   min: 0, max: 4, animatable: true },
-	weight:    { type: 'float', default: 1,   min: 0, max: 4, animatable: true },
-	centerX:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	centerY:   { type: 'float', default: 0.5, min: 0, max: 1, animatable: true },
-	samples:   { type: 'float', default: 48,  min: 4, max: 100, animatable: true },
+	intensity: { type: 'float', default: 1.5,  min: 0, max: 8, animatable: true, fieldConfig: { step: 0.1 } },
+	decay:     { type: 'float', default: 0.95, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	density:   { type: 'float', default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	weight:    { type: 'float', default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	centerX:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	centerY:   { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	samples:   { type: 'float', default: 48,   min: 4, max: 100, animatable: true, fieldConfig: { step: 1, integer: true } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1431,12 +1489,12 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	return vec4(result, max(orig.a, glow.a));
 }` },
 ], {
-	strength:       { type: 'float',  default: 1,    min: 0, max: 4, animatable: true },
-	threshold:      { type: 'float',  default: 0.15, min: 0, max: 2, animatable: true },
-	radius:         { type: 'float',  default: 8,    min: 0, max: 100, animatable: true },
-	sampleDistance: { type: 'float',  default: 1,    min: 0.5, max: 8, animatable: true },
+	strength:       { type: 'float',  default: 1,    min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	threshold:      { type: 'float',  default: 0.15, min: 0, max: 2, animatable: true, fieldConfig: { step: 0.01 } },
+	radius:         { type: 'float',  default: 0.4,  min: 0, max: 5, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	sampleDistance: { type: 'float',  default: 0.05, min: 0.02, max: 0.5, animatable: true, fieldConfig: { step: 0.01, unit: 'em' } },
 	color:          { type: 'color',  default: '#ffffff' },
-	blendMode:      { type: 'option', default: 'screen', options: ['add', 'screen', 'normal'] },
+	blendMode:      { type: 'option', default: 'screen', fieldConfig: { options: { add: 'Add', screen: 'Screen', normal: 'Normal' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1486,16 +1544,16 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	}
 	return vec4(result, c.a);
 }`, {
-	amount:    { type: 'float',  default: 0.6, min: 0, max: 2, animatable: true },
-	scale:     { type: 'float',  default: 0.6, min: 0.01, max: 4, animatable: true },
-	softness:  { type: 'float',  default: 0.3, min: 0.0001, max: 2, animatable: true },
-	angle:     { type: 'float',  default: 30,  min: 0, max: 360, animatable: true },
-	positionX: { type: 'float',  default: 0.2, min: -0.5, max: 1.5, animatable: true },
-	positionY: { type: 'float',  default: 0.2, min: -0.5, max: 1.5, animatable: true },
+	amount:    { type: 'float',  default: 0.6, min: 0, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	scale:     { type: 'float',  default: 0.6, min: 0.01, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	softness:  { type: 'float',  default: 0.3, min: 0.0001, max: 2, animatable: true, fieldConfig: { step: 0.05 } },
+	angle:     { type: 'float',  default: 30,  min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
+	positionX: { type: 'float',  default: 0.2, min: -0.5, max: 1.5, animatable: true, fieldConfig: { step: 0.01 } },
+	positionY: { type: 'float',  default: 0.2, min: -0.5, max: 1.5, animatable: true, fieldConfig: { step: 0.01 } },
 	colorA:    { type: 'color',  default: '#ff8a3d' },
 	colorB:    { type: 'color',  default: '#ffd96b' },
-	blendMode: { type: 'option', default: 'screen', options: ['screen', 'add', 'softLight'] },
-	shape:     { type: 'option', default: 'organic', options: ['linear', 'radial', 'organic'] },
+	blendMode: { type: 'option', default: 'screen', fieldConfig: { options: { screen: 'Screen', add: 'Add', softLight: 'Soft Light' } } },
+	shape:     { type: 'option', default: 'organic', fieldConfig: { options: { linear: 'Linear', radial: 'Radial', organic: 'Organic' } } },
 });
 
 // ---------------------------------------------------------------------------
@@ -1508,5 +1566,5 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec3 base = c.rgb / c.a;
 	return vec4(mix(base, vec3(1.0) - base, u_amount) * c.a, c.a);
 }`, {
-	amount: { type: 'float', default: 1, min: 0, max: 1, animatable: true },
+	amount: { type: 'float', default: 1, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 });
