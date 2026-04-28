@@ -148,9 +148,19 @@ export default class LayerRasterizer {
 		this.keys.clear();
 	}
 
-	/** Classify the layer for this frame: 1 = direct draw, 3 = foreignObject. */
+	/**
+	 * Classify the layer for this frame: 1 = direct draw, 3 = foreignObject.
+	 *
+	 * Effect-bearing layers are NOT forced to tier 3 — `rasterizeDirect`
+	 * produces a project-sized surface that the WebGL effect compositor can
+	 * sample directly, so a fast-drawable layer with effects still gets to
+	 * skip the SVG encode/decode while having its effects applied downstream.
+	 * The composite step (in `BrowserRenderer.captureFrame` /
+	 * `compositeLayerInto`) is responsible for piping the surface through the
+	 * effect pipeline whenever `resolveEffectsForProps` returns a non-empty
+	 * list (catches both declared effects and transition-injected ones).
+	 */
 	pickRasterTier(layer: RuntimeBaseLayer, props: Record<string, any>): 1 | 3 {
-		if (layer.hasEffects) return 3;
 		if (!DIRECT_DRAWABLE_TYPES.has(layer.json.type)) return 3;
 		const dims = (layer as any).dimensions as [number, number] | undefined;
 		if (!dims || !dims[0] || !dims[1]) return 3;
@@ -169,11 +179,16 @@ export default class LayerRasterizer {
 		const surface = this.getSurface(id);
 
 		if (layer.cacheable) {
-			// Effect-param dot-paths are consumed by the WebGL compositor, not
-			// by CSS, so they don't affect the rasterized bitmap — excluding
-			// them from the cache key lets an animated effect param reuse the
-			// same bitmap across frames.
-			const key = JSON.stringify(props, (k, v) => k.startsWith('effects.') ? undefined : v);
+			// Effect-param dot-paths and the transition-injected `__effects`
+			// sentinel are both consumed by the WebGL compositor downstream,
+			// not by CSS — so they don't affect the rasterized bitmap.
+			// Excluding them from the cache key lets the rasterizer reuse the
+			// same bitmap across the transition window when only the WebGL
+			// pipeline is changing (e.g. `noiseDissolve`, `wipeReveal`,
+			// `scanReveal` — pure-effect transitions that don't touch CSS).
+			const key = JSON.stringify(props, (k, v) =>
+				(k.startsWith('effects.') || k === '__effects') ? undefined : v
+			);
 			if (this.keys.get(id) === key) return surface;
 			this.keys.set(id, key);
 		}
