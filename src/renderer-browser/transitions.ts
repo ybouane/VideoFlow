@@ -31,6 +31,16 @@
  */
 
 import type { Easing } from '@videoflow/core/types';
+import type { EffectParamUnit } from './effects.js';
+
+/**
+ * Per-call context handed to a transition function. Allows presets to derive
+ * deterministic per-layer randomness without colliding across layers.
+ */
+export type TransitionContext = {
+	/** Stable seed string for deterministic randomness. Currently the layer's id. */
+	seed: string;
+};
 
 /**
  * A transition implementation.
@@ -39,24 +49,89 @@ import type { Easing } from '@videoflow/core/types';
  * - `properties` — the layer's resolved, unit-ized properties at this frame.
  *                  Mutate in place or return a new object; either works.
  * - `params`     — free-form per-preset parameters from `LayerTransitionJSON.params`.
+ * - `context`    — per-call context (e.g. seed for deterministic randomness).
  */
 export type TransitionFn = (
 	p: number,
 	properties: Record<string, any>,
 	params: Record<string, any>,
+	context: TransitionContext,
 ) => Record<string, any>;
+
+/**
+ * UI control kinds for a transition param. Transitions are pure JS (no GLSL
+ * types), so this is the only `type` an editor needs.
+ */
+export type TransitionParamFieldType = 'number' | 'toggle' | 'option' | 'color' | 'text';
+
+/**
+ * UI-visible spec for a single key in a transition's `params` map.
+ *
+ * Editors read this to render the right input control. Mirrors
+ * `EffectParamDefinition` but flat: every UI hint lives at the top level
+ * (no nested `fieldConfig`), and `name` carries the editor-visible label.
+ *
+ * `type` selects the control kind; `step` / `integer` / `options` / `unit`
+ * refine it. `unit: 'em'` is documentation only here — transitions don't
+ * resolve em → px (the effects they inject do that themselves).
+ */
+export type TransitionParamDefinition = {
+	/** Human-readable label shown in the editor. */
+	name: string;
+	/** UI control kind — drives the input widget the editor renders. */
+	type: TransitionParamFieldType;
+	/** Default value when the layer's transition spec omits the param. */
+	default: number | boolean | string;
+	/** Inclusive minimum (numeric params). */
+	min?: number;
+	/** Inclusive maximum (numeric params). */
+	max?: number;
+	/** Numeric step (e.g. `0.01` for fractions, `1` for integer counts). */
+	step?: number;
+	/** Force integer numeric input (rounds in the editor). */
+	integer?: boolean;
+	/**
+	 * For `option`-typed params: ordered map of value → display label. Insertion
+	 * order is the canonical order shown in the editor.
+	 */
+	options?: Record<string, string>;
+	/** Unit suffix shown next to the input (`'em'`, `'%'`, `'deg'`, `'rad'`). */
+	unit?: EffectParamUnit;
+};
 
 /** Full transition entry as stored in the registry. */
 export type TransitionDefinition = {
 	fn: TransitionFn;
 	/** Easing applied to `p` when the layer does not specify one. */
 	defaultEasing: Easing;
+	/**
+	 * Whether this transition pushes synthetic effect entries onto
+	 * `properties.__effects` so the renderer composites the layer through the
+	 * WebGL effect pipeline during the transition window. The renderer reads
+	 * this flag to keep the per-layer effect overlay mounted for the layer's
+	 * entire lifetime, not just the moments when an effect is actually active.
+	 */
+	injectsEffects: boolean;
+	/** UI metadata for the editor's transition param fields. Keyed by param name. */
+	fieldsConfig: Record<string, TransitionParamDefinition>;
 };
 
 /** Options accepted by {@link registerTransition}. */
 export type RegisterTransitionOptions = {
 	/** Default easing applied to `p` when the layer does not specify one. Defaults to `'linear'`. */
 	defaultEasing?: Easing;
+	/**
+	 * Set to `true` if this preset injects WebGL effect entries into
+	 * `properties.__effects`. Used by the renderer to mount the effect
+	 * overlay for the layer's whole lifetime even when the layer has no
+	 * declared effects.
+	 */
+	injectsEffects?: boolean;
+	/**
+	 * Editor UI metadata for each entry in the layer's `params` map. Keyed by
+	 * param name. The renderer doesn't read it — only editors do.
+	 */
+	fieldsConfig?: Record<string, TransitionParamDefinition>;
 };
 
 const registry: Map<string, TransitionDefinition> = new Map();
@@ -76,6 +151,8 @@ export function registerTransition(
 	registry.set(name, {
 		fn,
 		defaultEasing: options.defaultEasing ?? 'linear',
+		injectsEffects: options.injectsEffects ?? false,
+		fieldsConfig: options.fieldsConfig ?? {},
 	});
 }
 

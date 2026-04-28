@@ -52,6 +52,7 @@ export interface IGroupAwareRenderer extends ILayerRenderer {
 	compositeLayerInto?(
 		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
 		layer: RuntimeBaseLayer,
+		frame?: number,
 	): Promise<void>;
 	getVirtualLayerHost?(): Node;
 }
@@ -253,7 +254,7 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 				for (const child of this.children) {
 					if (!child.lastAppliedProps) continue;
 					if (child.json.settings.enabled === false) continue;
-					await r.compositeLayerInto(ctx, child);
+					await r.compositeLayerInto(ctx, child, frame);
 				}
 			}
 		}

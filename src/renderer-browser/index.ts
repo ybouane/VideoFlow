@@ -33,15 +33,21 @@ export {
 	type TransitionFn,
 	type TransitionDefinition,
 	type RegisterTransitionOptions,
+	type TransitionParamDefinition,
 } from './transitions.js';
 
 export {
 	registerEffect,
 	getEffect,
 	listEffects,
+	convertParamValue,
+	resolveOptionIndex,
 	type EffectDefinition,
 	type EffectParamDefinition,
 	type EffectParamType,
+	type EffectParamFieldType,
+	type EffectParamFieldConfig,
+	type EffectParamUnit,
 } from './effects.js';
 
 export { default as LayerRasterizer } from './LayerRasterizer.js';

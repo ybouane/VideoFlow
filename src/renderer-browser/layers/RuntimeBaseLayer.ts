@@ -86,9 +86,20 @@ export default class RuntimeBaseLayer {
 	 */
 	get cacheable(): boolean { return true; }
 
-	/** Whether this layer has any *enabled* registered effects attached. */
+	/**
+	 * Whether this layer has any *enabled* registered effects attached, OR a
+	 * transition that injects synthetic effect entries during its window.
+	 * Returns sticky-true for the layer's whole lifetime when an injecting
+	 * transition is configured, so the per-layer effect overlay stays mounted
+	 * even when the layer is temporarily at rest.
+	 */
 	get hasEffects(): boolean {
-		return !!this.json.effects && this.json.effects.some(e => e.enabled !== false);
+		if (this.json.effects && this.json.effects.some(e => e.enabled !== false)) return true;
+		const tIn = this.json.transitionIn;
+		if (tIn && getTransitionDefinition(tIn.transition)?.injectsEffects) return true;
+		const tOut = this.json.transitionOut;
+		if (tOut && getTransitionDefinition(tOut.transition)?.injectsEffects) return true;
+		return false;
 	}
 
 	// -- Timing helpers -----------------------------------------------------
@@ -234,6 +245,8 @@ export default class RuntimeBaseLayer {
 
 		const { pIn, pOut } = this.getTransitionProgress(frame);
 
+		const ctx = { seed: this.json.id };
+
 		// In-window: pIn ∈ [-1, 0). Ease the progress portion (0..1) then
 		// shift back into the signed range.
 		if (tIn && pIn < 0) {
@@ -241,7 +254,7 @@ export default class RuntimeBaseLayer {
 			if (def) {
 				const easing = tIn.easing ?? def.defaultEasing;
 				const pEased = -1 + this.applyEasing(pIn + 1, easing);
-				props = def.fn(pEased, props, tIn.params ?? {}) ?? props;
+				props = def.fn(pEased, props, tIn.params ?? {}, ctx) ?? props;
 			}
 		}
 		// Out-window: pOut ∈ (0, 1]. Ease directly.
@@ -250,7 +263,7 @@ export default class RuntimeBaseLayer {
 			if (def) {
 				const easing = tOut.easing ?? def.defaultEasing;
 				const pEased = this.applyEasing(pOut, easing);
-				props = def.fn(pEased, props, tOut.params ?? {}) ?? props;
+				props = def.fn(pEased, props, tOut.params ?? {}, ctx) ?? props;
 			}
 		}
 		return props;
@@ -327,8 +340,7 @@ export default class RuntimeBaseLayer {
 	 * the effect's creation-time declaration.
 	 */
 	resolveEffectsForProps(props: Record<string, any> | null | undefined): LayerEffectJSON[] {
-		const declared = this.json.effects;
-		if (!declared || declared.length === 0) return [];
+		const declared = this.json.effects ?? [];
 		// Clone each entry so we never mutate the compiled JSON. Disabled
 		// entries are dropped here — both renderers consume this list and so
 		// transparently respect `enabled: false`.
@@ -338,6 +350,23 @@ export default class RuntimeBaseLayer {
 				effect: e.effect,
 				params: { ...(e.params ?? {}) },
 			}));
+
+		// Append transition-injected effects (sentinel `__effects` array on
+		// props). Transitions add these in `applyTransitions` so the renderer
+		// composites the layer through the WebGL pipeline during the
+		// transition window without the user having to declare effects.
+		const injected = props && Array.isArray(props.__effects) ? props.__effects : null;
+		if (injected) {
+			for (const e of injected) {
+				if (!e || typeof e.effect !== 'string') continue;
+				resolved.push({
+					effect: e.effect,
+					params: { ...(e.params ?? {}) },
+				});
+			}
+		}
+
+		if (resolved.length === 0) return [];
 		if (!props) return resolved;
 
 		// Index the n-th occurrence of each effect name so [idx] lookups
@@ -656,6 +685,9 @@ export default class RuntimeBaseLayer {
 		}
 
 		for (const prop of Object.keys(props)) {
+			// Sentinel keys (e.g. `__effects` from transitions) are consumed
+			// elsewhere and never touch the DOM.
+			if (prop.startsWith('__')) continue;
 			// Effect param dot-paths never drive CSS — they're consumed by the
 			// WebGL compositor in `resolveEffectsForProps`.
 			if (EFFECT_PARAM_PATH_RE.test(prop)) continue;

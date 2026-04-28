@@ -1,161 +1,809 @@
 /**
- * Built-in transition presets.
+ * Built-in transition presets — a curated, high-quality library of 20 entry
+ * patterns that double as exits.
  *
- * Every preset receives a *signed* progress `p ∈ [-1, +1]`:
+ * **Signed-progress contract** (see `../transitions.ts`):
  *
- * - `p = -1` — start of the `transitionIn` window
- * - `p =  0` — layer at rest (must be a no-op)
- * - `p = +1` — end of the `transitionOut` window
+ *   p = -1 → start of `transitionIn` window (layer "fully transformed", hidden)
+ *   p =  0 → at rest (preset must be a no-op)
+ *   p = +1 → end of `transitionOut` window (layer "fully transformed" again)
  *
- * Presets fall into two flavours:
+ * Every preset reads `t = stage(p) = 1 - |p|` so the same body produces a
+ * symmetric mirror exit on its own — no separate transitionOut plumbing.
+ * Callers are still free to compose any in/out pair on a layer.
  *
- * - **Symmetric** (`fade`, `blur`, `zoom`) — use `|p|` so the layer does the
- *   same thing on enter and exit. `opacity *= (1 - |p|)` fades in AND out.
- *
- * - **Asymmetric / continuous** (`rise`, `fall`, `driftLeft`, `driftRight`)
- *   — use the signed `p` so the layer moves continuously through rest. A
- *   `rise` layer starts *below* its resting position (`p = -1`), moves up
- *   through rest (`p = 0`), and keeps rising *above* rest during exit
- *   (`p = +1`). One pattern of motion, no direction reversal.
- *
- * All presets multiply / add onto incoming property values so they compose
- * with keyframed animation. `p` is pre-eased by the renderer (per-direction
- * easing), so preset bodies stay linear in their math.
- *
- * These are registered on first import of `../transitions.js` consumers.
+ * Effect-using presets push synthetic entries onto `properties.__effects`
+ * (a sentinel array consumed by `RuntimeBaseLayer.resolveEffectsForProps`).
+ * Those presets register with `injectsEffects: true` so the renderer keeps
+ * the per-layer effect overlay mounted across the layer's lifetime.
  */
 
 import { registerTransition } from '../transitions.js';
 
-/** Extract numeric part of a value like `"4em"`, `4`, `"4"`. Returns the unit too. */
-function splitValue(v: any): [number, string] {
-	if (typeof v === 'number') return [v, ''];
-	const m = String(v).match(/^(-?[0-9.]+)([a-z%]*)$/i);
-	if (m) return [parseFloat(m[1]), m[2]];
-	return [parseFloat(String(v)) || 0, ''];
+// ===========================================================================
+// Helpers
+// ===========================================================================
+
+function clamp01(x: number): number { return x < 0 ? 0 : x > 1 ? 1 : x; }
+function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
+
+/**
+ * Stage / user-facing `t`: 0 = hidden / fully transformed, 1 = at rest.
+ * Same shape for both transition windows so a single body handles both.
+ */
+function stage(p: number): number { return 1 - Math.abs(p); }
+
+/** easeOutBack(0..1) — overshoots past 1 then settles. Used by the pop preset. */
+function easeOutBack(t: number, overshoot = 1.70158): number {
+	const c1 = overshoot;
+	const c3 = c1 + 1;
+	const x = t - 1;
+	return 1 + c3 * x * x * x + c1 * x * x;
 }
 
-function withUnit(n: number, unit: string): string | number {
-	return unit ? `${n}${unit}` : n;
+/** Read a numeric component out of any `number | "<n><unit>"` value. */
+function asNum(v: any): number {
+	if (typeof v === 'number') return v;
+	const m = String(v).match(/^(-?[0-9.]+)/);
+	return m ? parseFloat(m[1]) : 0;
 }
 
-// ---------------------------------------------------------------------------
-//  Symmetric visual presets — use |p|
-// ---------------------------------------------------------------------------
-
-// --- fade: opacity = 0 at |p| = 1, full at p = 0. -------------------------
-registerTransition('fade', (p, properties) => {
-	properties.opacity = Number(properties.opacity ?? 1) * (1 - Math.abs(p));
-	return properties;
-}, { defaultEasing: 'linear' });
-
-// --- zoom: scales through rest. `from` is the scale factor at |p| = 1. ---
-// params: { from?: number } — default 0.8 (pops in from small / out to small).
-// Use `from > 1` to pop in from large / out to large.
-registerTransition('zoom', (p, properties, params) => {
-	const from = typeof params.from === 'number' ? params.from : 0.8;
-	const factor = from + (1 - from) * (1 - Math.abs(p));
-	const cur = properties.scale;
-	if (Array.isArray(cur)) {
-		properties.scale = cur.map((v: any) => {
-			const n = Number(v);
-			return Number.isFinite(n) ? n * factor : v;
-		});
-	} else {
-		const n = Number(cur);
-		properties.scale = (Number.isFinite(n) ? n : 1) * factor;
+// ----- cyrb53 — 53-bit string hash with strong avalanche ------------------
+// FNV-1a was previously used here, but its weak diffusion on small near-
+// identical inputs (e.g. sequential layer ids `layer_0`, `layer_1`, …)
+// produced visibly clustered output — single-bit picks like spin direction
+// alternated or stuck in long runs across layer indices. cyrb53 mixes both
+// halves of state into 53 bits so even one-byte input changes scramble the
+// full output, removing those patterns.
+function cyrb53(str: string): number {
+	let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+	for (let i = 0; i < str.length; i++) {
+		const ch = str.charCodeAt(i);
+		h1 = Math.imul(h1 ^ ch, 2654435761);
+		h2 = Math.imul(h2 ^ ch, 1597334677);
 	}
-	return properties;
-}, { defaultEasing: 'easeOut' });
+	h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+	h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+	h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+	h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+	return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
 
-// --- blur: gaussian blur peaks at |p| = 1, zero at rest. -----------------
-// params: { amount?: number } — peak blur in em units. Default 4.
+/**
+ * Deterministic [0, 1) value derived from a layer seed plus a salt label
+ * (e.g. `'spinDirection'`). Use this to give per-layer randomized parameters
+ * (angle, direction, dissolve seed, etc.) that stay stable across frames.
+ */
+function seededRandom(seed: string, salt: string): number {
+	// 2^53 — full mantissa range so the result uses every available bit.
+	return cyrb53(`${seed}|${salt}`) / 9007199254740992;
+}
+
+/** Multiply scale (number or array) by `factor`. */
+function scaleMul(cur: any, factor: number): any {
+	if (factor === 1) return cur;
+	if (Array.isArray(cur)) return cur.map((v: any) => asNum(v) * factor);
+	return asNum(cur) * factor;
+}
+
+/**
+ * Add (dx, dy) (normalized fractions) onto `position`. Position arrays may
+ * carry a third Z component — left untouched.
+ */
+function addPosition(cur: any, dx: number, dy: number): any {
+	if (dx === 0 && dy === 0) return cur;
+	const arr = Array.isArray(cur) ? [...cur] : [0.5, 0.5];
+	while (arr.length < 2) arr.push(0.5);
+	arr[0] = asNum(arr[0]) + dx;
+	arr[1] = asNum(arr[1]) + dy;
+	return arr;
+}
+
+/**
+ * Add per-axis rotation deltas (in degrees) onto `cur`. Honors the renderer's
+ * CSS array convention (`array[0]=Z`, `array[1]=X`, `array[2]=Y`). Args are
+ * named in the natural (rx, ry, rz) order so callers don't have to remember
+ * the storage layout.
+ */
+function addRotationDelta(cur: any, drx: number, dry: number, drz: number): any {
+	if (drx === 0 && dry === 0 && drz === 0) return cur;
+	if (Array.isArray(cur)) {
+		const z = asNum(cur[0]) + drz;
+		const x = asNum(cur[1]) + drx;
+		const y = asNum(cur[2]) + dry;
+		return [`${z}deg`, `${x}deg`, `${y}deg`];
+	}
+	const curZ = asNum(cur);
+	if (drx !== 0 || dry !== 0) {
+		return [`${curZ + drz}deg`, `${drx}deg`, `${dry}deg`];
+	}
+	return `${curZ + drz}deg`;
+}
+
+/** Push a synthetic effect entry onto `properties.__effects` for the renderer to merge in. */
+function injectEffect(properties: Record<string, any>, effect: string, params: Record<string, any>): void {
+	if (!Array.isArray(properties.__effects)) properties.__effects = [];
+	properties.__effects.push({ effect, params });
+}
+
+/** Multiply existing opacity by `factor` (clamped to [0, 1]). */
+function multOpacity(properties: Record<string, any>, factor: number): void {
+	properties.opacity = clamp01(Number(properties.opacity ?? 1) * factor);
+}
+
+// ===========================================================================
+// 1. fadeIn — opacity 0 → 1.
+// ===========================================================================
+registerTransition('fadeIn', (p, properties) => {
+	multOpacity(properties, stage(p));
+	return properties;
+}, { defaultEasing: 'linear', fieldsConfig: {} });
+
+// ===========================================================================
+// 2. slideUpFade — start below rest, slide up while fading in.
+// params: { distance?: 0.10, fade?: true }
+// ===========================================================================
+registerTransition('slideUpFade', (p, properties, params) => {
+	const t = stage(p);
+	const distance = typeof params.distance === 'number' ? params.distance : 0.10;
+	properties.position = addPosition(properties.position, 0, distance * (1 - t));
+	if (params.fade !== false) multOpacity(properties, t);
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.10, min: 0, max: 1, step: 0.01 },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 3. slideLeftFade — start to the right of rest, slide left while fading in.
+// params: { distance?: 0.12, fade?: true }
+// ===========================================================================
+registerTransition('slideLeftFade', (p, properties, params) => {
+	const t = stage(p);
+	const distance = typeof params.distance === 'number' ? params.distance : 0.12;
+	properties.position = addPosition(properties.position, distance * (1 - t), 0);
+	if (params.fade !== false) multOpacity(properties, t);
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.12, min: 0, max: 1, step: 0.01 },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 4. zoomInFade — scale up from `from` to 1 while fading in.
+// params: { from?: 0.85, fade?: true }
+// ===========================================================================
+registerTransition('zoomInFade', (p, properties, params) => {
+	const t = stage(p);
+	const from = typeof params.from === 'number' ? params.from : 0.85;
+	const factor = lerp(from, 1, t);
+	properties.scale = scaleMul(properties.scale, factor);
+	if (params.fade !== false) multOpacity(properties, t);
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		from: { name: 'Start scale', type: 'number', default: 0.85, min: 0, max: 2, step: 0.01 },
+		fade: { name: 'Fade',        type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 5. overshootPop — springy scale-in past 1, settles to 1. Tiny tilt that
+// resolves to 0. Best on emoji / sticker / badge layers.
+// params: { from?: 0.4, overshoot?: 1.7, tilt?: 6 }
+// ===========================================================================
+registerTransition('overshootPop', (p, properties, params, ctx) => {
+	const t = stage(p);
+	const from = typeof params.from === 'number' ? params.from : 0.4;
+	const overshoot = typeof params.overshoot === 'number' ? params.overshoot : 1.70158;
+	const tiltDeg = typeof params.tilt === 'number' ? params.tilt : 6;
+
+	// Springy curve: settles to factor = 1 at t = 1, springs past mid-way.
+	const factor = lerp(from, 1, easeOutBack(t, overshoot));
+	properties.scale = scaleMul(properties.scale, factor);
+
+	// Random per-layer tilt direction (±) that fades to 0 by t = 1.
+	const dir = seededRandom(ctx.seed, 'overshootPop:tiltDir') < 0.5 ? -1 : 1;
+	properties.rotation = addRotationDelta(properties.rotation, 0, 0, dir * tiltDeg * (1 - t));
+	multOpacity(properties, clamp01(t * 1.5));
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	fieldsConfig: {
+		from:      { name: 'Start scale', type: 'number', default: 0.4,     min: 0, max: 2,  step: 0.01 },
+		overshoot: { name: 'Overshoot',   type: 'number', default: 1.70158, min: 0, max: 5,  step: 0.05 },
+		tilt:      { name: 'Tilt',        type: 'number', default: 6,       min: 0, max: 45, step: 1, unit: 'deg' },
+	},
+});
+
+// ===========================================================================
+// 6. blurResolve — heavy gaussian blur that resolves to sharp.
+// Uses the WebGL `gaussianBlur` effect (multi-pass, alpha-aware by default).
+// params: { amount?: 30, quality?: 8 }
+// ===========================================================================
+registerTransition('blurResolve', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	// `amount` is in em (matches gaussianBlur.radius unit). 1.5em ≈ 29px on a 1920px-wide project.
+	const amount = typeof params.amount === 'number' ? params.amount : 1.5;
+	const quality = typeof params.quality === 'number' ? params.quality : 8;
+	const radius = amount * (1 - t);
+	if (radius <= 0.02) return properties;
+	injectEffect(properties, 'gaussianBlur', {
+		radius,
+		quality,
+		direction: 'both',
+		edgeMode: 'transparent',
+		alphaAware: true,
+	});
+	multOpacity(properties, lerp(0.6, 1, t));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		amount:  { name: 'Amount',  type: 'number', default: 1.5, min: 0, max: 10, step: 0.1, unit: 'em' },
+		quality: { name: 'Quality', type: 'number', default: 8,   min: 1, max: 32, step: 1, integer: true },
+	},
+});
+
+// ===========================================================================
+// 7. motionBlurSlide — horizontal slide-in with directional motion blur that
+// matches the slide velocity.
+// params: { distance?: 0.18, blur?: 90, angle?: 0 }
+// ===========================================================================
+registerTransition('motionBlurSlide', (p, properties, params) => {
+	const t = stage(p);
+	const distance = typeof params.distance === 'number' ? params.distance : 0.18;
+	// `blur` is in em (matches motionBlur.amount unit). 4.5em ≈ 86px on 1920.
+	const blur = typeof params.blur === 'number' ? params.blur : 4.5;
+	const angle = typeof params.angle === 'number' ? params.angle : 0;
+
+	// Slide direction follows `angle` (0 = enter from right, 90 = from below).
+	const rad = angle * Math.PI / 180;
+	const dx = Math.cos(rad) * distance * (1 - t);
+	const dy = Math.sin(rad) * distance * (1 - t);
+	properties.position = addPosition(properties.position, dx, dy);
+
+	// Velocity-shaped blur — peaks mid-transition, fades to 0 at rest.
+	// shape(t) = 4t(1-t) (parabolic, max=1 at t=0.5, 0 at endpoints) — but we
+	// also want plenty of blur at the start, so blend with linear (1-t).
+	const shape = Math.max(1 - t, 4 * t * (1 - t));
+	const amt = blur * shape;
+	if (amt > 0.02) {
+		injectEffect(properties, 'motionBlur', {
+			amount: amt,
+			angle,
+			samples: 16,
+			centerBias: 0,
+			edgeMode: 'transparent',
+		});
+	}
+	multOpacity(properties, clamp01(t * 1.5));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.18, min: 0, max: 1,   step: 0.01 },
+		blur:     { name: 'Blur',     type: 'number', default: 4.5,  min: 0, max: 30,  step: 0.1, unit: 'em' },
+		angle:    { name: 'Angle',    type: 'number', default: 0,    min: 0, max: 360, step: 1, unit: 'deg' },
+	},
+});
+
+// ===========================================================================
+// 8. radialZoom — radial zoom blur from a center, resolves outward to sharp.
+// params: { amount?: 0.4, centerX?: 0.5, centerY?: 0.5, mode?: 'out' }
+// ===========================================================================
+registerTransition('radialZoom', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const amount = typeof params.amount === 'number' ? params.amount : 0.4;
+	const centerX = typeof params.centerX === 'number' ? params.centerX : 0.5;
+	const centerY = typeof params.centerY === 'number' ? params.centerY : 0.5;
+	const mode = (params.mode === 'in') ? 'in' : 'out';
+	const amt = amount * (1 - t);
+	if (amt > 0.001) {
+		injectEffect(properties, 'zoomBlur', {
+			amount: amt,
+			centerX,
+			centerY,
+			samples: 24,
+			falloff: 1,
+			mode,
+		});
+	}
+	multOpacity(properties, lerp(0.5, 1, t));
+	const startScale = mode === 'in' ? 1.1 : 0.92;
+	properties.scale = scaleMul(properties.scale, lerp(startScale, 1, t));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		amount:  { name: 'Amount',   type: 'number', default: 0.4, min: 0, max: 2, step: 0.05 },
+		centerX: { name: 'Center X', type: 'number', default: 0.5, min: 0, max: 1, step: 0.01 },
+		centerY: { name: 'Center Y', type: 'number', default: 0.5, min: 0, max: 1, step: 0.01 },
+		mode:    { name: 'Mode',     type: 'option', default: 'out', options: { in: 'Zoom In', out: 'Zoom Out' } },
+	},
+});
+
+// ===========================================================================
+// 9. rotate3dY — rotate around the Y axis (door-style swing) into rest.
+// params: { angle?: 75, fade?: true }
+// ===========================================================================
+registerTransition('rotate3dY', (p, properties, params, ctx) => {
+	const t = stage(p);
+	const angle = typeof params.angle === 'number' ? params.angle : 75;
+	// Pseudo-random per-layer direction so rows of layers don't all swing
+	// the same way unless the caller explicitly sets `direction`.
+	let dir = 1;
+	if (params.direction === 'left') dir = -1;
+	else if (params.direction === 'right') dir = 1;
+	else dir = seededRandom(ctx.seed, 'rotate3dY:dir') < 0.5 ? -1 : 1;
+	properties.rotation = addRotationDelta(properties.rotation, 0, dir * angle * (1 - t), 0);
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.4));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		angle:     { name: 'Angle',     type: 'number', default: 75,     min: 0, max: 180, step: 1, unit: 'deg' },
+		direction: { name: 'Direction', type: 'option', default: 'auto', options: { auto: 'Random', left: 'Left', right: 'Right' } },
+		fade:      { name: 'Fade',      type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 10. tilt3dUp — tilt forward around X axis (top edge moves toward camera).
+// params: { angle?: 60, lift?: 0.04, fade?: true }
+// ===========================================================================
+registerTransition('tilt3dUp', (p, properties, params) => {
+	const t = stage(p);
+	const angle = typeof params.angle === 'number' ? params.angle : 60;
+	const lift = typeof params.lift === 'number' ? params.lift : 0.04;
+	properties.rotation = addRotationDelta(properties.rotation, -angle * (1 - t), 0, 0);
+	properties.position = addPosition(properties.position, 0, lift * (1 - t));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.4));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		angle: { name: 'Angle', type: 'number', default: 60,   min: 0, max: 180, step: 1, unit: 'deg' },
+		lift:  { name: 'Lift',  type: 'number', default: 0.04, min: 0, max: 0.5, step: 0.01 },
+		fade:  { name: 'Fade',  type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 11. spinIn — spin around Z while scaling up. Direction is per-layer
+// random unless `direction` is set.
+// params: { angle?: 360, from?: 0.2, direction?: 'cw' | 'ccw' }
+// ===========================================================================
+registerTransition('spinIn', (p, properties, params, ctx) => {
+	const t = stage(p);
+	const angle = typeof params.angle === 'number' ? params.angle : 360;
+	const from = typeof params.from === 'number' ? params.from : 0.2;
+	let dir: number;
+	if (params.direction === 'cw') dir = 1;
+	else if (params.direction === 'ccw') dir = -1;
+	else dir = seededRandom(ctx.seed, 'spinIn:dir') < 0.5 ? -1 : 1;
+	properties.rotation = addRotationDelta(properties.rotation, 0, 0, dir * angle * (1 - t));
+	properties.scale = scaleMul(properties.scale, lerp(from, 1, t));
+	multOpacity(properties, clamp01(t * 1.5));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		angle:     { name: 'Angle',       type: 'number', default: 360,    min: 0, max: 1080, step: 1, unit: 'deg' },
+		from:      { name: 'Start scale', type: 'number', default: 0.2,    min: 0, max: 2,    step: 0.01 },
+		direction: { name: 'Direction',   type: 'option', default: 'auto', options: { auto: 'Random', cw: 'Clockwise', ccw: 'Counter-clockwise' } },
+	},
+});
+
+// ===========================================================================
+// 12. glitchResolve — heavy digital block + RGB split glitch resolves to clean.
+// Combines `digitalBlocks` + `rgbSplit`, both fading to 0 as t → 1.
+// params: { intensity?: 1, blockSize?: 24 }
+// ===========================================================================
+registerTransition('glitchResolve', (p, properties, params, ctx) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const intensity = typeof params.intensity === 'number' ? params.intensity : 1;
+	// `blockSize` is in em (matches digitalBlocks.blockSize unit). 1.25em ≈ 24px on 1920.
+	const blockSize = typeof params.blockSize === 'number' ? params.blockSize : 1.25;
+	const k = (1 - t) * intensity;
+
+	// Per-layer band offset so multiple glitching layers don't sync their bands.
+	const bandSize = lerp(0.04, 0.10, seededRandom(ctx.seed, 'glitchResolve:bandSize'));
+
+	injectEffect(properties, 'digitalBlocks', {
+		blockSize,
+		blockAmount: 0.5 * k,
+		offsetAmount: 0.05 * k,
+		colorShift: 0.012 * k,
+		randomness: 1,
+		hideBlocks: false,
+	});
+	injectEffect(properties, 'rgbSplit', {
+		amount: 0.012 * k,
+		bandSize,
+		bandOffset: 0.012 * k,
+		randomness: 1,
+		axis: 'horizontal',
+		preserveLuminance: false,
+	});
+	multOpacity(properties, lerp(0.6, 1, t));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		intensity: { name: 'Intensity',  type: 'number', default: 1,    min: 0, max: 2,  step: 0.05 },
+		blockSize: { name: 'Block size', type: 'number', default: 1.25, min: 0, max: 10, step: 0.05, unit: 'em' },
+	},
+});
+
+// ===========================================================================
+// 13. rgbSplitSnap — strong horizontal RGB split that snaps to clean. A small
+// scale overshoot adds the "snap-into-place" pop.
+// params: { amount?: 0.04, axis?: 'horizontal'|'vertical'|'both' }
+// ===========================================================================
+registerTransition('rgbSplitSnap', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const amount = typeof params.amount === 'number' ? params.amount : 0.04;
+	const axis = (params.axis === 'vertical' || params.axis === 'both') ? params.axis : 'horizontal';
+	const k = 1 - t;
+	injectEffect(properties, 'rgbSplit', {
+		amount: amount * k,
+		bandSize: 0.05,
+		bandOffset: amount * 0.5 * k,
+		randomness: 0.7,
+		axis,
+		preserveLuminance: false,
+	});
+	// Subtle scale snap: starts slightly larger, settles. easeOutBack flavour
+	// without re-easing the whole transition.
+	const scaleFactor = lerp(1.06, 1, easeOutBack(t, 1.2));
+	properties.scale = scaleMul(properties.scale, scaleFactor);
+	multOpacity(properties, clamp01(t * 1.4));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		amount: { name: 'Amount', type: 'number', default: 0.04,         min: 0, max: 0.5, step: 0.005 },
+		axis:   { name: 'Axis',   type: 'option', default: 'horizontal', options: { horizontal: 'Horizontal', vertical: 'Vertical', both: 'Both' } },
+	},
+});
+
+// ===========================================================================
+// 14. sliceAssemble — layer assembles from offset slices snapping into place.
+// params: { sliceCount?: 30, offset?: 0.18, axis?: 'horizontal'|'vertical' }
+// ===========================================================================
+registerTransition('sliceAssemble', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const sliceCount = typeof params.sliceCount === 'number' ? params.sliceCount : 30;
+	const offset = typeof params.offset === 'number' ? params.offset : 0.18;
+	const axis = (params.axis === 'vertical') ? 'vertical' : 'horizontal';
+	injectEffect(properties, 'sliceGlitch', {
+		sliceCount,
+		offsetAmount: offset * (1 - t),
+		gap: 0,
+		randomness: 1,
+		axis,
+		edgeMode: 'transparent',
+	});
+	multOpacity(properties, clamp01(t * 1.3));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		sliceCount: { name: 'Slice count', type: 'number', default: 30,           min: 2, max: 200, step: 1, integer: true },
+		offset:     { name: 'Offset',      type: 'number', default: 0.18,         min: 0, max: 1,   step: 0.01 },
+		axis:       { name: 'Axis',        type: 'option', default: 'horizontal', options: { horizontal: 'Horizontal', vertical: 'Vertical' } },
+	},
+});
+
+// ===========================================================================
+// 15. noiseDissolve — fbm-noise dissolve reveal, with a glowing edge band.
+// params: { noiseScale?: 8, edgeWidth?: 0.04, edgeColor?: '#ffffff', softness?: 0.04 }
+// ===========================================================================
+registerTransition('noiseDissolve', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const noiseScale = typeof params.noiseScale === 'number' ? params.noiseScale : 8;
+	const edgeWidth = typeof params.edgeWidth === 'number' ? params.edgeWidth : 0.04;
+	const softness = typeof params.softness === 'number' ? params.softness : 0.04;
+	const edgeColor = typeof params.edgeColor === 'string' ? params.edgeColor : '#ffffff';
+	injectEffect(properties, 'noiseDissolve', {
+		progress: t,
+		noiseScale,
+		softness,
+		edgeWidth,
+		edgeColor,
+		invert: false,
+	});
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	injectsEffects: true,
+	fieldsConfig: {
+		noiseScale: { name: 'Noise scale', type: 'number', default: 8,         min: 1, max: 64,  step: 0.5 },
+		edgeWidth:  { name: 'Edge width',  type: 'number', default: 0.04,      min: 0, max: 0.3, step: 0.005 },
+		softness:   { name: 'Softness',    type: 'number', default: 0.04,      min: 0, max: 0.3, step: 0.005 },
+		edgeColor:  { name: 'Edge color',  type: 'color',  default: '#ffffff' },
+	},
+});
+
+// ===========================================================================
+// 16. burnDissolve — fiery dissolve with hot embers and ash residue.
+// params: { noiseScale?: 6, edgeWidth?: 0.06, ashAmount?: 0.4,
+//           burnColor?: '#3a0a00', hotColor?: '#ffb347', softness?: 0.02 }
+// ===========================================================================
+registerTransition('burnDissolve', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const noiseScale = typeof params.noiseScale === 'number' ? params.noiseScale : 6;
+	const edgeWidth = typeof params.edgeWidth === 'number' ? params.edgeWidth : 0.06;
+	const softness = typeof params.softness === 'number' ? params.softness : 0.02;
+	const ashAmount = typeof params.ashAmount === 'number' ? params.ashAmount : 0.4;
+	const burnColor = typeof params.burnColor === 'string' ? params.burnColor : '#3a0a00';
+	const hotColor = typeof params.hotColor === 'string' ? params.hotColor : '#ffb347';
+	injectEffect(properties, 'burnDissolve', {
+		progress: t,
+		noiseScale,
+		edgeWidth,
+		softness,
+		ashAmount,
+		burnColor,
+		hotColor,
+	});
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	injectsEffects: true,
+	fieldsConfig: {
+		noiseScale: { name: 'Noise scale', type: 'number', default: 6,         min: 1, max: 64,  step: 0.5 },
+		edgeWidth:  { name: 'Edge width',  type: 'number', default: 0.06,      min: 0, max: 0.3, step: 0.005 },
+		ashAmount:  { name: 'Ash amount',  type: 'number', default: 0.4,       min: 0, max: 1,   step: 0.05 },
+		burnColor:  { name: 'Burn color',  type: 'color',  default: '#3a0a00' },
+		hotColor:   { name: 'Hot color',   type: 'color',  default: '#ffb347' },
+		softness:   { name: 'Softness',    type: 'number', default: 0.02,      min: 0, max: 0.3, step: 0.005 },
+	},
+});
+
+// ===========================================================================
+// 17. wipeReveal — linear wipe along an angle.
+// params: { angle?: 0, softness?: 0.03, edgeWidth?: 0.02, edgeColor?: '#ffffff' }
+// ===========================================================================
+registerTransition('wipeReveal', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const angle = typeof params.angle === 'number' ? params.angle : 0;
+	const softness = typeof params.softness === 'number' ? params.softness : 0.03;
+	const edgeWidth = typeof params.edgeWidth === 'number' ? params.edgeWidth : 0.02;
+	const edgeColor = typeof params.edgeColor === 'string' ? params.edgeColor : '#ffffff';
+	injectEffect(properties, 'wipeMask', {
+		progress: t,
+		angle,
+		softness,
+		edgeWidth,
+		edgeColor,
+		invert: false,
+	});
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	injectsEffects: true,
+	fieldsConfig: {
+		angle:     { name: 'Angle',      type: 'number', default: 0,         min: 0, max: 360, step: 1, unit: 'deg' },
+		softness:  { name: 'Softness',   type: 'number', default: 0.03,      min: 0, max: 0.3, step: 0.005 },
+		edgeWidth: { name: 'Edge width', type: 'number', default: 0.02,      min: 0, max: 0.3, step: 0.005 },
+		edgeColor: { name: 'Edge color', type: 'color',  default: '#ffffff' },
+	},
+});
+
+// ===========================================================================
+// 18. scanReveal — directional scanner reveal with edge glow + jitter.
+// params: { angle?: 0, bandWidth?: 0.05, softness?: 0.015,
+//           edgeGlow?: 1.2, edgeDistortion?: 0.006 }
+// ===========================================================================
+registerTransition('scanReveal', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const angle = typeof params.angle === 'number' ? params.angle : 0;
+	const bandWidth = typeof params.bandWidth === 'number' ? params.bandWidth : 0.05;
+	const softness = typeof params.softness === 'number' ? params.softness : 0.015;
+	const edgeGlow = typeof params.edgeGlow === 'number' ? params.edgeGlow : 1.2;
+	const edgeDistortion = typeof params.edgeDistortion === 'number' ? params.edgeDistortion : 0.006;
+	injectEffect(properties, 'scanReveal', {
+		progress: t,
+		angle,
+		bandWidth,
+		softness,
+		edgeGlow,
+		edgeDistortion,
+		invert: false,
+	});
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	injectsEffects: true,
+	fieldsConfig: {
+		angle:          { name: 'Angle',           type: 'number', default: 0,     min: 0, max: 360, step: 1, unit: 'deg' },
+		bandWidth:      { name: 'Band width',      type: 'number', default: 0.05,  min: 0, max: 0.5, step: 0.005 },
+		softness:       { name: 'Softness',        type: 'number', default: 0.015, min: 0, max: 0.3, step: 0.005 },
+		edgeGlow:       { name: 'Edge glow',       type: 'number', default: 1.2,   min: 0, max: 4,   step: 0.1 },
+		edgeDistortion: { name: 'Edge distortion', type: 'number', default: 0.006, min: 0, max: 0.1, step: 0.001 },
+	},
+});
+
+// ===========================================================================
+// 19. lightSweepReveal — wipe reveal with a glossy light band sweeping ahead.
+// Combines `wipeMask` (the actual reveal) and `lightSweep` (the gloss band).
+// params: { angle?: 30, bandWidth?: 0.18, sweepColor?: '#ffffff', intensity?: 1.4 }
+// ===========================================================================
+registerTransition('lightSweepReveal', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const angle = typeof params.angle === 'number' ? params.angle : 30;
+	const bandWidth = typeof params.bandWidth === 'number' ? params.bandWidth : 0.18;
+	const sweepColor = typeof params.sweepColor === 'string' ? params.sweepColor : '#ffffff';
+	const intensity = typeof params.intensity === 'number' ? params.intensity : 1.4;
+
+	injectEffect(properties, 'wipeMask', {
+		progress: t,
+		angle,
+		softness: 0.06,
+		edgeWidth: 0,
+		edgeColor: '#ffffff',
+		invert: false,
+	});
+	injectEffect(properties, 'lightSweep', {
+		progress: t,
+		angle,
+		width: bandWidth,
+		softness: 0.08,
+		intensity,
+		color: sweepColor,
+		blendMode: 'screen',
+	});
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	injectsEffects: true,
+	fieldsConfig: {
+		angle:      { name: 'Angle',       type: 'number', default: 30,        min: 0, max: 360, step: 1, unit: 'deg' },
+		bandWidth:  { name: 'Band width',  type: 'number', default: 0.18,      min: 0, max: 1,   step: 0.01 },
+		sweepColor: { name: 'Sweep color', type: 'color',  default: '#ffffff' },
+		intensity:  { name: 'Intensity',   type: 'number', default: 1.4,       min: 0, max: 4,   step: 0.1 },
+	},
+});
+
+// ===========================================================================
+// 20. lensSnap — strong fisheye bulge that settles to flat. Pairs nicely with
+// a tiny zoom snap so the layer "pops" into focus.
+// params: { strength?: 0.9, radius?: 0.5, zoom?: 1 }
+// ===========================================================================
+registerTransition('lensSnap', (p, properties, params) => {
+	const t = stage(p);
+	if (t >= 1) return properties;
+	const strength = typeof params.strength === 'number' ? params.strength : 0.9;
+	const radius = typeof params.radius === 'number' ? params.radius : 0.5;
+	const zoom = typeof params.zoom === 'number' ? params.zoom : 1;
+
+	injectEffect(properties, 'fisheye', {
+		strength: strength * (1 - t),
+		centerX: 0.5,
+		centerY: 0.5,
+		radius,
+		zoom: lerp(0.85, zoom, t),
+		edgeMode: 'transparent',
+	});
+	properties.scale = scaleMul(properties.scale, lerp(1.08, 1, t));
+	multOpacity(properties, clamp01(t * 1.4));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	injectsEffects: true,
+	fieldsConfig: {
+		strength: { name: 'Strength', type: 'number', default: 0.9, min: -2, max: 2, step: 0.05 },
+		radius:   { name: 'Radius',   type: 'number', default: 0.5, min: 0,  max: 2, step: 0.05 },
+		zoom:     { name: 'Zoom',     type: 'number', default: 1,   min: 0,  max: 4, step: 0.05 },
+	},
+});
+
+// ===========================================================================
+// Backwards-compatible aliases for the small set of legacy preset names that
+// existed before this rewrite. They forward to the closest new preset so old
+// project JSON keeps rendering. Prefer the new names in new work.
+// ===========================================================================
+// `fade` ≡ `fadeIn` (linear opacity 0 → 1, both directions).
+registerTransition('fade', (p, properties) => {
+	multOpacity(properties, stage(p));
+	return properties;
+}, { defaultEasing: 'linear', fieldsConfig: {} });
+
+// `zoom` — symmetric scale (preserves the legacy `from` semantics).
+registerTransition('zoom', (p, properties, params) => {
+	const t = stage(p);
+	const from = typeof params.from === 'number' ? params.from : 0.8;
+	properties.scale = scaleMul(properties.scale, lerp(from, 1, t));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		from: { name: 'Start scale', type: 'number', default: 0.8, min: 0, max: 2, step: 0.05 },
+	},
+});
+
+// `blur` — legacy CSS-blur preset (no WebGL, no effect injection).
 registerTransition('blur', (p, properties, params) => {
 	const amount = typeof params.amount === 'number' ? params.amount : 4;
 	const extra = amount * Math.abs(p);
-	const [n, u] = splitValue(properties.filterBlur ?? 0);
-	const unit = u || 'em';
-	properties.filterBlur = withUnit(n + extra, unit);
+	const cur = properties.filterBlur ?? '0em';
+	const m = String(cur).match(/^(-?[0-9.]+)([a-z%]*)$/i);
+	const n = m ? parseFloat(m[1]) : 0;
+	const u = (m && m[2]) ? m[2] : 'em';
+	properties.filterBlur = `${n + extra}${u}`;
 	return properties;
-}, { defaultEasing: 'easeOut' });
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		amount: { name: 'Amount', type: 'number', default: 4, min: 0, max: 40, step: 0.5 },
+	},
+});
 
-// ---------------------------------------------------------------------------
-//  Asymmetric / continuous motion presets — use signed p
-// ---------------------------------------------------------------------------
-
-/**
- * Build a continuous-motion preset that offsets `position` along one axis.
- *
- * The layer travels in a single direction throughout its lifetime:
- *   p = -1 → offset = +distance  (opposite side of the motion direction)
- *   p =  0 → offset = 0          (rest)
- *   p = +1 → offset = -distance  (motion-direction side)
- *
- * `(dx, dy)` is the unit direction of motion. `rise` uses `(0, -1)` (y
- * decreases = screen up). `distance` is a fraction of the project width
- * (x axis) / height (y axis).
- */
-function makeDrift(dx: number, dy: number): (p: number, properties: Record<string, any>, params: Record<string, any>) => Record<string, any> {
-	return (p, properties, params) => {
-		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
-		const arr = Array.isArray(properties.position) ? [...properties.position] : [0.5, 0.5];
-		while (arr.length < 2) arr.push(0.5);
-		arr[0] = Number(arr[0]) + dx * distance * p;
-		arr[1] = Number(arr[1]) + dy * distance * p;
-		properties.position = arr;
-		return properties;
-	};
-}
-
-registerTransition('rise',       makeDrift(0, -1), { defaultEasing: 'easeOut' });
-registerTransition('fall',       makeDrift(0, +1), { defaultEasing: 'easeOut' });
-registerTransition('driftLeft',  makeDrift(-1, 0), { defaultEasing: 'easeOut' });
-registerTransition('driftRight', makeDrift(+1, 0), { defaultEasing: 'easeOut' });
-
-// ---------------------------------------------------------------------------
-//  Symmetric slide presets — use |p| to always enter & exit from same side
-// ---------------------------------------------------------------------------
-
-/**
- * Build a symmetric slide preset that offsets `position` toward a fixed
- * side on BOTH enter and exit:
- *   p = -1 → offset = side * distance  (off-screen on `side`)
- *   p =  0 → offset = 0                (rest)
- *   p = +1 → offset = side * distance  (back off-screen on `side`)
- *
- * e.g. `slideFromBottom` has the layer start below rest, move to rest, then
- * fall back below on exit.
- */
-function makeSlide(dx: number, dy: number): (p: number, properties: Record<string, any>, params: Record<string, any>) => Record<string, any> {
-	return (p, properties, params) => {
-		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
-		const arr = Array.isArray(properties.position) ? [...properties.position] : [0.5, 0.5];
-		while (arr.length < 2) arr.push(0.5);
-		const mag = Math.abs(p);
-		arr[0] = Number(arr[0]) + dx * distance * mag;
-		arr[1] = Number(arr[1]) + dy * distance * mag;
-		properties.position = arr;
-		return properties;
-	};
-}
-
-registerTransition('slideFromTop',    makeSlide(0, -1), { defaultEasing: 'easeOut' });
-registerTransition('slideFromBottom', makeSlide(0, +1), { defaultEasing: 'easeOut' });
-registerTransition('slideFromLeft',   makeSlide(-1, 0), { defaultEasing: 'easeOut' });
-registerTransition('slideFromRight',  makeSlide(+1, 0), { defaultEasing: 'easeOut' });
-
-// ---------------------------------------------------------------------------
-//  Composites
-// ---------------------------------------------------------------------------
-
-// --- riseFade: continuous upward motion + symmetric fade. ----------------
-// Layer rises in from below (fading in), continues rising out above (fading out).
+// `riseFade` — legacy upward continuous-motion + symmetric fade.
 registerTransition('riseFade', (p, properties, params) => {
-	properties.opacity = Number(properties.opacity ?? 1) * (1 - Math.abs(p));
+	multOpacity(properties, 1 - Math.abs(p));
 	const distance = typeof params.distance === 'number' ? params.distance : 0.08;
-	const arr = Array.isArray(properties.position) ? [...properties.position] : [0.5, 0.5];
-	while (arr.length < 2) arr.push(0.5);
-	arr[1] = Number(arr[1]) - distance * p;
-	properties.position = arr;
+	properties.position = addPosition(properties.position, 0, -distance * p);
 	return properties;
-}, { defaultEasing: 'easeOut' });
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.08, min: 0, max: 1, step: 0.01 },
+	},
+});
+
+// `slideFromTop` / `slideFromBottom` / `slideFromLeft` / `slideFromRight`
+// — legacy symmetric slides. They mirror on exit.
+function makeSlideLegacy(dx: number, dy: number) {
+	return (p: number, properties: Record<string, any>, params: Record<string, any>) => {
+		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
+		const mag = Math.abs(p);
+		properties.position = addPosition(properties.position, dx * distance * mag, dy * distance * mag);
+		return properties;
+	};
+}
+const SLIDE_LEGACY_FIELDS = {
+	distance: { name: 'Distance', type: 'number', default: 0.15, min: 0, max: 2, step: 0.01 } as const,
+};
+registerTransition('slideFromTop',    makeSlideLegacy(0, -1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('slideFromBottom', makeSlideLegacy(0, +1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('slideFromLeft',   makeSlideLegacy(-1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('slideFromRight',  makeSlideLegacy(+1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+
+// `driftLeft` / `driftRight` — legacy continuous-motion (signed p).
+function makeDriftLegacy(dx: number, dy: number) {
+	return (p: number, properties: Record<string, any>, params: Record<string, any>) => {
+		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
+		properties.position = addPosition(properties.position, dx * distance * p, dy * distance * p);
+		return properties;
+	};
+}
+registerTransition('driftLeft',  makeDriftLegacy(-1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('driftRight', makeDriftLegacy(+1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('rise',       makeDriftLegacy(0, -1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+registerTransition('fall',       makeDriftLegacy(0, +1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });

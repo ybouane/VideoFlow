@@ -412,6 +412,12 @@ export default class DomRenderer implements ILayerRenderer {
 			if (patch.animations) {
 				layer.json.animations = patch.animations;
 			}
+			// `hasEffects` can flip when either transitionIn/transitionOut OR
+			// the effects list changes — `injectsEffects: true` transitions
+			// trigger the same overlay mount as a declared effect.
+			const overlayMayChange = 'transitionIn' in patch
+				|| 'transitionOut' in patch
+				|| 'effects' in patch;
 			if ('transitionIn' in patch) {
 				(layer.json as Record<string, unknown>).transitionIn = patch.transitionIn ?? undefined;
 			}
@@ -420,9 +426,13 @@ export default class DomRenderer implements ILayerRenderer {
 			}
 			if ('effects' in patch) {
 				(layer.json as Record<string, unknown>).effects = patch.effects;
-				// Reconcile the effect overlay canvas with the updated effects list.
-				// processEffectLayers() skips layers with no canvas entry, so we must
-				// mount/unmount the overlay whenever hasEffects transitions.
+			}
+			if (overlayMayChange) {
+				// Reconcile the effect overlay canvas with the updated state.
+				// processEffectLayers() skips layers with no canvas entry, so we
+				// must mount/unmount the overlay whenever hasEffects transitions
+				// — including when only the transition flips it via
+				// `injectsEffects: true`.
 				const hadOverlay = this.effectCanvases.has(id);
 				const nowHasEffects = layer.hasEffects;
 				if (nowHasEffects && !hadOverlay && layer.$element && this.elementsSetup) {
@@ -432,6 +442,13 @@ export default class DomRenderer implements ILayerRenderer {
 					this.unmountEffectOverlay(id);
 					layer.$element?.removeAttribute('data-effect-layer');
 				}
+				// The rasterizer cache is keyed on the layer's resolved props,
+				// which are unchanged when only transition/effects descriptors
+				// flip. Drop the cached key so the next renderFrame re-rasters
+				// the layer — otherwise an old surface (rendered for a now-
+				// stale CSS state, e.g. before a transition was attached) can
+				// linger behind the freshly mounted overlay.
+				this.rasterizer?.invalidate(id);
 			}
 
 			// If the source changed, re-initialize media. The global media cache
@@ -689,7 +706,7 @@ export default class DomRenderer implements ILayerRenderer {
 				})
 			);
 
-			await this.processEffectLayers();
+			await this.processEffectLayers(frame);
 
 			this.currentFrame = frame;
 			await document.fonts.ready;
@@ -1019,6 +1036,7 @@ export default class DomRenderer implements ILayerRenderer {
 	async compositeLayerInto(
 		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
 		layer: RuntimeBaseLayer,
+		frame?: number,
 	): Promise<void> {
 		if (!layer.$element || !layer.lastAppliedProps) return;
 		if (!this.videoJSON) return;
@@ -1026,12 +1044,17 @@ export default class DomRenderer implements ILayerRenderer {
 		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 		const w = this.videoJSON.width;
 		const h = this.videoJSON.height;
-		const effects = layer.hasEffects ? layer.resolveEffectsForProps(layer.lastAppliedProps) : [];
+		// Always resolve effects (cheap when none) so transition-injected
+		// effects on `props.__effects` engage the pipeline regardless of
+		// whether the transition was registered with `injectsEffects: true`.
+		const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
 		if (effects.length > 0) {
 			if (!this.effectCompositor) {
 				this.effectCompositor = new WebGLEffectCompositor(w, h);
 			}
-			const effected = this.effectCompositor.apply(surface, effects);
+			const f = frame ?? this.currentFrame;
+			const time = f >= 0 ? f / this.videoJSON.fps : 0;
+			const effected = this.effectCompositor.apply(surface, effects, time);
 			ctx.drawImage(effected, 0, 0, w, h);
 		} else {
 			ctx.drawImage(surface, 0, 0, w, h);
@@ -1064,13 +1087,17 @@ export default class DomRenderer implements ILayerRenderer {
 		canvas.width = this.videoJSON.width;
 		canvas.height = this.videoJSON.height;
 		canvas.setAttribute('data-effect-overlay', layer.json.id);
+		// Tag the canvas with the layer id so editor hit-testing (which walks
+		// `data-id` in `composedPath`) treats clicks on the overlay as clicks
+		// on the layer itself — the source $el is `visibility: hidden`, so it
+		// can no longer receive pointer events.
+		canvas.setAttribute('data-id', layer.json.id);
 		// Match the absolute-fill layout of sibling layer elements so the
 		// overlay covers the project area in the same coordinate space.
 		canvas.style.position = 'absolute';
 		canvas.style.inset = '0';
 		canvas.style.width = '100%';
 		canvas.style.height = '100%';
-		canvas.style.pointerEvents = 'none';
 		const track = layer.json.track;
 		if (typeof track === 'number') {
 			canvas.style.zIndex = String(track + 1);
@@ -1114,12 +1141,13 @@ export default class DomRenderer implements ILayerRenderer {
 	 * paint it through the WebGL compositor onto its overlay canvas. Clears
 	 * canvases for effect layers that are out of range this frame.
 	 */
-	private async processEffectLayers(): Promise<void> {
+	private async processEffectLayers(frame: number): Promise<void> {
 		if (this.effectCanvases.size === 0) return;
 		this.fontEmbedder.invalidateFrame();
 		const rasterizer = this.ensureRasterizer();
 		const width = this.videoJSON!.width;
 		const height = this.videoJSON!.height;
+		const time = frame >= 0 ? frame / this.videoJSON!.fps : 0;
 
 		for (const layer of this.layers) {
 			if (!layer.hasEffects) continue;
@@ -1140,7 +1168,7 @@ export default class DomRenderer implements ILayerRenderer {
 				if (!this.effectCompositor) {
 					this.effectCompositor = new WebGLEffectCompositor(width, height);
 				}
-				const effected = this.effectCompositor.apply(surface, effects);
+				const effected = this.effectCompositor.apply(surface, effects, time);
 				ctx.drawImage(effected, 0, 0, canvas.width, canvas.height);
 			} else {
 				ctx.drawImage(surface, 0, 0, canvas.width, canvas.height);
