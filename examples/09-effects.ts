@@ -34,14 +34,14 @@ export function createProject() {
 		{
 			fit: 'cover',
 			effects: [
-				{ effect: 'pixelate',            params: { pixelSize: 48 } },
+				{ effect: 'pixelate',            params: { pixelSize: 2.5 } },
 				{ effect: 'chromaticAberration', params: { intensity: 0.004 } },
 				{ effect: 'vignette',            params: { intensity: 0.7, radius: 0.75 } },
 			],
 		},
 		{ source: 'sample.jpg', startTime: 0, sourceDuration: 3 },
 	);
-	img1.animate({}, { 'effects.pixelate.pixelSize': 1 }, { duration: '1.5s', wait: false });
+	img1.animate({}, { 'effects.pixelate.pixelSize': 0.05 }, { duration: '1.5s', wait: false });
 
 	const t1 = $.addText(
 		{
@@ -50,7 +50,7 @@ export function createProject() {
 			fontFamily: 'Rubik Storm',
 			fontWeight: 800,
 			color: '#ffffff',
-			effects: [{ effect: 'pixelate', params: { pixelSize: 15 } }],
+			effects: [{ effect: 'pixelate', params: { pixelSize: 0.8 } }],
 		},
 		{
 			startTime: 0.5,
@@ -60,8 +60,8 @@ export function createProject() {
 		},
 	);
 	t1.animate(
-		{ 'effects.pixelate.pixelSize': 15 },
-		{ 'effects.pixelate.pixelSize': 1 },
+		{ 'effects.pixelate.pixelSize': 0.8 },
+		{ 'effects.pixelate.pixelSize': 0.05 },
 		{ duration: '1s', wait: false, easing: 'ease-out' },
 	);
 
@@ -73,7 +73,7 @@ export function createProject() {
 			fit: 'cover',
 			effects: [
 				{ effect: 'colorGrade', params: { exposure: 0.3, saturation: 0.4, temperature: 0.4, contrast: 0.15 } },
-				{ effect: 'bloom',      params: { threshold: 0.6, intensity: 0.9, radius: 24 } },
+				{ effect: 'bloom',      params: { threshold: 0.6, intensity: 0.9, radius: 1.25 } },
 			],
 		},
 		{ source: 'sample.jpg', startTime: 3, sourceDuration: 3 },
@@ -86,7 +86,7 @@ export function createProject() {
 			fontWeight: 800,
 			color: '#fff7d4',
 			position: [0.5, 0.85],
-			effects: [{ effect: 'glow', params: { intensity: 1.2, radius: 18, color: '#ffe9a8' } }],
+			effects: [{ effect: 'glow', params: { intensity: 1.2, radius: 0.95, color: '#ffe9a8' } }],
 		},
 		{
 			startTime: 3.2,
@@ -136,7 +136,7 @@ export function createProject() {
 		{
 			fit: 'cover',
 			effects: [
-				{ effect: 'halftone',  params: { spacing: 10, dotSize: 1, angle: 30, colorMode: 'duotone' } },
+				{ effect: 'halftone',  params: { spacing: 0.5, dotSize: 1, angle: 30, colorMode: 'duotone' } },
 				{ effect: 'lightLeak', params: { amount: 0.75, scale: 0.8, positionX: 0.85, positionY: 0.15, colorA: '#ff9b3d', colorB: '#ffe17a' } },
 			],
 		},
@@ -160,7 +160,7 @@ export function createProject() {
 	);
 
 	// ────────────────────────────────────────────────────────────────
-	// Panel 5 (12–15s) — liquid ripple + god rays + light rays for a
+	// Panel 5 (12–15s) — liquid ripple + volumetric light + light rays for a
 	// dreamy underwater / sunlit look. The ripple's `phase` animates
 	// to keep the wavefront moving.
 	// ────────────────────────────────────────────────────────────────
@@ -168,8 +168,8 @@ export function createProject() {
 		{
 			fit: 'cover',
 			effects: [
-				{ effect: 'liquidRipple', params: { centerX: 0.5, centerY: 0.55, amplitude: 0.018, frequency: 9, decay: 2.5, radius: 1.0, phase: 0 } },
-				{ effect: 'godRays',      params: { intensity: 1.4, decay: 0.94, density: 1.1, weight: 0.9, centerX: 0.7, centerY: 0.2, samples: 64 } },
+				{ effect: 'liquidRipple',    params: { centerX: 0.5, centerY: 0.55, amplitude: 0.018, frequency: 9, decay: 2.5, radius: 1.0, phase: 0 } },
+				{ effect: 'volumetricLight', params: { intensity: 1.4, decay: 0.94, density: 1.1, weight: 0.9, centerX: 0.7, centerY: 0.2, samples: 64 } },
 				{ effect: 'lightRays',    params: { intensity: 0.6, length: 0.25, threshold: 0.7, centerX: 0.7, centerY: 0.2, samples: 32, color: '#ffe6a8' } },
 			],
 		},
@@ -188,7 +188,7 @@ export function createProject() {
 			fontWeight: 700,
 			color: '#fff7d4',
 			position: [0.5, 0.88],
-			effects: [{ effect: 'glow', params: { intensity: 1.0, radius: 14, color: '#ffe9a8' } }],
+			effects: [{ effect: 'glow', params: { intensity: 1.0, radius: 0.7, color: '#ffe9a8' } }],
 		},
 		{
 			startTime: 12.3,
@@ -207,7 +207,7 @@ export function createProject() {
 		{
 			fit: 'cover',
 			effects: [
-				{ effect: 'frostedGlass',    params: { blurRadius: 10, distortion: 0.6, frostAmount: 0.25, tintAmount: 0.1, highlightAmount: 0.15, tintColor: '#cfe7ff' } },
+				{ effect: 'frostedGlass',    params: { blurRadius: 0.5, distortion: 0.6, frostAmount: 0.25, tintAmount: 0.1, highlightAmount: 0.15, tintColor: '#cfe7ff' } },
 				{ effect: 'glassRefraction', params: { refractionAmount: 1.4, roughness: 0.25, highlightAmount: 0.8, edgeStrength: 0.4, ior: 1.55 } },
 				{ effect: 'lightSweep',      params: { progress: 0, angle: 25, width: 0.18, intensity: 0.9, softness: 0.06, color: '#ffffff' } },
 			],
@@ -228,7 +228,7 @@ export function createProject() {
 			color: '#ffffff',
 			position: [0.5, 0.5],
 			effects: [
-				{ effect: 'glow', params: { intensity: 0.9, radius: 18, color: '#dff1ff' } },
+				{ effect: 'glow', params: { intensity: 0.9, radius: 0.95, color: '#dff1ff' } },
 			],
 		},
 		{
@@ -250,7 +250,7 @@ export function createProject() {
 			effects: [
 				{ effect: 'shockwave', params: { progress: 0, centerX: 0.5, centerY: 0.5, strength: 0.12, width: 0.1, softness: 0.03 } },
 				{ effect: 'zoomBlur',  params: { centerX: 0.5, centerY: 0.5, amount: 0.05, samples: 24, falloff: 0.5 } },
-				{ effect: 'motionBlur', params: { amount: 12, angle: 0, samples: 16, centerBias: 0.3 } },
+				{ effect: 'motionBlur', params: { amount: 0.6, angle: 0, samples: 16, centerBias: 0.3 } },
 			],
 		},
 		{ source: 'sample.jpg', startTime: 18, sourceDuration: 3 },
@@ -275,7 +275,7 @@ export function createProject() {
 			position: [0.5, 0.5],
 			effects: [
 				{ effect: 'chromaticAberration', params: { intensity: 0.006 } },
-				{ effect: 'glow',                params: { intensity: 1.4, radius: 22, color: '#ff8c5a' } },
+				{ effect: 'glow',                params: { intensity: 1.4, radius: 1.15, color: '#ff8c5a' } },
 			],
 		},
 		{
@@ -298,8 +298,8 @@ export function createProject() {
 			effects: [
 				{ effect: 'lensDistortion', params: { distortion: 0.15, zoom: 1.05, curve: 2 } },
 				{ effect: 'duotone',        params: { shadowColor: '#0d1633', highlightColor: '#ffd45a', contrast: 0.25, midtoneBias: 0.1, mix: 0.95 } },
-				{ effect: 'edgeGlow',       enabled: false, params: { strength: 1.2, threshold: 0.18, radius: 12, color: '#7fd4ff' } },
-				{ effect: 'filmGrain',      params: { amount: 0.28, grainSize: 1.6, luminanceResponse: 0.5, blendMode: 'overlay', monochrome: true } },
+				{ effect: 'edgeGlow',       enabled: false, params: { strength: 1.2, threshold: 0.18, radius: 0.6, color: '#7fd4ff' } },
+				{ effect: 'filmGrain',      params: { amount: 0.28, grainSize: 0.085, luminanceResponse: 0.5, blendMode: 'overlay', monochrome: true } },
 				{ effect: 'vignette',       params: { intensity: 0.6, radius: 0.85, softness: 0.45 } },
 			],
 		},
