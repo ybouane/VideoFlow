@@ -749,9 +749,16 @@ export default class DomRenderer implements ILayerRenderer {
 	/**
 	 * Start real-time playback from the current frame with audio sync.
 	 *
-	 * Render audio to WAV, create an Audio element, and use
-	 * requestAnimationFrame to advance frames while adjusting playback rate
-	 * for A/V sync.
+	 * Renders audio to WAV, creates an `Audio` element, and advances frames
+	 * inside a `requestAnimationFrame` loop while nudging the audio
+	 * `playbackRate` to keep video and audio in sync.
+	 *
+	 * Each layer is switched into its smooth-playback path via
+	 * {@link RuntimeBaseLayer.enterSmoothPlayback} at the start of the loop
+	 * — for video layers this trades the per-frame `currentTime` seek for a
+	 * native `<video>.play()` plus drift correction, eliminating the seek
+	 * cost that otherwise dominates live-preview frame budget. The path is
+	 * reverted on `stop()` / `seek()` so scrubbing stays frame-accurate.
 	 *
 	 * @param options - Optional callbacks:
 	 *   - `fpsCallback(fps)` — fired every animation frame with the current
@@ -779,11 +786,20 @@ export default class DomRenderer implements ILayerRenderer {
 			const startFrame = this.currentFrame < 0 ? 0 : this.currentFrame;
 			const startTimeSec = startFrame / fps;
 
+			// Switch each layer that supports it (currently just video) to its
+			// smooth-playback path so its underlying decoder runs natively
+			// instead of seeking once per frame. Layers that don't override
+			// the hook see this as a no-op.
+			for (const layer of this.layers) layer.enterSmoothPlayback();
+
 			// Render audio (async — may take tens of ms). Bail without creating
 			// an Audio element if we've already been superseded, otherwise we'd
 			// leak a second audio source playing in parallel.
 			const audioBuffer = await this.renderAudio();
-			if (myToken !== this.playToken) return;
+			if (myToken !== this.playToken) {
+				for (const layer of this.layers) layer.exitSmoothPlayback();
+				return;
+			}
 
 			if (audioBuffer) {
 				const wav = audioBufferToWav(audioBuffer);
@@ -834,21 +850,46 @@ export default class DomRenderer implements ILayerRenderer {
 		// play() may have taken over and have its own Audio element live.
 		if (myToken === this.playToken) {
 			this.cleanupAudio();
+			// Drop layers back to the deterministic seek path so the next
+			// renderFrame (e.g. for a paused frame after the loop ends, or a
+			// scrub) decodes the exact requested timestamp rather than
+			// whatever vidA happened to be presenting.
+			for (const layer of this.layers) layer.exitSmoothPlayback();
 		}
 	}
 
-	/** Stop playback. */
+	/**
+	 * Stop playback.
+	 *
+	 * Bumps the play-token (so any loop suspended in `await renderAudio()` /
+	 * `requestAnimationFrame` exits without running its cleanup), tears down
+	 * the `Audio` element, and reverts every layer's smooth-playback hook so
+	 * the next `renderFrame` (typically from `seek()` or `currentTime =`)
+	 * decodes the exact requested timestamp instead of whatever the smooth
+	 * decoder happened to be presenting.
+	 */
 	stop(): void {
 		this.playing = false;
 		// Bump the token so any suspended play() loop detects the supersession
 		// and bails cleanly without running its final cleanupAudio().
 		this.playToken++;
 		this.cleanupAudio();
+		// Smooth-mode layers must drop back to the seek path immediately so
+		// the imminent renderFrame (from seek() or currentTime =) decodes the
+		// exact requested source time. The play() loop's own exitSmoothPlayback
+		// call still runs, but only if it owns the token — calling here covers
+		// the supersession case where the loop bails out early.
+		for (const layer of this.layers) layer.exitSmoothPlayback();
 	}
 
 	/**
-	 * Seek to a frame. Stops playback if active, renders the frame, then
-	 * restarts playback if it was active.
+	 * Seek to a frame.
+	 *
+	 * If playback is active, stops it (which exits smooth mode), renders the
+	 * target frame deterministically through the seek path, then restarts
+	 * playback (re-entering smooth mode). When playback is not active, the
+	 * frame is decoded by the seek path directly — pixel-deterministic, the
+	 * same path used by export.
 	 */
 	async seek(frame: number): Promise<void> {
 		const wasPlaying = this.playing;
@@ -890,9 +931,18 @@ export default class DomRenderer implements ILayerRenderer {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Destroy the renderer and release all resources.
+	 * Tear down the renderer: stop playback (also exits smooth-playback mode
+	 * on every video layer), destroy every runtime layer (releases media
+	 * elements, decoders, and `requestVideoFrameCallback` subscriptions),
+	 * clear the per-layer effect canvases, dispose the rasterizer's per-layer
+	 * surfaces and the WebGL effect compositor's GL context, and finally
+	 * empty the shadow DOM. Pending queued mutations registered before
+	 * destroy resolve to no-ops via the `destroyed` guard.
 	 *
-	 * @param clearShadow - Whether to clear the shadow DOM (default true).
+	 * @param clearShadow - Whether to wipe the shadow DOM. Default `true`.
+	 *                      Pass `false` if the host element is being
+	 *                      removed anyway and you want to keep the last
+	 *                      rendered frame visible until removal.
 	 */
 	destroy(clearShadow = true): void {
 		this.destroyed = true;
@@ -1041,13 +1091,19 @@ export default class DomRenderer implements ILayerRenderer {
 		if (!layer.$element || !layer.lastAppliedProps) return;
 		if (!this.videoJSON) return;
 		const rasterizer = this.ensureRasterizer();
-		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 		const w = this.videoJSON.width;
 		const h = this.videoJSON.height;
 		// Always resolve effects (cheap when none) so transition-injected
 		// effects on `props.__effects` engage the pipeline regardless of
 		// whether the transition was registered with `injectsEffects: true`.
 		const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
+		if (effects.length === 0 && rasterizer.canDrawDirect(layer, layer.lastAppliedProps)) {
+			// Fast path — paint straight onto the group's compositor canvas,
+			// skipping the per-child OffscreenCanvas copy.
+			rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+			return;
+		}
+		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 		if (effects.length > 0) {
 			if (!this.effectCompositor) {
 				this.effectCompositor = new WebGLEffectCompositor(w, h);

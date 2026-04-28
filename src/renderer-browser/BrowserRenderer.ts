@@ -265,11 +265,19 @@ export default class BrowserRenderer implements ILayerRenderer {
 	}
 
 	/**
-	 * Rasterize a single layer (cached when possible), pipe it through the
-	 * WebGL effect compositor if it declares effects, and `drawImage` the
-	 * result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
-	 * each child onto the group's canvas — the same path that
-	 * `captureFrame` uses for top-level layers.
+	 * Composite one layer onto `ctx` (the group's flatten canvas, or any
+	 * other caller-owned target sized to the project).
+	 *
+	 * - **Fast path:** when the layer is tier-1 and has no effects, paints
+	 *   the layer's `$element` straight onto `ctx` via `drawDirectInto` —
+	 *   no per-layer surface, no extra blit.
+	 * - **Normal path:** rasterizes the layer (cached when possible), runs
+	 *   the WebGL effect compositor if effects are declared, then
+	 *   `drawImage`s the result onto `ctx`.
+	 *
+	 * Used by `RuntimeGroupLayer.renderFrame` to flatten each child onto the
+	 * group's canvas — the same path that `captureFrame` uses for top-level
+	 * layers.
 	 */
 	async compositeLayerInto(
 		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
@@ -278,13 +286,19 @@ export default class BrowserRenderer implements ILayerRenderer {
 	): Promise<void> {
 		if (!layer.$element || !layer.lastAppliedProps) return;
 		const rasterizer = this.ensureRasterizer();
-		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 		const w = this.videoJSON.width;
 		const h = this.videoJSON.height;
 		// Always resolve effects (cheap when none) so transition-injected
 		// effects on `props.__effects` engage the pipeline regardless of
 		// whether the transition was registered with `injectsEffects: true`.
 		const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
+		if (effects.length === 0 && rasterizer.canDrawDirect(layer, layer.lastAppliedProps)) {
+			// Fast path — skip the per-layer surface entirely and paint the
+			// layer canvas straight onto the group's compositor canvas.
+			rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+			return;
+		}
+		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 		if (effects.length > 0) {
 			if (!this.effectCompositor) {
 				this.effectCompositor = new WebGLEffectCompositor(w, h);
@@ -455,6 +469,10 @@ export default class BrowserRenderer implements ILayerRenderer {
 				this.$canvas,
 				RENDERER_CSS,
 				(layer) => this.buildFontCSSForLayer(layer),
+				// Export prioritizes pixel quality: keep Lanczos/bicubic
+				// resampling on the per-layer drawImage. Live preview uses
+				// `'low'` (the default) for speed.
+				{ quality: 'high' },
 			);
 		}
 		return this.rasterizer;
@@ -474,12 +492,14 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 * Capture a single frame onto the shared render canvas.
 	 *
 	 * 1. Ensure all layer DOMs reflect this frame (via `renderFrame`).
-	 * 2. For each enabled, in-range layer, ask the `LayerRasterizer` for a
-	 *    project-sized bitmap (cached if the layer's final props match the
-	 *    previous render).
-	 * 3. If the layer declares effects, pipe the bitmap through the
-	 *    WebGL effect compositor.
-	 * 4. `drawImage` the result onto the final canvas.
+	 * 2. For each enabled, in-range layer, pick the cheapest path:
+	 *    - **Fast path (tier-1 + no effects):** paint the layer's `$element`
+	 *      directly onto the final canvas via `drawDirectInto` — skips the
+	 *      per-layer surface copy entirely.
+	 *    - **Normal path:** ask the `LayerRasterizer` for a project-sized
+	 *      bitmap (cached when the layer's final props match the previous
+	 *      render), pipe through the WebGL effect compositor if the layer
+	 *      declares effects, then `drawImage` onto the final canvas.
 	 */
 	async captureFrame(frame: number): Promise<OffscreenCanvas> {
 		await this.renderFrame(frame);
@@ -506,12 +526,19 @@ export default class BrowserRenderer implements ILayerRenderer {
 			if (!layer.$element) continue;
 			if (!layer.lastAppliedProps) continue; // Out of range / hidden this frame
 
-			const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
-
 			// Always resolve effects (cheap when none) so transition-injected
 			// effects on `props.__effects` engage the pipeline regardless of
 			// whether the transition was registered with `injectsEffects: true`.
 			const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
+			if (effects.length === 0 && rasterizer.canDrawDirect(layer, layer.lastAppliedProps)) {
+				// Fast path — paint straight onto the final canvas, skipping
+				// the per-layer OffscreenCanvas copy. Saves one full-frame
+				// blit per tier-1 layer per frame.
+				rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+				continue;
+			}
+
+			const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 			if (effects.length > 0) {
 				if (!this.effectCompositor) {
 					this.effectCompositor = new WebGLEffectCompositor(width, height);
@@ -979,7 +1006,14 @@ export default class BrowserRenderer implements ILayerRenderer {
 	//  Cleanup
 	// -----------------------------------------------------------------------
 
-	/** Remove the hidden container and release all resources. */
+	/**
+	 * Tear down the renderer: destroy every runtime layer (releases media
+	 * elements, decoders, audio buffers), remove the hidden `<div data-renderer>`
+	 * from the DOM, drop the shared render canvas, and dispose the rasterizer's
+	 * per-layer surfaces and the WebGL effect compositor's GL context. Call this
+	 * after the last `captureFrame` / `exportVideo` to avoid leaking GL contexts
+	 * across repeated renders.
+	 */
 	destroy(): void {
 		for (const layer of this.layers) layer.destroy();
 		this.$canvas.remove();
