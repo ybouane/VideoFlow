@@ -288,6 +288,10 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const rasterizer = this.ensureRasterizer();
 		const w = this.videoJSON.width;
 		const h = this.videoJSON.height;
+
+		ctx.save();
+		ctx.globalCompositeOperation = BrowserRenderer.blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
+
 		// Always resolve effects (cheap when none) so transition-injected
 		// effects on `props.__effects` engage the pipeline regardless of
 		// whether the transition was registered with `injectsEffects: true`.
@@ -296,6 +300,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 			// Fast path — skip the per-layer surface entirely and paint the
 			// layer canvas straight onto the group's compositor canvas.
 			rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+			ctx.restore();
 			return;
 		}
 		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
@@ -310,6 +315,13 @@ export default class BrowserRenderer implements ILayerRenderer {
 		} else {
 			ctx.drawImage(surface, 0, 0, w, h);
 		}
+		ctx.restore();
+	}
+
+	/** Map a CSS blend-mode name to a canvas `globalCompositeOperation` value.
+	 *  All CSS names match the Canvas API exactly except `'normal'` → `'source-over'`. */
+	private static blendModeToCompositeOp(mode: string | undefined): GlobalCompositeOperation {
+		return (!mode || mode === 'normal') ? 'source-over' : mode as GlobalCompositeOperation;
 	}
 
 	/**
@@ -526,6 +538,9 @@ export default class BrowserRenderer implements ILayerRenderer {
 			if (!layer.$element) continue;
 			if (!layer.lastAppliedProps) continue; // Out of range / hidden this frame
 
+			ctx.save();
+			ctx.globalCompositeOperation = BrowserRenderer.blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
+
 			// Always resolve effects (cheap when none) so transition-injected
 			// effects on `props.__effects` engage the pipeline regardless of
 			// whether the transition was registered with `injectsEffects: true`.
@@ -535,6 +550,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 				// the per-layer OffscreenCanvas copy. Saves one full-frame
 				// blit per tier-1 layer per frame.
 				rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+				ctx.restore();
 				continue;
 			}
 
@@ -548,6 +564,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 			} else {
 				ctx.drawImage(surface, 0, 0, width, height);
 			}
+			ctx.restore();
 		}
 
 		return this.renderCanvas;

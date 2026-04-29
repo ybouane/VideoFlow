@@ -19,7 +19,7 @@ import type { Time, Easing, PropertyDefinition } from '../types.js';
 export type VisualLayerProperties = BaseLayerProperties & {
 	visible?: boolean;
 	opacity?: number;
-	//blendMode?: string;
+	blendMode?: string;
 	position?: [number, number] | [number, number, number];
 	scale?: number | [number, number] | [number, number, number];
 	rotation?: number | [number, number, number];
@@ -191,7 +191,7 @@ export default class VisualLayer extends BaseLayer {
 			'filterSaturate': { cssProperty: '--filter-saturate', default: 1, animatable: true },
 
 			// --- Blend mode & perspective ---
-			//'blendMode': { cssProperty: 'mix-blend-mode', enum: ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'], default: 'normal', animatable: false },
+			'blendMode': { cssProperty: 'mix-blend-mode', enum: ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'], default: 'normal', animatable: false },
 			/**
 			 * 3D viewing distance for `rotation` / `position[z]`. Unitless = `em`.
 			 * Default `100` (= `100em` = one project-width) gives a gentle 3D

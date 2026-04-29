@@ -1217,6 +1217,10 @@ export default class DomRenderer implements ILayerRenderer {
 				continue;
 			}
 
+			// Mirror the layer's blend mode onto the overlay canvas so it
+			// composites in the DOM exactly as the hidden $element would.
+			canvas.style.mixBlendMode = layer.lastAppliedProps.blendMode ?? 'normal';
+
 			const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
 			ctx.clearRect(0, 0, canvas.width, canvas.height);
 			const effects = layer.resolveEffectsForProps(layer.lastAppliedProps);
