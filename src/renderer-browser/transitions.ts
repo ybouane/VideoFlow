@@ -40,6 +40,12 @@ import type { EffectParamUnit } from './effects.js';
 export type TransitionContext = {
 	/** Stable seed string for deterministic randomness. Currently the layer's id. */
 	seed: string;
+	/** Absolute frame number within the composition timeline. Use this for
+	 *  per-frame effects (e.g. scramble decode). Quantise to a lower rate
+	 *  to avoid flicker: `Math.floor(ctx.frame * rate / ctx.fps)`. */
+	frame: number;
+	/** Composition frames-per-second. Use alongside `frame` for rate calculations. */
+	fps: number;
 };
 
 /**

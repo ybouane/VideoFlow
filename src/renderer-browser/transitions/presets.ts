@@ -807,3 +807,318 @@ registerTransition('driftLeft',  makeDriftLegacy(-1, 0), { defaultEasing: 'easeO
 registerTransition('driftRight', makeDriftLegacy(+1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
 registerTransition('rise',       makeDriftLegacy(0, -1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
 registerTransition('fall',       makeDriftLegacy(0, +1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
+
+// ===========================================================================
+// Text-specific transitions (21–25)
+//
+// These presets modify the `text` string and/or typographic CSS properties
+// (letterSpacing, filterBlur, opacity) and are meaningful only on text layers.
+// They degrade gracefully on non-text layers: missing `text` / `letterSpacing`
+// are treated as empty-string / 0 respectively.
+// ===========================================================================
+
+// ---- charset table used by scrambleDecode ---------------------------------
+const SCRAMBLE_CHARSETS: Record<string, string> = {
+	letters: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz',
+	numbers: '0123456789',
+	symbols: '!@#$%^&*_+-=[]{}|;:,.<>?',
+	mixed: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*_+-=',
+};
+
+// ===========================================================================
+// 21. typewriter — reveals text one character at a time.
+// params: { cursorStyle?: 'none' | 'bar' | 'block' | 'underscore' }
+// ===========================================================================
+registerTransition('typewriter', (p, properties, params) => {
+	const t = stage(p);
+	if (typeof properties.text !== 'string') return properties;
+	const chars = Array.from(properties.text);
+	if (!chars.length) return properties;
+
+	const visible = chars.slice(0, Math.round(t * chars.length)).join('');
+	const cursorStyle = params.cursorStyle ?? 'bar';
+	const cursorChars: Record<string, string> = { bar: '|', block: '█', underscore: '_' };
+
+	properties.text = (t < 1 && cursorStyle !== 'none')
+		? visible + (cursorChars[cursorStyle] ?? '|')
+		: visible;
+
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	fieldsConfig: {
+		cursorStyle: {
+			name: 'Cursor style',
+			type: 'option',
+			default: 'bar',
+			options: { none: 'None', bar: 'Bar ( | )', block: 'Block ( █ )', underscore: 'Underscore ( _ )' },
+		},
+	},
+});
+
+// ---- shared helper for tracking expand / contract -------------------------
+function applyTracking(
+	t: number,
+	properties: Record<string, any>,
+	startTracking: number,
+	finalTracking: number,
+	startOpacity: number,
+	blur: number,
+): void {
+	// Add tracking delta (em) on top of whatever keyframed value the layer has.
+	const delta = lerp(startTracking, finalTracking, t);
+	if (delta !== 0) {
+		const raw = String(properties.letterSpacing ?? '0em');
+		const m = raw.match(/^(-?[0-9.]+)([a-z%]*)$/i);
+		const base = m ? parseFloat(m[1]) : 0;
+		const unit = m?.[2] || 'em';
+		properties.letterSpacing = `${base + delta}${unit}`;
+	}
+	multOpacity(properties, lerp(startOpacity, 1, t));
+	const blurAmt = blur * (1 - t);
+	if (blurAmt > 0.001) {
+		const raw = String(properties.filterBlur ?? '0em');
+		const m = raw.match(/^(-?[0-9.]+)([a-z%]*)$/i);
+		const base = m ? parseFloat(m[1]) : 0;
+		const unit = m?.[2] || 'em';
+		properties.filterBlur = `${base + blurAmt}${unit}`;
+	}
+}
+
+const TRACKING_FIELDS_BASE = {
+	finalTracking: { name: 'Final tracking', type: 'number' as const, default: 0,   min: -5, max: 5, step: 0.01, unit: 'em' as const },
+	startOpacity:  { name: 'Start opacity',  type: 'number' as const, default: 0,   min: 0,  max: 1, step: 0.05 },
+	blur:          { name: 'Blur',           type: 'number' as const, default: 0.3, min: 0,  max: 4, step: 0.05, unit: 'em' as const },
+};
+
+// ===========================================================================
+// 22. trackingExpand — text starts compressed and expands into its final spacing.
+// params: { startTracking?: -0.12, finalTracking?: 0, startOpacity?: 0, blur?: 0.3 }
+// ===========================================================================
+registerTransition('trackingExpand', (p, properties, params) => {
+	applyTracking(
+		stage(p), properties,
+		typeof params.startTracking === 'number' ? params.startTracking : -0.12,
+		typeof params.finalTracking === 'number' ? params.finalTracking : 0,
+		typeof params.startOpacity  === 'number' ? params.startOpacity  : 0,
+		typeof params.blur          === 'number' ? params.blur          : 0.3,
+	);
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		startTracking: { name: 'Start tracking', type: 'number', default: -0.12, min: -5, max: 5, step: 0.01, unit: 'em' as const },
+		...TRACKING_FIELDS_BASE,
+	},
+});
+
+// ===========================================================================
+// 23. trackingContract — text starts wide and contracts into its final spacing.
+// params: { startTracking?: 0.3, finalTracking?: 0, startOpacity?: 0, blur?: 0.3 }
+// ===========================================================================
+registerTransition('trackingContract', (p, properties, params) => {
+	applyTracking(
+		stage(p), properties,
+		typeof params.startTracking === 'number' ? params.startTracking : 0.3,
+		typeof params.finalTracking === 'number' ? params.finalTracking : 0,
+		typeof params.startOpacity  === 'number' ? params.startOpacity  : 0,
+		typeof params.blur          === 'number' ? params.blur          : 0.3,
+	);
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		startTracking: { name: 'Start tracking', type: 'number', default: 0.3, min: -5, max: 5, step: 0.01, unit: 'em' as const },
+		...TRACKING_FIELDS_BASE,
+	},
+});
+
+// ===========================================================================
+// 24. scrambleDecode — random characters resolve into the final text.
+// params: { refreshRate?: 15, order?: 'leftToRight'|'rightToLeft'|'random',
+//           charset?: 'letters'|'numbers'|'symbols'|'mixed', preserveSpaces?: true }
+// ===========================================================================
+registerTransition('scrambleDecode', (p, properties, params, ctx) => {
+	const t = stage(p);
+	if (typeof properties.text !== 'string') return properties;
+	const chars = Array.from(properties.text);
+	const n = chars.length;
+	if (!n) return properties;
+
+	const refreshRate   = typeof params.refreshRate === 'number' ? params.refreshRate : 15;
+	const order         = params.order ?? 'leftToRight';
+	const cs            = SCRAMBLE_CHARSETS[params.charset ?? 'letters'] ?? SCRAMBLE_CHARSETS.letters;
+	const preserveSpaces = params.preserveSpaces !== false;
+
+	// Quantise to `refreshRate` visual updates per second.
+	const tick = Math.floor(ctx.frame * refreshRate / ctx.fps);
+
+	// Build the set of locked (already-revealed) positions.
+	const lockedCount = Math.round(t * n);
+	const lockedSet = new Set<number>();
+
+	if (order === 'rightToLeft') {
+		for (let i = 0; i < lockedCount; i++) lockedSet.add(n - 1 - i);
+	} else if (order === 'random') {
+		// Deterministic shuffle for a stable reveal order across frames.
+		const positions = Array.from({ length: n }, (_, i) => i);
+		for (let i = n - 1; i > 0; i--) {
+			const j = cyrb53(`${ctx.seed}|sd:${i}`) % (i + 1);
+			[positions[i], positions[j]] = [positions[j], positions[i]];
+		}
+		for (let i = 0; i < lockedCount; i++) lockedSet.add(positions[i]);
+	} else {
+		// leftToRight (default)
+		for (let i = 0; i < lockedCount; i++) lockedSet.add(i);
+	}
+
+	let result = '';
+	for (let i = 0; i < n; i++) {
+		const ch = chars[i];
+		if (preserveSpaces && ch === ' ') {
+			result += ' ';
+		} else if (lockedSet.has(i)) {
+			result += ch;
+		} else {
+			result += cs[cyrb53(`${ctx.seed}|${i}|${tick}`) % cs.length];
+		}
+	}
+
+	properties.text = result;
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	fieldsConfig: {
+		refreshRate:    { name: 'Refresh rate',    type: 'number', default: 15,           min: 1,  max: 60,  step: 1 },
+		order:          { name: 'Reveal order',    type: 'option', default: 'leftToRight', options: { leftToRight: 'Left to right', rightToLeft: 'Right to left', random: 'Random' } },
+		charset:        { name: 'Charset',         type: 'option', default: 'letters',    options: { letters: 'Letters', numbers: 'Numbers', symbols: 'Symbols', mixed: 'Mixed' } },
+		preserveSpaces: { name: 'Preserve spaces', type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 25. numberCountUp — detects numbers in the text and counts them from zero
+// (or `startValue`) to their final values.
+//
+// Supports: currency ($, €, £), signs (+/-), decimals, grouped thousands
+// (comma or space), compact suffixes (K / M / B), percentages.
+//
+// params: { startValue?: 0, mode?: 'allNumbers'|'firstNumber',
+//           formatMode?: 'natural'|'fixedWidth', rounding?: 'auto'|'integer'|'decimal',
+//           locale?: 'auto'|'en-US'|'fr-FR' }
+// ===========================================================================
+
+// Regex: (sign1)(currency)(sign2)(integer with optional grouping)(decimal)(suffix)(percent)
+const NUM_RE = /([+\-]?)([$€£]?)([+\-]?)(\d(?:[\d,  ]*\d)?)(\.\d+)?([KMBkmb]?)(%?)/g;
+
+function parseNumToken(m: RegExpExecArray): number {
+	const sign = (m[1] === '-' || m[3] === '-') ? -1 : 1;
+	const rawInt = m[4].replace(/[,\s ]/g, '');
+	const rawDec = m[5] ?? '';
+	const su = m[6].toUpperCase();
+	let val = parseFloat(rawInt + rawDec);
+	if (isNaN(val)) return 0;
+	if (su === 'K') val *= 1e3;
+	else if (su === 'M') val *= 1e6;
+	else if (su === 'B') val *= 1e9;
+	return sign * val;
+}
+
+function formatNumToken(
+	current: number,
+	m: RegExpExecArray,
+	formatMode: string,
+	rounding: string,
+): string {
+	const origSign = m[1] || m[3]; // '+', '-', or ''
+	const currency = m[2];
+	const origInt  = m[4]; // original integer string (may have grouping)
+	const origDec  = m[5] ?? '';
+	const suffix   = m[6]; // original case
+	const percent  = m[7];
+
+	const decPlaces = rounding === 'integer' ? 0 : (origDec.length > 1 ? origDec.length - 1 : 0);
+
+	// Scale value back through suffix before formatting.
+	const su = suffix.toUpperCase();
+	let scaledAbs = Math.abs(current);
+	if (su === 'K') scaledAbs /= 1e3;
+	else if (su === 'M') scaledAbs /= 1e6;
+	else if (su === 'B') scaledAbs /= 1e9;
+
+	// Split into integer and decimal strings.
+	const roundedStr = scaledAbs.toFixed(decPlaces);
+	const dotIdx     = roundedStr.indexOf('.');
+	let intPart      = dotIdx >= 0 ? roundedStr.slice(0, dotIdx) : roundedStr;
+	const decPart    = dotIdx >= 0 ? roundedStr.slice(dotIdx + 1) : '';
+
+	// For fixedWidth, pad the integer part to match the original digit count.
+	if (formatMode === 'fixedWidth') {
+		const origNoSep = origInt.replace(/[,\s ]/g, '');
+		intPart = intPart.padStart(origNoSep.length, '0');
+	}
+
+	// Detect and re-apply original grouping separator.
+	const groupSep = /\d,\d/.test(origInt) ? ',' : /\d[  ]\d/.test(origInt) ? ' ' : '';
+	if (groupSep && intPart.length > 3) {
+		const parts: string[] = [];
+		let s = intPart;
+		while (s.length > 3) { parts.unshift(s.slice(-3)); s = s.slice(0, -3); }
+		parts.unshift(s);
+		intPart = parts.join(groupSep);
+	}
+
+	const decStr  = decPart ? `.${decPart}` : '';
+	const showSign = current < 0 ? '-' : origSign === '+' ? '+' : '';
+	return showSign + currency + intPart + decStr + suffix + percent;
+}
+
+registerTransition('numberCountUp', (p, properties, params) => {
+	const t = stage(p);
+	if (typeof properties.text !== 'string') return properties;
+	const text = properties.text;
+
+	const startValue  = typeof params.startValue === 'number' ? params.startValue : 0;
+	const mode        = params.mode       ?? 'allNumbers';
+	const formatMode  = params.formatMode ?? 'natural';
+	const rounding    = params.rounding   ?? 'auto';
+
+	// Collect all number tokens in the string.
+	NUM_RE.lastIndex = 0;
+	type Token = { start: number; end: number; finalVal: number; match: RegExpExecArray };
+	const tokens: Token[] = [];
+	let m: RegExpExecArray | null;
+	while ((m = NUM_RE.exec(text)) !== null) {
+		if (m[0].length === 0) { NUM_RE.lastIndex++; continue; }
+		tokens.push({ start: m.index, end: m.index + m[0].length, finalVal: parseNumToken(m), match: m });
+	}
+
+	if (!tokens.length) return properties;
+
+	const toProcess = mode === 'firstNumber' ? new Set([tokens[0].start]) : new Set(tokens.map(tk => tk.start));
+
+	let result = '';
+	let pos = 0;
+	for (const token of tokens) {
+		result += text.slice(pos, token.start);
+		if (toProcess.has(token.start)) {
+			result += formatNumToken(lerp(startValue, token.finalVal, t), token.match, formatMode, rounding);
+		} else {
+			result += token.match[0];
+		}
+		pos = token.end;
+	}
+	result += text.slice(pos);
+
+	properties.text = result;
+	return properties;
+}, {
+	defaultEasing: 'linear',
+	fieldsConfig: {
+		startValue:  { name: 'Start value',   type: 'number', default: 0,            min: -1e9, max: 1e9, step: 1 },
+		mode:        { name: 'Mode',          type: 'option', default: 'allNumbers',  options: { allNumbers: 'All numbers', firstNumber: 'First number only' } },
+		formatMode:  { name: 'Format mode',   type: 'option', default: 'natural',    options: { natural: 'Natural', fixedWidth: 'Fixed width' } },
+		rounding:    { name: 'Rounding',      type: 'option', default: 'auto',       options: { auto: 'Auto', integer: 'Integer', decimal: 'Decimal' } },
+		locale:      { name: 'Locale',        type: 'option', default: 'auto',       options: { auto: 'Auto', 'en-US': 'English (US)', 'fr-FR': 'French (FR)' } },
+	},
+});
