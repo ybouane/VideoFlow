@@ -69,6 +69,7 @@ const RENDERER_CSS = `
 	width:calc(var(--project-width) * 1px);
 	height:calc(var(--project-height) * 1px);
 	perspective: calc(100 * var(--vw));
+	isolation: isolate;
 }
 [data-element] {
 	position:absolute;
