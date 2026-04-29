@@ -881,12 +881,21 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec3 tinted = mix(baseRgb, u_tintColor.rgb, u_tintAmount * u_tintColor.a);
 	// Per-frame seed makes the frost speckle alive (the underlying blur and
 	// fbm highlight stay frozen because they should scroll with the layer).
+	// mod() keeps the time offset bounded so hash21 stays well-distributed
+	// at long timestamps (large tFrame * constant overflows float32 fract
+	// precision and turns the speckle into structured stripes).
 	float tFrame = floor(u_time * 60.0);
-	float frost = u_frostAmount * (hash21(uv * 200.0 + vec2(tFrame * 53.17, tFrame * 71.93)) * 0.2 - 0.1);
+	vec2 tOff = vec2(mod(tFrame * 53.17, 977.0), mod(tFrame * 71.93, 991.0));
+	float frost = u_frostAmount * (hash21(uv * 200.0 + tOff) * 0.2 - 0.1);
 	tinted += vec3(frost);
 	float h = fbm(uv * 8.0);
 	float highlight = u_highlightAmount * smoothstep(0.55, 0.95, h);
 	tinted += vec3(highlight);
+	// Clamp to [0,1] before re-premultiplying. frost/highlight can push tinted
+	// slightly above 1, and for semi-transparent layers tinted * blurred.a
+	// would then exceed blurred.a — invalid premultiplied alpha that the 2D
+	// canvas source-over composite reads as over-bright fringe artefacts.
+	tinted = clamp(tinted, 0.0, 1.0);
 	return vec4(tinted * blurred.a, blurred.a);
 }` },
 ], {
