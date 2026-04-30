@@ -1,5 +1,5 @@
 /**
- * Built-in transition presets — a curated, high-quality library of 20 entry
+ * Built-in transition presets — a curated, high-quality library of entry
  * patterns that double as exits.
  *
  * **Signed-progress contract** (see `../transitions.ts`):
@@ -140,14 +140,14 @@ registerTransition('fadeIn', (p, properties) => {
 }, { defaultEasing: 'linear', fieldsConfig: {} });
 
 // ===========================================================================
-// 2. slideUpFade — start below rest, slide up while fading in.
+// 2. slideUp — enters from below, slides up to rest.
 // params: { distance?: 0.10, fade?: true }
 // ===========================================================================
-registerTransition('slideUpFade', (p, properties, params) => {
+registerTransition('slideUp', (p, properties, params) => {
 	const t = stage(p);
 	const distance = typeof params.distance === 'number' ? params.distance : 0.10;
 	properties.position = addPosition(properties.position, 0, distance * (1 - t));
-	if (params.fade !== false) multOpacity(properties, t);
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 2));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -158,14 +158,32 @@ registerTransition('slideUpFade', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 3. slideLeftFade — start to the right of rest, slide left while fading in.
+// 3. slideDown — enters from above, slides down to rest.
+// params: { distance?: 0.10, fade?: true }
+// ===========================================================================
+registerTransition('slideDown', (p, properties, params) => {
+	const t = stage(p);
+	const distance = typeof params.distance === 'number' ? params.distance : 0.10;
+	properties.position = addPosition(properties.position, 0, -distance * (1 - t));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 2));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.10, min: 0, max: 1, step: 0.01 },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 4. slideLeft — enters from the right, slides left to rest.
 // params: { distance?: 0.12, fade?: true }
 // ===========================================================================
-registerTransition('slideLeftFade', (p, properties, params) => {
+registerTransition('slideLeft', (p, properties, params) => {
 	const t = stage(p);
 	const distance = typeof params.distance === 'number' ? params.distance : 0.12;
 	properties.position = addPosition(properties.position, distance * (1 - t), 0);
-	if (params.fade !== false) multOpacity(properties, t);
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 2));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -176,15 +194,33 @@ registerTransition('slideLeftFade', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 4. zoomInFade — scale up from `from` to 1 while fading in.
+// 5. slideRight — enters from the left, slides right to rest.
+// params: { distance?: 0.12, fade?: true }
+// ===========================================================================
+registerTransition('slideRight', (p, properties, params) => {
+	const t = stage(p);
+	const distance = typeof params.distance === 'number' ? params.distance : 0.12;
+	properties.position = addPosition(properties.position, -distance * (1 - t), 0);
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 2));
+	return properties;
+}, {
+	defaultEasing: 'easeOut',
+	fieldsConfig: {
+		distance: { name: 'Distance', type: 'number', default: 0.12, min: 0, max: 1, step: 0.01 },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
+	},
+});
+
+// ===========================================================================
+// 6. zoomIn — scale up from `from` to 1.
 // params: { from?: 0.85, fade?: true }
 // ===========================================================================
-registerTransition('zoomInFade', (p, properties, params) => {
+registerTransition('zoomIn', (p, properties, params) => {
 	const t = stage(p);
 	const from = typeof params.from === 'number' ? params.from : 0.85;
 	const factor = lerp(from, 1, t);
 	properties.scale = scaleMul(properties.scale, factor);
-	if (params.fade !== false) multOpacity(properties, t);
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 2));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -195,9 +231,9 @@ registerTransition('zoomInFade', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 5. overshootPop — springy scale-in past 1, settles to 1. Tiny tilt that
+// 7. overshootPop — springy scale-in past 1, settles to 1. Tiny tilt that
 // resolves to 0. Best on emoji / sticker / badge layers.
-// params: { from?: 0.4, overshoot?: 1.7, tilt?: 6 }
+// params: { from?: 0.4, overshoot?: 1.7, tilt?: 6, fade?: true }
 // ===========================================================================
 registerTransition('overshootPop', (p, properties, params, ctx) => {
 	const t = stage(p);
@@ -212,7 +248,7 @@ registerTransition('overshootPop', (p, properties, params, ctx) => {
 	// Random per-layer tilt direction (±) that fades to 0 by t = 1.
 	const dir = seededRandom(ctx.seed, 'overshootPop:tiltDir') < 0.5 ? -1 : 1;
 	properties.rotation = addRotationDelta(properties.rotation, 0, 0, dir * tiltDeg * (1 - t));
-	multOpacity(properties, clamp01(t * 1.5));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
 	return properties;
 }, {
 	defaultEasing: 'linear',
@@ -220,13 +256,14 @@ registerTransition('overshootPop', (p, properties, params, ctx) => {
 		from:      { name: 'Start scale', type: 'number', default: 0.4,     min: 0, max: 2,  step: 0.01 },
 		overshoot: { name: 'Overshoot',   type: 'number', default: 1.70158, min: 0, max: 5,  step: 0.05 },
 		tilt:      { name: 'Tilt',        type: 'number', default: 6,       min: 0, max: 45, step: 1, unit: 'deg' },
+		fade:      { name: 'Fade',        type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 6. blurResolve — heavy gaussian blur that resolves to sharp.
+// 8. blurResolve — heavy gaussian blur that resolves to sharp.
 // Uses the WebGL `gaussianBlur` effect (multi-pass, alpha-aware by default).
-// params: { amount?: 30, quality?: 8 }
+// params: { amount?: 1.5, quality?: 8, fade?: true }
 // ===========================================================================
 registerTransition('blurResolve', (p, properties, params) => {
 	const t = stage(p);
@@ -243,7 +280,7 @@ registerTransition('blurResolve', (p, properties, params) => {
 		edgeMode: 'transparent',
 		alphaAware: true,
 	});
-	multOpacity(properties, lerp(0.6, 1, t));
+	if (params.fade !== false) multOpacity(properties, lerp(0.6, 1, t));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -251,13 +288,14 @@ registerTransition('blurResolve', (p, properties, params) => {
 	fieldsConfig: {
 		amount:  { name: 'Amount',  type: 'number', default: 1.5, min: 0, max: 10, step: 0.1, unit: 'em' },
 		quality: { name: 'Quality', type: 'number', default: 8,   min: 1, max: 32, step: 1, integer: true },
+		fade:    { name: 'Fade',    type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 7. motionBlurSlide — horizontal slide-in with directional motion blur that
+// 9. motionBlurSlide — horizontal slide-in with directional motion blur that
 // matches the slide velocity.
-// params: { distance?: 0.18, blur?: 90, angle?: 0 }
+// params: { distance?: 0.18, blur?: 4.5, angle?: 0, fade?: true }
 // ===========================================================================
 registerTransition('motionBlurSlide', (p, properties, params) => {
 	const t = stage(p);
@@ -286,7 +324,7 @@ registerTransition('motionBlurSlide', (p, properties, params) => {
 			edgeMode: 'transparent',
 		});
 	}
-	multOpacity(properties, clamp01(t * 1.5));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -295,12 +333,13 @@ registerTransition('motionBlurSlide', (p, properties, params) => {
 		distance: { name: 'Distance', type: 'number', default: 0.18, min: 0, max: 1,   step: 0.01 },
 		blur:     { name: 'Blur',     type: 'number', default: 4.5,  min: 0, max: 30,  step: 0.1, unit: 'em' },
 		angle:    { name: 'Angle',    type: 'number', default: 0,    min: 0, max: 360, step: 1, unit: 'deg' },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 8. radialZoom — radial zoom blur from a center, resolves outward to sharp.
-// params: { amount?: 0.4, centerX?: 0.5, centerY?: 0.5, mode?: 'out' }
+// 10. radialZoom — radial zoom blur from a center, resolves outward to sharp.
+// params: { amount?: 0.4, centerX?: 0.5, centerY?: 0.5, mode?: 'out', fade?: true }
 // ===========================================================================
 registerTransition('radialZoom', (p, properties, params) => {
 	const t = stage(p);
@@ -320,7 +359,7 @@ registerTransition('radialZoom', (p, properties, params) => {
 			mode,
 		});
 	}
-	multOpacity(properties, lerp(0.5, 1, t));
+	if (params.fade !== false) multOpacity(properties, lerp(0.5, 1, t));
 	const startScale = mode === 'in' ? 1.1 : 0.92;
 	properties.scale = scaleMul(properties.scale, lerp(startScale, 1, t));
 	return properties;
@@ -328,16 +367,17 @@ registerTransition('radialZoom', (p, properties, params) => {
 	defaultEasing: 'easeOut',
 	injectsEffects: true,
 	fieldsConfig: {
-		amount:  { name: 'Amount',   type: 'number', default: 0.4, min: 0, max: 2, step: 0.05 },
-		centerX: { name: 'Center X', type: 'number', default: 0.5, min: 0, max: 1, step: 0.01 },
-		centerY: { name: 'Center Y', type: 'number', default: 0.5, min: 0, max: 1, step: 0.01 },
+		amount:  { name: 'Amount',   type: 'number', default: 0.4,  min: 0, max: 2, step: 0.05 },
+		centerX: { name: 'Center X', type: 'number', default: 0.5,  min: 0, max: 1, step: 0.01 },
+		centerY: { name: 'Center Y', type: 'number', default: 0.5,  min: 0, max: 1, step: 0.01 },
 		mode:    { name: 'Mode',     type: 'option', default: 'out', options: { in: 'Zoom In', out: 'Zoom Out' } },
+		fade:    { name: 'Fade',     type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 9. rotate3dY — rotate around the Y axis (door-style swing) into rest.
-// params: { angle?: 75, fade?: true }
+// 11. rotate3dY — rotate around the Y axis (door-style swing) into rest.
+// params: { angle?: 75, direction?: 'auto'|'left'|'right', fade?: true }
 // ===========================================================================
 registerTransition('rotate3dY', (p, properties, params, ctx) => {
 	const t = stage(p);
@@ -361,7 +401,7 @@ registerTransition('rotate3dY', (p, properties, params, ctx) => {
 });
 
 // ===========================================================================
-// 10. tilt3dUp — tilt forward around X axis (top edge moves toward camera).
+// 12. tilt3dUp — tilt forward around X axis (top edge moves toward camera).
 // params: { angle?: 60, lift?: 0.04, fade?: true }
 // ===========================================================================
 registerTransition('tilt3dUp', (p, properties, params) => {
@@ -382,9 +422,9 @@ registerTransition('tilt3dUp', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 11. spinIn — spin around Z while scaling up. Direction is per-layer
+// 13. spinIn — spin around Z while scaling up. Direction is per-layer
 // random unless `direction` is set.
-// params: { angle?: 360, from?: 0.2, direction?: 'cw' | 'ccw' }
+// params: { angle?: 360, from?: 0.2, direction?: 'cw'|'ccw', fade?: true }
 // ===========================================================================
 registerTransition('spinIn', (p, properties, params, ctx) => {
 	const t = stage(p);
@@ -396,7 +436,7 @@ registerTransition('spinIn', (p, properties, params, ctx) => {
 	else dir = seededRandom(ctx.seed, 'spinIn:dir') < 0.5 ? -1 : 1;
 	properties.rotation = addRotationDelta(properties.rotation, 0, 0, dir * angle * (1 - t));
 	properties.scale = scaleMul(properties.scale, lerp(from, 1, t));
-	multOpacity(properties, clamp01(t * 1.5));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -404,13 +444,14 @@ registerTransition('spinIn', (p, properties, params, ctx) => {
 		angle:     { name: 'Angle',       type: 'number', default: 360,    min: 0, max: 1080, step: 1, unit: 'deg' },
 		from:      { name: 'Start scale', type: 'number', default: 0.2,    min: 0, max: 2,    step: 0.01 },
 		direction: { name: 'Direction',   type: 'option', default: 'auto', options: { auto: 'Random', cw: 'Clockwise', ccw: 'Counter-clockwise' } },
+		fade:      { name: 'Fade',        type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 12. glitchResolve — heavy digital block + RGB split glitch resolves to clean.
+// 14. glitchResolve — heavy digital block + RGB split glitch resolves to clean.
 // Combines `digitalBlocks` + `rgbSplit`, both fading to 0 as t → 1.
-// params: { intensity?: 1, blockSize?: 24 }
+// params: { intensity?: 1, blockSize?: 1.25, fade?: true }
 // ===========================================================================
 registerTransition('glitchResolve', (p, properties, params, ctx) => {
 	const t = stage(p);
@@ -439,7 +480,7 @@ registerTransition('glitchResolve', (p, properties, params, ctx) => {
 		axis: 'horizontal',
 		preserveLuminance: false,
 	});
-	multOpacity(properties, lerp(0.6, 1, t));
+	if (params.fade !== false) multOpacity(properties, lerp(0.6, 1, t));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -447,13 +488,14 @@ registerTransition('glitchResolve', (p, properties, params, ctx) => {
 	fieldsConfig: {
 		intensity: { name: 'Intensity',  type: 'number', default: 1,    min: 0, max: 2,  step: 0.05 },
 		blockSize: { name: 'Block size', type: 'number', default: 1.25, min: 0, max: 10, step: 0.05, unit: 'em' },
+		fade:      { name: 'Fade',       type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 13. rgbSplitSnap — strong horizontal RGB split that snaps to clean. A small
+// 15. rgbSplitSnap — strong horizontal RGB split that snaps to clean. A small
 // scale overshoot adds the "snap-into-place" pop.
-// params: { amount?: 0.04, axis?: 'horizontal'|'vertical'|'both' }
+// params: { amount?: 0.04, axis?: 'horizontal'|'vertical'|'both', fade?: true }
 // ===========================================================================
 registerTransition('rgbSplitSnap', (p, properties, params) => {
 	const t = stage(p);
@@ -473,7 +515,7 @@ registerTransition('rgbSplitSnap', (p, properties, params) => {
 	// without re-easing the whole transition.
 	const scaleFactor = lerp(1.06, 1, easeOutBack(t, 1.2));
 	properties.scale = scaleMul(properties.scale, scaleFactor);
-	multOpacity(properties, clamp01(t * 1.4));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.4));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -481,12 +523,13 @@ registerTransition('rgbSplitSnap', (p, properties, params) => {
 	fieldsConfig: {
 		amount: { name: 'Amount', type: 'number', default: 0.04,         min: 0, max: 0.5, step: 0.005 },
 		axis:   { name: 'Axis',   type: 'option', default: 'horizontal', options: { horizontal: 'Horizontal', vertical: 'Vertical', both: 'Both' } },
+		fade:   { name: 'Fade',   type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 14. sliceAssemble — layer assembles from offset slices snapping into place.
-// params: { sliceCount?: 30, offset?: 0.18, axis?: 'horizontal'|'vertical' }
+// 16. sliceAssemble — layer assembles from offset slices snapping into place.
+// params: { sliceCount?: 30, offset?: 0.18, axis?: 'horizontal'|'vertical', fade?: true }
 // ===========================================================================
 registerTransition('sliceAssemble', (p, properties, params) => {
 	const t = stage(p);
@@ -502,7 +545,7 @@ registerTransition('sliceAssemble', (p, properties, params) => {
 		axis,
 		edgeMode: 'transparent',
 	});
-	multOpacity(properties, clamp01(t * 1.3));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.3));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -511,11 +554,12 @@ registerTransition('sliceAssemble', (p, properties, params) => {
 		sliceCount: { name: 'Slice count', type: 'number', default: 30,           min: 2, max: 200, step: 1, integer: true },
 		offset:     { name: 'Offset',      type: 'number', default: 0.18,         min: 0, max: 1,   step: 0.01 },
 		axis:       { name: 'Axis',        type: 'option', default: 'horizontal', options: { horizontal: 'Horizontal', vertical: 'Vertical' } },
+		fade:       { name: 'Fade',        type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 15. noiseDissolve — fbm-noise dissolve reveal, with a glowing edge band.
+// 17. noiseDissolve — fbm-noise dissolve reveal, with a glowing edge band.
 // params: { noiseScale?: 8, edgeWidth?: 0.04, edgeColor?: '#ffffff', softness?: 0.04 }
 // ===========================================================================
 registerTransition('noiseDissolve', (p, properties, params) => {
@@ -546,7 +590,7 @@ registerTransition('noiseDissolve', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 16. burnDissolve — fiery dissolve with hot embers and ash residue.
+// 18. burnDissolve — fiery dissolve with hot embers and ash residue.
 // params: { noiseScale?: 6, edgeWidth?: 0.06, ashAmount?: 0.4,
 //           burnColor?: '#3a0a00', hotColor?: '#ffb347', softness?: 0.02 }
 // ===========================================================================
@@ -583,7 +627,7 @@ registerTransition('burnDissolve', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 17. wipeReveal — linear wipe along an angle.
+// 19. wipeReveal — linear wipe along an angle.
 // params: { angle?: 0, softness?: 0.03, edgeWidth?: 0.02, edgeColor?: '#ffffff' }
 // ===========================================================================
 registerTransition('wipeReveal', (p, properties, params) => {
@@ -614,7 +658,7 @@ registerTransition('wipeReveal', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 18. scanReveal — directional scanner reveal with edge glow + jitter.
+// 20. scanReveal — directional scanner reveal with edge glow + jitter.
 // params: { angle?: 0, bandWidth?: 0.05, softness?: 0.015,
 //           edgeGlow?: 1.2, edgeDistortion?: 0.006 }
 // ===========================================================================
@@ -649,7 +693,7 @@ registerTransition('scanReveal', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 19. lightSweepReveal — wipe reveal with a glossy light band sweeping ahead.
+// 21. lightSweepReveal — wipe reveal with a glossy light band sweeping ahead.
 // Combines `wipeMask` (the actual reveal) and `lightSweep` (the gloss band).
 // params: { angle?: 30, bandWidth?: 0.18, sweepColor?: '#ffffff', intensity?: 1.4 }
 // ===========================================================================
@@ -691,9 +735,9 @@ registerTransition('lightSweepReveal', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 20. lensSnap — strong fisheye bulge that settles to flat. Pairs nicely with
+// 22. lensSnap — strong fisheye bulge that settles to flat. Pairs nicely with
 // a tiny zoom snap so the layer "pops" into focus.
-// params: { strength?: 0.9, radius?: 0.5, zoom?: 1 }
+// params: { strength?: 0.9, radius?: 0.5, zoom?: 1, fade?: true }
 // ===========================================================================
 registerTransition('lensSnap', (p, properties, params) => {
 	const t = stage(p);
@@ -711,7 +755,7 @@ registerTransition('lensSnap', (p, properties, params) => {
 		edgeMode: 'transparent',
 	});
 	properties.scale = scaleMul(properties.scale, lerp(1.08, 1, t));
-	multOpacity(properties, clamp01(t * 1.4));
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.4));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
@@ -720,96 +764,12 @@ registerTransition('lensSnap', (p, properties, params) => {
 		strength: { name: 'Strength', type: 'number', default: 0.9, min: -2, max: 2, step: 0.05 },
 		radius:   { name: 'Radius',   type: 'number', default: 0.5, min: 0,  max: 2, step: 0.05 },
 		zoom:     { name: 'Zoom',     type: 'number', default: 1,   min: 0,  max: 4, step: 0.05 },
+		fade:     { name: 'Fade',     type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// Backwards-compatible aliases for the small set of legacy preset names that
-// existed before this rewrite. They forward to the closest new preset so old
-// project JSON keeps rendering. Prefer the new names in new work.
-// ===========================================================================
-// `fade` ≡ `fadeIn` (linear opacity 0 → 1, both directions).
-registerTransition('fade', (p, properties) => {
-	multOpacity(properties, stage(p));
-	return properties;
-}, { defaultEasing: 'linear', fieldsConfig: {} });
-
-// `zoom` — symmetric scale (preserves the legacy `from` semantics).
-registerTransition('zoom', (p, properties, params) => {
-	const t = stage(p);
-	const from = typeof params.from === 'number' ? params.from : 0.8;
-	properties.scale = scaleMul(properties.scale, lerp(from, 1, t));
-	return properties;
-}, {
-	defaultEasing: 'easeOut',
-	fieldsConfig: {
-		from: { name: 'Start scale', type: 'number', default: 0.8, min: 0, max: 2, step: 0.05 },
-	},
-});
-
-// `blur` — legacy CSS-blur preset (no WebGL, no effect injection).
-registerTransition('blur', (p, properties, params) => {
-	const amount = typeof params.amount === 'number' ? params.amount : 4;
-	const extra = amount * Math.abs(p);
-	const cur = properties.filterBlur ?? '0em';
-	const m = String(cur).match(/^(-?[0-9.]+)([a-z%]*)$/i);
-	const n = m ? parseFloat(m[1]) : 0;
-	const u = (m && m[2]) ? m[2] : 'em';
-	properties.filterBlur = `${n + extra}${u}`;
-	return properties;
-}, {
-	defaultEasing: 'easeOut',
-	fieldsConfig: {
-		amount: { name: 'Amount', type: 'number', default: 4, min: 0, max: 40, step: 0.5 },
-	},
-});
-
-// `riseFade` — legacy upward continuous-motion + symmetric fade.
-registerTransition('riseFade', (p, properties, params) => {
-	multOpacity(properties, 1 - Math.abs(p));
-	const distance = typeof params.distance === 'number' ? params.distance : 0.08;
-	properties.position = addPosition(properties.position, 0, -distance * p);
-	return properties;
-}, {
-	defaultEasing: 'easeOut',
-	fieldsConfig: {
-		distance: { name: 'Distance', type: 'number', default: 0.08, min: 0, max: 1, step: 0.01 },
-	},
-});
-
-// `slideFromTop` / `slideFromBottom` / `slideFromLeft` / `slideFromRight`
-// — legacy symmetric slides. They mirror on exit.
-function makeSlideLegacy(dx: number, dy: number) {
-	return (p: number, properties: Record<string, any>, params: Record<string, any>) => {
-		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
-		const mag = Math.abs(p);
-		properties.position = addPosition(properties.position, dx * distance * mag, dy * distance * mag);
-		return properties;
-	};
-}
-const SLIDE_LEGACY_FIELDS = {
-	distance: { name: 'Distance', type: 'number', default: 0.15, min: 0, max: 2, step: 0.01 } as const,
-};
-registerTransition('slideFromTop',    makeSlideLegacy(0, -1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('slideFromBottom', makeSlideLegacy(0, +1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('slideFromLeft',   makeSlideLegacy(-1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('slideFromRight',  makeSlideLegacy(+1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-
-// `driftLeft` / `driftRight` — legacy continuous-motion (signed p).
-function makeDriftLegacy(dx: number, dy: number) {
-	return (p: number, properties: Record<string, any>, params: Record<string, any>) => {
-		const distance = typeof params.distance === 'number' ? params.distance : 0.15;
-		properties.position = addPosition(properties.position, dx * distance * p, dy * distance * p);
-		return properties;
-	};
-}
-registerTransition('driftLeft',  makeDriftLegacy(-1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('driftRight', makeDriftLegacy(+1, 0), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('rise',       makeDriftLegacy(0, -1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-registerTransition('fall',       makeDriftLegacy(0, +1), { defaultEasing: 'easeOut', fieldsConfig: SLIDE_LEGACY_FIELDS });
-
-// ===========================================================================
-// Text-specific transitions (21–25)
+// Text-specific transitions (23–27)
 //
 // These presets modify the `text` string and/or typographic CSS properties
 // (letterSpacing, filterBlur, opacity) and are meaningful only on text layers.
@@ -826,7 +786,7 @@ const SCRAMBLE_CHARSETS: Record<string, string> = {
 };
 
 // ===========================================================================
-// 21. typewriter — reveals text one character at a time.
+// 23. typewriter — reveals text one character at a time.
 // params: { cursorStyle?: 'none' | 'bar' | 'block' | 'underscore' }
 // ===========================================================================
 registerTransition('typewriter', (p, properties, params) => {
@@ -892,7 +852,7 @@ const TRACKING_FIELDS_BASE = {
 };
 
 // ===========================================================================
-// 22. trackingExpand — text starts compressed and expands into its final spacing.
+// 24. trackingExpand — text starts compressed and expands into its final spacing.
 // params: { startTracking?: -0.12, finalTracking?: 0, startOpacity?: 0, blur?: 0.3 }
 // ===========================================================================
 registerTransition('trackingExpand', (p, properties, params) => {
@@ -913,7 +873,7 @@ registerTransition('trackingExpand', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 23. trackingContract — text starts wide and contracts into its final spacing.
+// 25. trackingContract — text starts wide and contracts into its final spacing.
 // params: { startTracking?: 0.3, finalTracking?: 0, startOpacity?: 0, blur?: 0.3 }
 // ===========================================================================
 registerTransition('trackingContract', (p, properties, params) => {
@@ -934,9 +894,10 @@ registerTransition('trackingContract', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 24. scrambleDecode — random characters resolve into the final text.
+// 26. scrambleDecode — random characters resolve into the final text.
 // params: { refreshRate?: 15, order?: 'leftToRight'|'rightToLeft'|'random',
-//           charset?: 'letters'|'numbers'|'symbols'|'mixed', preserveSpaces?: true }
+//           charset?: 'letters'|'numbers'|'symbols'|'mixed',
+//           refreshCharacters?: true, preserveSpaces?: true }
 // ===========================================================================
 registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 	const t = stage(p);
@@ -948,6 +909,7 @@ registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 	const refreshRate   = typeof params.refreshRate === 'number' ? params.refreshRate : 15;
 	const order         = params.order ?? 'leftToRight';
 	const cs            = SCRAMBLE_CHARSETS[params.charset ?? 'letters'] ?? SCRAMBLE_CHARSETS.letters;
+	const refreshCharacters = params.refreshCharacters !== false;
 	const preserveSpaces = params.preserveSpaces !== false;
 
 	// Quantise to `refreshRate` visual updates per second.
@@ -980,7 +942,8 @@ registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 		} else if (lockedSet.has(i)) {
 			result += ch;
 		} else {
-			result += cs[cyrb53(`${ctx.seed}|${i}|${tick}`) % cs.length];
+			const salt = refreshCharacters ? `${i}|${tick}` : `${i}|stable`;
+			result += cs[cyrb53(`${ctx.seed}|${salt}`) % cs.length];
 		}
 	}
 
@@ -992,12 +955,13 @@ registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 		refreshRate:    { name: 'Refresh rate',    type: 'number', default: 15,           min: 1,  max: 60,  step: 1 },
 		order:          { name: 'Reveal order',    type: 'option', default: 'leftToRight', options: { leftToRight: 'Left to right', rightToLeft: 'Right to left', random: 'Random' } },
 		charset:        { name: 'Charset',         type: 'option', default: 'letters',    options: { letters: 'Letters', numbers: 'Numbers', symbols: 'Symbols', mixed: 'Mixed' } },
+		refreshCharacters: { name: 'Refresh characters', type: 'toggle', default: true },
 		preserveSpaces: { name: 'Preserve spaces', type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 25. numberCountUp — detects numbers in the text and counts them from zero
+// 27. numberCountUp — detects numbers in the text and counts them from zero
 // (or `startValue`) to their final values.
 //
 // Supports: currency ($, €, £), signs (+/-), decimals, grouped thousands
@@ -1009,11 +973,11 @@ registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 // ===========================================================================
 
 // Regex: (sign1)(currency)(sign2)(integer with optional grouping)(decimal)(suffix)(percent)
-const NUM_RE = /([+\-]?)([$€£]?)([+\-]?)(\d(?:[\d,  ]*\d)?)(\.\d+)?([KMBkmb]?)(%?)/g;
+const NUM_RE = /([+\-]?)([$€£]?)([+\-]?)(\d(?:[\d,  ]*\d)?)(\.\d+)?([KMBkmb]?)(%?)/g;
 
 function parseNumToken(m: RegExpExecArray): number {
 	const sign = (m[1] === '-' || m[3] === '-') ? -1 : 1;
-	const rawInt = m[4].replace(/[,\s ]/g, '');
+	const rawInt = m[4].replace(/[,\s ]/g, '');
 	const rawDec = m[5] ?? '';
 	const su = m[6].toUpperCase();
 	let val = parseFloat(rawInt + rawDec);
@@ -1054,12 +1018,12 @@ function formatNumToken(
 
 	// For fixedWidth, pad the integer part to match the original digit count.
 	if (formatMode === 'fixedWidth') {
-		const origNoSep = origInt.replace(/[,\s ]/g, '');
+		const origNoSep = origInt.replace(/[,\s ]/g, '');
 		intPart = intPart.padStart(origNoSep.length, '0');
 	}
 
 	// Detect and re-apply original grouping separator.
-	const groupSep = /\d,\d/.test(origInt) ? ',' : /\d[  ]\d/.test(origInt) ? ' ' : '';
+	const groupSep = /\d,\d/.test(origInt) ? ',' : /\d[  ]\d/.test(origInt) ? ' ' : '';
 	if (groupSep && intPart.length > 3) {
 		const parts: string[] = [];
 		let s = intPart;
