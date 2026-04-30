@@ -245,7 +245,7 @@ export default class RuntimeBaseLayer {
 
 		const { pIn, pOut } = this.getTransitionProgress(frame);
 
-		const ctx = { seed: this.json.id, frame, fps: this.fps };
+		const ctx = { seed: this.json.id, frame, fps: this.fps, projectWidth: this.projectWidth, projectHeight: this.projectHeight };
 
 		// In-window: pIn ∈ [-1, 0). Ease the progress portion (0..1) then
 		// shift back into the signed range.

@@ -46,6 +46,11 @@ export type TransitionContext = {
 	frame: number;
 	/** Composition frames-per-second. Use alongside `frame` for rate calculations. */
 	fps: number;
+	/** Canvas pixel width. Use with `projectHeight` to correct angle-based effects
+	 *  for non-square canvases (e.g. convert a normalized-space angle to pixel space). */
+	projectWidth: number;
+	/** Canvas pixel height. */
+	projectHeight: number;
 };
 
 /**
