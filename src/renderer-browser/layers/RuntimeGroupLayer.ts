@@ -235,11 +235,17 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 			return;
 		}
 
+		// A group is a sub-timeline: its children's `startTime` / `endTime`
+		// (and any keyframe lookups against `frame`) live in group-local
+		// frames where 0 == the group's own `startFrame`. Translate the
+		// incoming absolute frame into that local space before recursing.
+		const localFrame = frame - this.startFrame;
+
 		// 1. Tick every child so its DOM reflects this frame.
 		await Promise.all(
 			this.children.map(async child => {
 				if (child.json.settings.enabled === false) return;
-				await child.renderFrame(frame);
+				await child.renderFrame(localFrame);
 			}),
 		);
 
@@ -254,7 +260,7 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 				for (const child of this.children) {
 					if (!child.lastAppliedProps) continue;
 					if (child.json.settings.enabled === false) continue;
-					await r.compositeLayerInto(ctx, child, frame);
+					await r.compositeLayerInto(ctx, child, localFrame);
 				}
 			}
 		}
