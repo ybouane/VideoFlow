@@ -600,39 +600,45 @@ export default class VideoFlow {
 							}
 						}
 
-						// Recurse — children's frame timing is absolute (anchored
-						// at groupStartFrames) so the renderer treats them as
-						// regular timed layers without group-aware lookups.
-						const childEndT = await parseSeries(action.actions, groupStartFrames, action.id);
+						// Recurse — a group is a sub-timeline, so its children's
+						// frame timing is RELATIVE to the group: `t` resets to 0
+						// inside the group's scope. Children's `startTimeFrames`
+						// and `endTimeFrames` are stored in group-local frames;
+						// `RuntimeGroupLayer` translates the absolute project
+						// frame to local frames before invoking each child.
+						const childEndT = await parseSeries(action.actions, 0, action.id);
 
 						// If user gave an explicit sourceDuration, honor it.
 						// Otherwise the group spans from its start to the end of
 						// its last child (or to the project's end at finalization
-						// time when no children are bounded yet).
+						// time when no children are bounded yet). Children's ends
+						// are now relative, so add `groupStartFrames` to convert
+						// back to absolute for the group's own footprint.
 						if (action.settings?.sourceDuration != null) {
 							const explicitFrames = timeToFrames(action.settings.sourceDuration, fps);
 							groupComp.endTimeFrames = groupStartFrames + explicitFrames;
 						} else if (groupComp.childIds!.length > 0) {
-							let maxEnd = groupStartFrames;
+							let maxRelEnd = 0;
 							let anyBounded = false;
 							for (const cid of groupComp.childIds!) {
 								const child = compiled.get(cid);
 								if (!child) continue;
 								if (child.endTimeFrames !== false) {
 									anyBounded = true;
-									if (child.endTimeFrames > maxEnd) maxEnd = child.endTimeFrames;
+									if (child.endTimeFrames > maxRelEnd) maxRelEnd = child.endTimeFrames;
 								}
 							}
-							groupComp.endTimeFrames = anyBounded ? maxEnd : false;
+							groupComp.endTimeFrames = anyBounded ? groupStartFrames + maxRelEnd : false;
 						}
 
 						// Advance the outer flow pointer. `waitFor` on a group
 						// defaults to `'finish'` (the whole composite is treated
 						// as one unit on the outer timeline), mirroring how
-						// `$.parallel()` advances to its longest branch.
+						// `$.parallel()` advances to its longest branch. Convert
+						// the relative `childEndT` fallback to absolute.
 						const groupEndForWait = groupComp.endTimeFrames !== false
 							? groupComp.endTimeFrames
-							: childEndT;
+							: groupStartFrames + childEndT;
 						const waitFor = action.options?.waitFor ?? 'finish';
 						if (waitFor === 'finish') {
 							t = groupEndForWait;
