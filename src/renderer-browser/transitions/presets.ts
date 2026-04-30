@@ -255,7 +255,7 @@ registerTransition('overshootPop', (p, properties, params, ctx) => {
 	fieldsConfig: {
 		from:      { name: 'Start scale', type: 'number', default: 0.4,     min: 0, max: 2,  step: 0.01 },
 		overshoot: { name: 'Overshoot',   type: 'number', default: 1.70158, min: 0, max: 5,  step: 0.05 },
-		tilt:      { name: 'Tilt',        type: 'number', default: 6,       min: 0, max: 45, step: 1, unit: 'deg' },
+		tilt:      { name: 'Tilt',        type: 'number', default: 6,       min: -45, max: 45, step: 1, unit: 'deg' },
 		fade:      { name: 'Fade',        type: 'toggle', default: true },
 	},
 });
@@ -293,20 +293,25 @@ registerTransition('blurResolve', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 9. motionBlurSlide — horizontal slide-in with directional motion blur that
-// matches the slide velocity.
+// 9. motionBlurSlide — directional slide-in with motion blur matching velocity.
+// `angle` is visual/pixel-space (0 = enter from right, 90 = from below).
 // params: { distance?: 0.18, blur?: 4.5, angle?: 0, fade?: true }
 // ===========================================================================
-registerTransition('motionBlurSlide', (p, properties, params) => {
+registerTransition('motionBlurSlide', (p, properties, params, ctx) => {
 	const t = stage(p);
 	const distance = typeof params.distance === 'number' ? params.distance : 0.18;
 	// `blur` is in em (matches motionBlur.amount unit). 4.5em ≈ 86px on 1920.
 	const blur = typeof params.blur === 'number' ? params.blur : 4.5;
 	const angle = typeof params.angle === 'number' ? params.angle : 0;
 
-	// Slide direction follows `angle` (0 = enter from right, 90 = from below).
+	// `angle` is in pixel space. The `position` property uses separate 0..1 ranges
+	// for x (fraction of width) and y (fraction of height). To make the on-screen
+	// slide direction match `angle`, scale the x component by H/W so both axes
+	// produce the same pixel displacement magnitude.
 	const rad = angle * Math.PI / 180;
-	const dx = Math.cos(rad) * distance * (1 - t);
+	const W = ctx.projectWidth || 1920;
+	const H = ctx.projectHeight || 1080;
+	const dx = Math.cos(rad) * distance * (H / W) * (1 - t);
 	const dy = Math.sin(rad) * distance * (1 - t);
 	properties.position = addPosition(properties.position, dx, dy);
 
@@ -332,7 +337,7 @@ registerTransition('motionBlurSlide', (p, properties, params) => {
 	fieldsConfig: {
 		distance: { name: 'Distance', type: 'number', default: 0.18, min: 0, max: 1,   step: 0.01 },
 		blur:     { name: 'Blur',     type: 'number', default: 4.5,  min: 0, max: 30,  step: 0.1, unit: 'em' },
-		angle:    { name: 'Angle',    type: 'number', default: 0,    min: 0, max: 360, step: 1, unit: 'deg' },
+		angle:    { name: 'Angle',    type: 'number', default: 0,    min: -360, max: 360, step: 1, unit: 'deg' },
 		fade:     { name: 'Fade',     type: 'toggle', default: true },
 	},
 });
@@ -359,8 +364,8 @@ registerTransition('radialZoom', (p, properties, params) => {
 			mode,
 		});
 	}
-	if (params.fade !== false) multOpacity(properties, lerp(0.5, 1, t));
-	const startScale = mode === 'in' ? 1.1 : 0.92;
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
+	const startScale = mode === 'in' ? 1.1 : 0.88;
 	properties.scale = scaleMul(properties.scale, lerp(startScale, 1, t));
 	return properties;
 }, {
@@ -377,34 +382,27 @@ registerTransition('radialZoom', (p, properties, params) => {
 
 // ===========================================================================
 // 11. rotate3dY — rotate around the Y axis (door-style swing) into rest.
-// params: { angle?: 75, direction?: 'auto'|'left'|'right', fade?: true }
+// params: { angle?: 75, fade?: true }
 // ===========================================================================
-registerTransition('rotate3dY', (p, properties, params, ctx) => {
+registerTransition('rotate3dY', (p, properties, params) => {
 	const t = stage(p);
 	const angle = typeof params.angle === 'number' ? params.angle : 75;
-	// Pseudo-random per-layer direction so rows of layers don't all swing
-	// the same way unless the caller explicitly sets `direction`.
-	let dir = 1;
-	if (params.direction === 'left') dir = -1;
-	else if (params.direction === 'right') dir = 1;
-	else dir = seededRandom(ctx.seed, 'rotate3dY:dir') < 0.5 ? -1 : 1;
-	properties.rotation = addRotationDelta(properties.rotation, 0, dir * angle * (1 - t), 0);
+	properties.rotation = addRotationDelta(properties.rotation, 0, angle * (1 - t), 0);
 	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.4));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
 	fieldsConfig: {
-		angle:     { name: 'Angle',     type: 'number', default: 75,     min: 0, max: 180, step: 1, unit: 'deg' },
-		direction: { name: 'Direction', type: 'option', default: 'auto', options: { auto: 'Random', left: 'Left', right: 'Right' } },
-		fade:      { name: 'Fade',      type: 'toggle', default: true },
+		angle: { name: 'Angle', type: 'number', default: 75, min: -180, max: 180, step: 1, unit: 'deg' },
+		fade:  { name: 'Fade',  type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 12. tilt3dUp — tilt forward around X axis (top edge moves toward camera).
+// 12. tilt3d — tilt around X axis (top edge moves toward camera).
 // params: { angle?: 60, lift?: 0.04, fade?: true }
 // ===========================================================================
-registerTransition('tilt3dUp', (p, properties, params) => {
+registerTransition('tilt3d', (p, properties, params) => {
 	const t = stage(p);
 	const angle = typeof params.angle === 'number' ? params.angle : 60;
 	const lift = typeof params.lift === 'number' ? params.lift : 0.04;
@@ -415,36 +413,30 @@ registerTransition('tilt3dUp', (p, properties, params) => {
 }, {
 	defaultEasing: 'easeOut',
 	fieldsConfig: {
-		angle: { name: 'Angle', type: 'number', default: 60,   min: 0, max: 180, step: 1, unit: 'deg' },
+		angle: { name: 'Angle', type: 'number', default: 60,   min: -180, max: 180, step: 1, unit: 'deg' },
 		lift:  { name: 'Lift',  type: 'number', default: 0.04, min: 0, max: 0.5, step: 0.01 },
 		fade:  { name: 'Fade',  type: 'toggle', default: true },
 	},
 });
 
 // ===========================================================================
-// 13. spinIn — spin around Z while scaling up. Direction is per-layer
-// random unless `direction` is set.
-// params: { angle?: 360, from?: 0.2, direction?: 'cw'|'ccw', fade?: true }
+// 13. spinIn — spin around Z while scaling up.
+// params: { angle?: 360, from?: 0.2, fade?: true }
 // ===========================================================================
-registerTransition('spinIn', (p, properties, params, ctx) => {
+registerTransition('spinIn', (p, properties, params) => {
 	const t = stage(p);
 	const angle = typeof params.angle === 'number' ? params.angle : 360;
 	const from = typeof params.from === 'number' ? params.from : 0.2;
-	let dir: number;
-	if (params.direction === 'cw') dir = 1;
-	else if (params.direction === 'ccw') dir = -1;
-	else dir = seededRandom(ctx.seed, 'spinIn:dir') < 0.5 ? -1 : 1;
-	properties.rotation = addRotationDelta(properties.rotation, 0, 0, dir * angle * (1 - t));
+	properties.rotation = addRotationDelta(properties.rotation, 0, 0, angle * (1 - t));
 	properties.scale = scaleMul(properties.scale, lerp(from, 1, t));
 	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
 	fieldsConfig: {
-		angle:     { name: 'Angle',       type: 'number', default: 360,    min: 0, max: 1080, step: 1, unit: 'deg' },
-		from:      { name: 'Start scale', type: 'number', default: 0.2,    min: 0, max: 2,    step: 0.01 },
-		direction: { name: 'Direction',   type: 'option', default: 'auto', options: { auto: 'Random', cw: 'Clockwise', ccw: 'Counter-clockwise' } },
-		fade:      { name: 'Fade',        type: 'toggle', default: true },
+		angle: { name: 'Angle',       type: 'number', default: 360, min: -1080, max: 1080, step: 1, unit: 'deg' },
+		from:  { name: 'Start scale', type: 'number', default: 0.2, min: 0,     max: 2,    step: 0.01 },
+		fade:  { name: 'Fade',        type: 'toggle', default: true },
 	},
 });
 
@@ -650,7 +642,7 @@ registerTransition('wipeReveal', (p, properties, params) => {
 	defaultEasing: 'linear',
 	injectsEffects: true,
 	fieldsConfig: {
-		angle:     { name: 'Angle',      type: 'number', default: 0,         min: 0, max: 360, step: 1, unit: 'deg' },
+		angle:     { name: 'Angle',      type: 'number', default: 0,         min: -360, max: 360, step: 1, unit: 'deg' },
 		softness:  { name: 'Softness',   type: 'number', default: 0.03,      min: 0, max: 0.3, step: 0.005 },
 		edgeWidth: { name: 'Edge width', type: 'number', default: 0.02,      min: 0, max: 0.3, step: 0.005 },
 		edgeColor: { name: 'Edge color', type: 'color',  default: '#ffffff' },
@@ -684,7 +676,7 @@ registerTransition('scanReveal', (p, properties, params) => {
 	defaultEasing: 'linear',
 	injectsEffects: true,
 	fieldsConfig: {
-		angle:          { name: 'Angle',           type: 'number', default: 0,     min: 0, max: 360, step: 1, unit: 'deg' },
+		angle:          { name: 'Angle',           type: 'number', default: 0,     min: -360, max: 360, step: 1, unit: 'deg' },
 		bandWidth:      { name: 'Band width',      type: 'number', default: 0.05,  min: 0, max: 0.5, step: 0.005 },
 		softness:       { name: 'Softness',        type: 'number', default: 0.015, min: 0, max: 0.3, step: 0.005 },
 		edgeGlow:       { name: 'Edge glow',       type: 'number', default: 1.2,   min: 0, max: 4,   step: 0.1 },
@@ -727,7 +719,7 @@ registerTransition('lightSweepReveal', (p, properties, params) => {
 	defaultEasing: 'linear',
 	injectsEffects: true,
 	fieldsConfig: {
-		angle:      { name: 'Angle',       type: 'number', default: 30,        min: 0, max: 360, step: 1, unit: 'deg' },
+		angle:      { name: 'Angle',       type: 'number', default: 30,        min: -360, max: 360, step: 1, unit: 'deg' },
 		bandWidth:  { name: 'Band width',  type: 'number', default: 0.18,      min: 0, max: 1,   step: 0.01 },
 		sweepColor: { name: 'Sweep color', type: 'color',  default: '#ffffff' },
 		intensity:  { name: 'Intensity',   type: 'number', default: 1.4,       min: 0, max: 4,   step: 0.1 },
