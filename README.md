@@ -141,7 +141,7 @@ Every layer returned by `addText()`, `addImage()`, etc. supports:
 - `layer.fadeIn(duration?, easing?, wait?)` — fade in from transparent
 - `layer.fadeOut(duration?, easing?, wait?)` — fade out to transparent
 - `layer.show()` / `layer.hide()` — toggle visibility
-- `layer.remove()` — remove the layer at the current time
+- `layer.remove(options?)` — remove the layer at the current time, or after `options.in` without advancing the flow pointer
 
 ### Time Formats
 

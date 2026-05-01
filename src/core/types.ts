@@ -53,6 +53,16 @@ export type AddLayerOptions = {
 };
 
 /**
+ * Options passed when removing a layer from the flow.
+ *
+ * - `in` schedules removal after this offset from the current flow position.
+ *   It does not advance the flow pointer.
+ */
+export type RemoveLayerOptions = {
+	in?: Time;
+};
+
+/**
  * An animation keyframe.
  *
  * The `time` field is always in *seconds*, expressed in **source media time**
@@ -274,7 +284,7 @@ export type Action =
 	| { statement: 'parallel'; actions: Action[][] }
 	| { statement: 'addLayer'; id: Id; type: string; settings: Record<string, any>; properties: Record<string, any>; options?: AddLayerOptions }
 	| { statement: 'group'; id: Id; settings: Record<string, any>; properties: Record<string, any>; options?: AddLayerOptions; actions: Action[] }
-	| { statement: 'removeLayer'; id: Id }
+	| { statement: 'removeLayer'; id: Id; in?: Time }
 	| { statement: 'set'; id: Id; value: Record<string, any> }
 	| { statement: 'animate'; id: Id; from: Record<string, any>; to: Record<string, any>; settings: { duration: Time; easing?: Easing; wait?: boolean } };
 

@@ -49,7 +49,7 @@ export type {
 // Core types
 export type {
 	Time, Id, Easing, Keyframe, Animation,
-	Action, AddLayerOptions,
+	Action, AddLayerOptions, RemoveLayerOptions,
 	VideoJSON, LayerJSON, LayerSettingsJSON, LayerTransitionJSON, LayerEffectJSON,
 	PropertyDefinition, RenderOptions, ProjectSettings,
 } from './types.js';

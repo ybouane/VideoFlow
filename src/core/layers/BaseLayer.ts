@@ -18,7 +18,7 @@
  * `timelineDuration = sourceDuration / speed`.
  */
 
-import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, LayerJSON, LayerTransitionJSON, LayerTransitionSpec, LayerEffectJSON } from '../types.js';
+import type { Id, Time, Easing, Keyframe, Animation, PropertyDefinition, Action, AddLayerOptions, RemoveLayerOptions, LayerJSON, LayerTransitionJSON, LayerTransitionSpec, LayerEffectJSON } from '../types.js';
 import { timeToFrames, parseTime } from '../utils.js';
 
 function createLayerId(): Id {
@@ -260,14 +260,15 @@ export default class BaseLayer {
 	}
 
 	/**
-	 * Remove this layer at the current flow position.
+	 * Remove this layer at the current flow position, or after an optional
+	 * offset from it.
 	 *
-	 * Once removed, calling any further flow method on this layer throws.
+	 * `options.in` schedules the removal without advancing the flow pointer.
 	 */
-	remove(): this {
+	remove(options: RemoveLayerOptions = {}): this {
 		if (this.removed) throw new Error('Layer already removed');
 		this.removed = true;
-		this.parent.pushAction({ statement: 'removeLayer', id: this.id });
+		this.parent.pushAction({ statement: 'removeLayer', id: this.id, in: options.in ?? 0 });
 		return this;
 	}
 
