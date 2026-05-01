@@ -263,32 +263,30 @@ registerTransition('overshootPop', (p, properties, params, ctx) => {
 // ===========================================================================
 // 8. blurResolve — heavy gaussian blur that resolves to sharp.
 // Uses the WebGL `gaussianBlur` effect (multi-pass, alpha-aware by default).
-// params: { amount?: 1.5, quality?: 8, fade?: true }
+// params: { amount?: 1.5, fade?: true }
 // ===========================================================================
 registerTransition('blurResolve', (p, properties, params) => {
 	const t = stage(p);
-	if (t >= 1) return properties;
 	// `amount` is in em (matches gaussianBlur.radius unit). 1.5em ≈ 29px on a 1920px-wide project.
 	const amount = typeof params.amount === 'number' ? params.amount : 1.5;
-	const quality = typeof params.quality === 'number' ? params.quality : 8;
 	const radius = amount * (1 - t);
-	if (radius <= 0.02) return properties;
-	injectEffect(properties, 'gaussianBlur', {
-		radius,
-		quality,
-		direction: 'both',
-		edgeMode: 'transparent',
-		alphaAware: true,
-	});
-	if (params.fade !== false) multOpacity(properties, lerp(0.6, 1, t));
+	if (radius > 0.02) {
+		injectEffect(properties, 'gaussianBlur', {
+			radius,
+			direction: 'both',
+			edgeMode: 'transparent',
+			alphaAware: true,
+		});
+	}
+	// Fade from fully transparent at the start of the window to opaque before rest.
+	if (params.fade !== false) multOpacity(properties, clamp01(t * 1.5));
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
 	injectsEffects: true,
 	fieldsConfig: {
-		amount:  { name: 'Amount',  type: 'number', default: 1.5, min: 0, max: 10, step: 0.1, unit: 'em' },
-		quality: { name: 'Quality', type: 'number', default: 8,   min: 1, max: 32, step: 1, integer: true },
-		fade:    { name: 'Fade',    type: 'toggle', default: true },
+		amount: { name: 'Amount', type: 'number', default: 1.5, min: 0, max: 10, step: 0.1, unit: 'em' },
+		fade:   { name: 'Fade',   type: 'toggle', default: true },
 	},
 });
 
@@ -324,7 +322,6 @@ registerTransition('motionBlurSlide', (p, properties, params, ctx) => {
 		injectEffect(properties, 'motionBlur', {
 			amount: amt,
 			angle,
-			samples: 16,
 			centerBias: 0,
 			edgeMode: 'transparent',
 		});
@@ -359,7 +356,6 @@ registerTransition('radialZoom', (p, properties, params) => {
 			amount: amt,
 			centerX,
 			centerY,
-			samples: 24,
 			falloff: 1,
 			mode,
 		});
