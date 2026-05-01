@@ -899,11 +899,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	return vec4(tinted * blurred.a, blurred.a);
 }` },
 ], {
-	blurRadius:      { type: 'float', default: 0.8,  min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
-	distortion:      { type: 'float', default: 0.5,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
-	frostAmount:     { type: 'float', default: 0.3,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
-	tintAmount:      { type: 'float', default: 0.15, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
-	highlightAmount: { type: 'float', default: 0.1,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	blurRadius:      { type: 'float', default: 0.6,  min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
+	distortion:      { type: 'float', default: 1.2,  min: 0, max: 4, animatable: true, fieldConfig: { step: 0.05 } },
+	frostAmount:     { type: 'float', default: 0.2,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	tintAmount:      { type: 'float', default: 0, min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
+	highlightAmount: { type: 'float', default: 0,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	tintColor:       { type: 'color', default: '#ffffff' },
 });
 
