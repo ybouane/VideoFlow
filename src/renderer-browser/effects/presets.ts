@@ -31,7 +31,8 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	${axis === 'h' ? 'if (dir == 2) return texture2D(tex, uv);' : 'if (dir == 1) return texture2D(tex, uv);'}
 	float radius = max(0.0, u_radius);
 	if (radius < 0.5) return texture2D(tex, uv);
-	int quality = int(clamp(u_quality, 1.0, 32.0));
+	// Auto-derived tap count from blur radius — enough samples to avoid banding.
+	int quality = int(clamp(radius * 0.7 + 3.0, 4.0, 24.0));
 	int edgeMode = int(u_edgeMode);
 	bool alphaAware = u_alphaAware;
 	vec2 step = ${axis === 'h' ? 'vec2(1.0 / resolution.x, 0.0)' : 'vec2(0.0, 1.0 / resolution.y)'} * radius;
@@ -55,7 +56,6 @@ registerEffect('gaussianBlur', [
 	{ glsl: gaussianBlurPass('v') },
 ], {
 	radius:     { type: 'float',  default: 0.4, min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
-	quality:    { type: 'float',  default: 8,   min: 1, max: 32, animatable: true, fieldConfig: { step: 1, integer: true } },
 	direction:  { type: 'option', default: 'both', fieldConfig: { options: { both: 'Both', horizontal: 'Horizontal', vertical: 'Vertical' } } },
 	edgeMode:   { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 	alphaAware: { type: 'bool',   default: true },
@@ -69,7 +69,8 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	float amount = u_amount;
 	if (amount < 0.5) return texture2D(tex, uv);
 	float angle = radians(u_angle);
-	int n = int(clamp(u_samples, 2.0, 64.0));
+	// Auto-derived sample count from blur length — denser sampling for longer trails.
+	int n = int(clamp(amount * 0.3 + 8.0, 8.0, 32.0));
 	float bias = clamp(u_centerBias, 0.0, 1.0);
 	int edgeMode = int(u_edgeMode);
 	vec2 dir = vec2(cos(angle), sin(angle)) * amount / resolution;
@@ -86,7 +87,6 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 }`, {
 	amount:     { type: 'float',  default: 1.25, min: 0, max: 10, animatable: true, fieldConfig: { step: 0.05, unit: 'em' } },
 	angle:      { type: 'float',  default: 0,    min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
-	samples:    { type: 'float',  default: 16,   min: 2, max: 64,  animatable: true, fieldConfig: { step: 1, integer: true } },
 	centerBias: { type: 'float',  default: 0,    min: 0, max: 1,   animatable: true, fieldConfig: { step: 0.01 } },
 	edgeMode:   { type: 'option', default: 'clamp', fieldConfig: { options: { clamp: 'Clamp', transparent: 'Transparent', mirror: 'Mirror' } } },
 });
@@ -99,7 +99,8 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec2 center = vec2(u_centerX, u_centerY);
 	float amount = u_amount;
 	int mode = int(u_mode);
-	int n = int(clamp(u_samples, 2.0, 64.0));
+	// Auto-derived sample count from zoom amount — wider stretches need more taps.
+	int n = int(clamp(amount * 50.0 + 12.0, 12.0, 48.0));
 	float falloff = max(u_falloff, 0.0);
 	vec2 d = uv - center;
 	float scale = (mode == 1) ? amount : -amount;
@@ -118,7 +119,6 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	amount:  { type: 'float',  default: 0.4, min: 0, max: 2,  animatable: true, fieldConfig: { step: 0.05 } },
 	centerX: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true, fieldConfig: { step: 0.01 } },
 	centerY: { type: 'float',  default: 0.5, min: 0, max: 1,  animatable: true, fieldConfig: { step: 0.01 } },
-	samples: { type: 'float',  default: 24,  min: 2, max: 64, animatable: true, fieldConfig: { step: 1, integer: true } },
 	falloff: { type: 'float',  default: 1,   min: 0, max: 4,  animatable: true, fieldConfig: { step: 0.1 } },
 	mode:    { type: 'option', default: 'out', fieldConfig: { options: { in: 'Zoom In', out: 'Zoom Out' } } },
 });
