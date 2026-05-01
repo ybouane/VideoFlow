@@ -710,6 +710,7 @@ Visibility shortcuts.
 layer.show();   // opacity 1
 layer.hide();   // opacity 0
 layer.remove(); // Remove at current time
+layer.remove({ in: '2s' }); // Remove 2s from now without waiting
 ```
 
 ## Time Format

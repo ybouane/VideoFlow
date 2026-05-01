@@ -761,10 +761,11 @@ export default class VideoFlow {
 					case 'removeLayer': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						if (comp.endTimeFrames !== false && comp.endTimeFrames < t) {
+						const removeAtFrames = t + timeToFrames(action.in ?? 0, fps);
+						if (comp.endTimeFrames !== false && comp.endTimeFrames < removeAtFrames) {
 							throw new Error(`Layer ${action.id} already ended at frame ${comp.endTimeFrames}`);
 						}
-						comp.endTimeFrames = t;
+						comp.endTimeFrames = removeAtFrames;
 						break;
 					}
 
