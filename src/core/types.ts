@@ -336,6 +336,20 @@ export type RenderOptions = {
 	 * Defaults to `true` in the browser renderer.
 	 */
 	worker?: boolean;
+	/**
+	 * **Server renderer only.** Selects the encoding pipeline.
+	 *
+	 * - `false` (default) — render the entire video (frames + audio + muxing)
+	 *   inside the headless browser using `BrowserRenderer.exportVideo()` and
+	 *   stream the finished MP4 back to Node. Avoids the per-frame
+	 *   screenshot + JPEG round-trip and uses WebCodecs for H.264 encoding,
+	 *   so it is typically several times faster than the legacy pipeline.
+	 * - `true` — use the legacy pipeline: render each frame in the browser,
+	 *   `page.screenshot()` it as JPEG, and pipe the frames into a server-side
+	 *   `ffmpeg` process that handles encoding and muxing. Requires `ffmpeg`
+	 *   to be installed on the server.
+	 */
+	ffmpeg?: boolean;
 };
 
 /**
