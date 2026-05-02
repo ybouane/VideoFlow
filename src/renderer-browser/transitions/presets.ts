@@ -132,12 +132,17 @@ function multOpacity(properties: Record<string, any>, factor: number): void {
 }
 
 // ===========================================================================
-// 1. fadeIn — opacity 0 → 1.
+// 1. fadeIn — universal fade. Multiplies opacity (visual layers) and volume
+// (audio layers) by `t`, so it works on any layer kind.
 // ===========================================================================
 registerTransition('fadeIn', (p, properties) => {
-	multOpacity(properties, stage(p));
+	const t = stage(p);
+	multOpacity(properties, t);
+	if (typeof properties.volume === 'number') {
+		properties.volume = Math.max(0, properties.volume * t);
+	}
 	return properties;
-}, { defaultEasing: 'linear', fieldsConfig: {} });
+}, { defaultEasing: 'linear', layerCategory: 'all', fieldsConfig: {} });
 
 // ===========================================================================
 // 2. slideUp — enters from below, slides up to rest.
@@ -794,6 +799,7 @@ registerTransition('typewriter', (p, properties, params) => {
 	return properties;
 }, {
 	defaultEasing: 'linear',
+	layerCategory: 'textual',
 	fieldsConfig: {
 		cursorStyle: {
 			name: 'Cursor style',
@@ -854,6 +860,7 @@ registerTransition('trackingExpand', (p, properties, params) => {
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
+	layerCategory: 'textual',
 	fieldsConfig: {
 		startTracking: { name: 'Start tracking', type: 'number', default: -0.12, min: -5, max: 5, step: 0.01, unit: 'em' as const },
 		...TRACKING_FIELDS_BASE,
@@ -875,6 +882,7 @@ registerTransition('trackingContract', (p, properties, params) => {
 	return properties;
 }, {
 	defaultEasing: 'easeOut',
+	layerCategory: 'textual',
 	fieldsConfig: {
 		startTracking: { name: 'Start tracking', type: 'number', default: 0.3, min: -5, max: 5, step: 0.01, unit: 'em' as const },
 		...TRACKING_FIELDS_BASE,
@@ -939,6 +947,7 @@ registerTransition('scrambleDecode', (p, properties, params, ctx) => {
 	return properties;
 }, {
 	defaultEasing: 'linear',
+	layerCategory: 'textual',
 	fieldsConfig: {
 		refreshRate:    { name: 'Refresh rate',    type: 'number', default: 15,           min: 1,  max: 60,  step: 1 },
 		order:          { name: 'Reveal order',    type: 'option', default: 'leftToRight', options: { leftToRight: 'Left to right', rightToLeft: 'Right to left', random: 'Random' } },
@@ -1066,6 +1075,7 @@ registerTransition('numberCountUp', (p, properties, params) => {
 	return properties;
 }, {
 	defaultEasing: 'linear',
+	layerCategory: 'textual',
 	fieldsConfig: {
 		startValue:  { name: 'Start value',   type: 'number', default: 0,            min: -1e9, max: 1e9, step: 1 },
 		mode:        { name: 'Mode',          type: 'option', default: 'allNumbers',  options: { allNumbers: 'All numbers', firstNumber: 'First number only' } },

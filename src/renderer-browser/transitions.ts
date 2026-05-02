@@ -110,6 +110,13 @@ export type TransitionParamDefinition = {
 	unit?: EffectParamUnit;
 };
 
+/**
+ * Which kind of layer a transition is meaningful on. Editors filter the
+ * transition picker by this so e.g. text-only effects don't show up on
+ * image layers. `'all'` means the preset is universal (fade, audio fade).
+ */
+export type TransitionLayerCategory = 'all' | 'visual' | 'audio' | 'textual';
+
 /** Full transition entry as stored in the registry. */
 export type TransitionDefinition = {
 	fn: TransitionFn;
@@ -123,6 +130,8 @@ export type TransitionDefinition = {
 	 * entire lifetime, not just the moments when an effect is actually active.
 	 */
 	injectsEffects: boolean;
+	/** Which layer kinds this preset applies to. Editors use this to filter the picker. */
+	layerCategory: TransitionLayerCategory;
 	/** UI metadata for the editor's transition param fields. Keyed by param name. */
 	fieldsConfig: Record<string, TransitionParamDefinition>;
 };
@@ -138,6 +147,12 @@ export type RegisterTransitionOptions = {
 	 * declared effects.
 	 */
 	injectsEffects?: boolean;
+	/**
+	 * Which layer kinds this preset is meaningful on. Defaults to `'visual'`.
+	 * Use `'all'` for universal presets (e.g. fade), `'audio'` for audio-only,
+	 * `'textual'` for presets that mutate text content / typography.
+	 */
+	layerCategory?: TransitionLayerCategory;
 	/**
 	 * Editor UI metadata for each entry in the layer's `params` map. Keyed by
 	 * param name. The renderer doesn't read it — only editors do.
@@ -163,6 +178,7 @@ export function registerTransition(
 		fn,
 		defaultEasing: options.defaultEasing ?? 'linear',
 		injectsEffects: options.injectsEffects ?? false,
+		layerCategory: options.layerCategory ?? 'visual',
 		fieldsConfig: options.fieldsConfig ?? {},
 	});
 }
