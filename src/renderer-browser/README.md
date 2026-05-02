@@ -89,27 +89,21 @@ Every preset receives a **signed** progress value `p ∈ [-1, +1]`:
 
 `p` is pre-eased by the renderer (per-direction easing), so preset bodies stay linear in their math. Presets must multiply / add onto the incoming property values so they compose with keyframed animation.
 
-Presets fall into two flavours:
-
-- **Symmetric** — use `|p|` to behave identically on enter and exit (`fade`, `zoom`, `blur`, all `slideFrom*`).
-- **Asymmetric / continuous** — use signed `p` to travel in one direction across the entire layer lifetime (`rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`).
+Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Continuous-motion legacy presets (`rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`) use the signed `p` to travel through rest without reversing.
 
 ### Built-in presets
 
-| Preset | Kind | Effect | Params |
-| --- | --- | --- | --- |
-| `fade` | symmetric | Fades opacity in and out | — |
-| `zoom` | symmetric | Scales in/out from `from` factor | `from?: number` (default `0.8`) |
-| `blur` | symmetric | Gaussian blur sweep | `amount?: number` (peak blur in `em`, default `4`) |
-| `rise` | continuous | Travels upward through rest | `distance?: number` (default `0.15`) |
-| `fall` | continuous | Travels downward through rest | `distance?: number` |
-| `driftLeft` | continuous | Drifts left through rest | `distance?: number` |
-| `driftRight` | continuous | Drifts right through rest | `distance?: number` |
-| `slideFromTop` | symmetric | Enters & exits off the top | `distance?: number` (default `0.15`) |
-| `slideFromBottom` | symmetric | Enters & exits off the bottom | `distance?: number` |
-| `slideFromLeft` | symmetric | Enters & exits off the left | `distance?: number` |
-| `slideFromRight` | symmetric | Enters & exits off the right | `distance?: number` |
-| `riseFade` | continuous | Continuous upward motion + symmetric fade | `distance?: number` (default `0.08`) |
+There are 27+ built-in transitions plus a handful of legacy aliases. See the [core package README](../core/README.md#transitions) for the full categorised table. A short representative sample:
+
+| Preset | Category | Effect |
+| --- | --- | --- |
+| `fadeIn` | `all` | Opacity (visual) and volume (audio) → 0 |
+| `slideUp` / `slideDown` / `slideLeft` / `slideRight` | `visual` | Position slide-in with optional fade |
+| `zoomIn` | `visual` | Scale up from `from` to `1` |
+| `blurResolve` | `visual` (injects effect) | Gaussian blur resolves to sharp |
+| `motionBlurSlide` | `visual` (injects effect) | Slide with directional motion blur |
+| `typewriter` | `textual` | Reveals text one character at a time |
+| `numberCountUp` | `textual` | Counts numbers in the text up to their final value |
 
 ### Custom transitions
 
@@ -120,18 +114,24 @@ import BrowserRenderer from '@videoflow/renderer-browser';
 
 // Symmetric: spin back to rest on enter and exit
 BrowserRenderer.registerTransition('spin', (p, properties, params) => {
-  properties.rotation = (properties.rotation ?? 0) + Math.abs(p) * (params.angle ?? 360);
-  properties.opacity  = (properties.opacity  ?? 1) * (1 - Math.abs(p));
+  const t = 1 - Math.abs(p);
+  properties.rotation = (properties.rotation ?? 0) + (1 - t) * (params.angle ?? 360);
+  properties.opacity  = (properties.opacity  ?? 1) * t;
   return properties;
-}, { defaultEasing: 'easeOut' });
+}, { defaultEasing: 'easeOut', layerCategory: 'visual' });
 ```
 
 The function receives:
 - `p` — signed progress in `[-1, +1]`, already eased. `-1` is the start of `transitionIn`, `0` is rest, `+1` is the end of `transitionOut`.
 - `properties` — the layer's resolved properties at this frame. Mutate in place or return a new object.
 - `params` — values from the layer's `transitionIn.params` / `transitionOut.params`.
+- `context` — `{ seed, frame, fps, projectWidth, projectHeight }` for deterministic per-layer randomness and aspect-aware geometry.
 
-`options.defaultEasing` sets the easing applied to `|p|` when the layer doesn't specify one. Layers can always override via the `easing` field on their transition spec.
+Options:
+- `defaultEasing` — easing applied to `p` when the layer doesn't specify one. Default `'linear'`.
+- `layerCategory` — one of `'all' | 'visual' | 'audio' | 'textual'`. Default `'visual'`. Editors filter the picker by this against the target layer class's `static category`.
+- `injectsEffects` — set `true` if the preset pushes WebGL effect entries onto `properties.__effects`; the renderer keeps the effect overlay mounted across the layer's lifetime.
+- `fieldsConfig` — UI metadata for each `params` key (used by editors only).
 
 ---
 
@@ -204,8 +204,8 @@ The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 reso
       {
         startTime: '0.5s',
         sourceDuration: '4s',
-        transitionIn:  { transition: 'riseFade', duration: '600ms' },
-        transitionOut: { transition: 'fade',     duration: '500ms' },
+        transitionIn:  { transition: 'slideUp', duration: '600ms' },
+        transitionOut: { transition: 'fadeIn',  duration: '500ms' },
       },
     );
     $.wait('5s');

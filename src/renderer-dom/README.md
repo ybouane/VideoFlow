@@ -130,25 +130,23 @@ player.fps              // number — frames per second
 
 ## Transitions
 
-`DomRenderer` fully supports transitions declared on layers. Built-in presets animate automatically in live preview — no extra setup needed:
+`DomRenderer` fully supports transitions declared on layers. All built-in presets animate automatically in live preview — no extra setup needed.
 
-- **Symmetric:** `fade`, `zoom`, `blur`, `slideFromTop`, `slideFromBottom`, `slideFromLeft`, `slideFromRight`
-- **Continuous motion:** `rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`
+The bundled library covers position / scale / opacity (`slideUp`, `slideDown`, `slideLeft`, `slideRight`, `zoomIn`, `overshootPop`, `fadeIn`), 3D transforms (`rotate3dY`, `tilt3dUp`, `spinIn`), WebGL-effect-injecting reveals (`blurResolve`, `motionBlurSlide`, `radialZoom`, `glitchResolve`, `noiseDissolve`, `wipeReveal`, `lensSnap`, …), and text-only effects (`typewriter`, `trackingExpand`, `scrambleDecode`, `numberCountUp`, …). See the [core README → Transitions](../core/README.md#transitions) for the full categorised table and the signed-`p` contract.
 
-See [`@videoflow/renderer-browser` → Transitions](../renderer-browser/README.md#transitions) for the full preset table and the signed-`p` contract.
-
-Custom presets can be registered with `DomRenderer.registerTransition`, which writes to the same shared registry as `BrowserRenderer.registerTransition`:
+Custom presets register with `DomRenderer.registerTransition`, which writes to the same shared registry as `BrowserRenderer.registerTransition`:
 
 ```typescript
 import DomRenderer from '@videoflow/renderer-dom';
 
 DomRenderer.registerTransition('spin', (p, properties, params) => {
-  // |p| is 0 at rest and 1 at the edges of the window, so the same body
+  // t is 0 at the edges of the window and 1 at rest, so the same body
   // runs as both a transition-in and transition-out.
-  properties.rotation = (properties.rotation ?? 0) + Math.abs(p) * (params.angle ?? 360);
-  properties.opacity  = (properties.opacity  ?? 1) * (1 - Math.abs(p));
+  const t = 1 - Math.abs(p);
+  properties.rotation = (properties.rotation ?? 0) + (1 - t) * (params.angle ?? 360);
+  properties.opacity  = (properties.opacity  ?? 1) * t;
   return properties;
-}, { defaultEasing: 'easeOut' });
+}, { defaultEasing: 'easeOut', layerCategory: 'visual' });
 ```
 
 ---
@@ -201,8 +199,8 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
     { text: 'VideoFlow Preview', fontSize: 3 },
     {
       sourceDuration: '5s',
-      transitionIn:  { transition: 'riseFade', duration: '500ms' },
-      transitionOut: { transition: 'fade',     duration: '400ms' },
+      transitionIn:  { transition: 'slideUp', duration: '500ms' },
+      transitionOut: { transition: 'fadeIn',  duration: '400ms' },
     },
   );
   $.wait('5s');

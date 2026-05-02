@@ -174,6 +174,7 @@ All visual layers (text, image, video, captions) share these transform propertie
 | `rotation` | `number` or `[x, y, z]` | `0` | Degrees, clockwise. Use `[x, y, z]` for 3D rotation |
 | `anchor` | `[x, y]` | `[0.5, 0.5]` | Normalised 0–1 within the element. Pivot for position, scale, and rotation |
 | `opacity` | `number` | `1` | 0 (transparent) to 1 (opaque) |
+| `blendMode` | `string` | `'normal'` | CSS [`mix-blend-mode`](https://developer.mozilla.org/docs/Web/CSS/mix-blend-mode) (`'multiply'`, `'screen'`, `'overlay'`, `'difference'`, …). Honoured in both renderers; not animatable |
 | `perspective` | `number` | `100` | 3D viewing distance in `em` (1em = 1% of project width) |
 
 ### Unit convention
@@ -191,13 +192,13 @@ const title = $.addText(
   { text: 'Hello!', fontSize: 3, color: '#fff' },
   {
     sourceDuration: '3s',
-    transitionIn:  { transition: 'riseFade', duration: '500ms' },
-    transitionOut: { transition: 'blur',     duration: '500ms', params: { amount: 8 } },
+    transitionIn:  { transition: 'slideUp',      duration: '500ms' },
+    transitionOut: { transition: 'blurResolve',  duration: '500ms', params: { amount: 2 } },
   },
 );
 ```
 
-The `duration` defaults to `200ms` and accepts any [Time format](#time-formats). If `transitionIn.duration + transitionOut.duration` would exceed the layer's own duration, both are scaled proportionally. Each spec also accepts an `easing` field (e.g. `'easeInOut'`) to override the preset's default curve for that direction only.
+`duration` defaults to `200ms` and accepts any [Time format](#time-formats). If `transitionIn.duration + transitionOut.duration` would exceed the layer's own duration, both are scaled proportionally. Each spec also accepts an `easing` field (e.g. `'easeInOut'`) to override the preset's default curve for that direction only.
 
 ### How `p` works
 
@@ -207,29 +208,60 @@ Presets receive a signed progress parameter `p ∈ [-1, +1]`:
 - `p =  0` — layer at rest, original properties
 - `p = +1` — end of the `transitionOut` window (layer fully "transitioned out")
 
-`p` is continuous across the layer's life, which gives you two useful modes:
-
-- **Symmetric** presets use `|p|` — the layer does the same thing on enter and exit (`fade`: `opacity *= (1 - |p|)`).
-- **Asymmetric** presets use the sign of `p` — the layer moves *through* rest without reversing. `rise` starts below its resting position, rises through rest, and keeps rising above rest on exit: one pattern, no snap-back.
+Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Continuous-motion legacy aliases (`rise`, `riseFade`, `driftLeft`/`driftRight`) use the sign of `p` to travel through rest without reversing.
 
 ### Built-in transition presets
 
-| Name | Kind | Effect | Params |
-| --- | --- | --- | --- |
-| `fade` | symmetric | Opacity `0` at `|p| = 1`, `1` at rest | — |
-| `zoom` | symmetric | Scale through rest from `from` at `|p| = 1` | `from?: number` (default `0.8`) |
-| `blur` | symmetric | Gaussian blur peaks at `|p| = 1` | `amount?: number` (peak blur in `em`, default `4`) |
-| `rise` | continuous | Continuously moves upward through rest | `distance?: number` (fraction of canvas, default `0.15`) |
-| `fall` | continuous | Continuously moves downward through rest | `distance?: number` |
-| `driftLeft` | continuous | Continuously moves leftward through rest | `distance?: number` |
-| `driftRight` | continuous | Continuously moves rightward through rest | `distance?: number` |
-| `slideFromTop` | symmetric | Enters from and exits to the top | `distance?: number` (default `0.15`) |
-| `slideFromBottom` | symmetric | Enters from and exits to the bottom | `distance?: number` |
-| `slideFromLeft` | symmetric | Enters from and exits to the left | `distance?: number` |
-| `slideFromRight` | symmetric | Enters from and exits to the right | `distance?: number` |
-| `riseFade` | composite | `rise` + `fade` — rises continuously while fading | `distance?: number` (default `0.08`) |
+Each preset is tagged with a `layerCategory` so editors can filter the picker per layer kind.
 
-Transitions work in both `BrowserRenderer` (export) and `DomRenderer` (live preview). Custom presets can be registered with `BrowserRenderer.registerTransition(name, fn)`.
+**Universal** (`layerCategory: 'all'`)
+
+| Name | Effect | Params |
+| --- | --- | --- |
+| `fadeIn` | Opacity → 0 (visual layers) and volume → 0 (audio layers). Works on any layer. | — |
+
+**Visual** (`layerCategory: 'visual'`) — position / opacity / scale, CSS-only
+
+| Name | Effect | Notable params |
+| --- | --- | --- |
+| `slideUp` | Enters from below, slides up to rest | `distance?: 0.10`, `fade?: true` |
+| `slideDown` | Enters from above, slides down to rest | `distance?: 0.10`, `fade?: true` |
+| `slideLeft` | Enters from the right, slides left to rest | `distance?: 0.12`, `fade?: true` |
+| `slideRight` | Enters from the left, slides right to rest | `distance?: 0.12`, `fade?: true` |
+| `zoomIn` | Scales from `from` up to `1` | `from?: 0.85`, `fade?: true` |
+| `overshootPop` | Springy scale-in past 1, settles to 1 | `from?: 0.4`, `overshoot?: 1.7`, `tilt?: 6`, `fade?: true` |
+| `rotate3dY` | Y-axis swing into rest | `angle?: 75`, `fade?: true` |
+| `tilt3dUp` | X-axis tilt forward into rest | `angle?: 60`, `lift?: 0.04`, `fade?: true` |
+| `spinIn` | Spin around Z while scaling up | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
+
+**Visual — WebGL-effect-injecting** (`layerCategory: 'visual'`, `injectsEffects: true`)
+
+| Name | Effect | Notable params |
+| --- | --- | --- |
+| `blurResolve` | Heavy Gaussian blur resolves to sharp | `amount?: 1.5em`, `fade?: true` |
+| `motionBlurSlide` | Slide-in with directional motion blur matching velocity | `distance?: 0.18`, `blur?: 4.5em`, `angle?: 0`, `fade?: true` |
+| `radialZoom` | Radial zoom blur from a centre, resolving outward | `amount?: 0.4`, `centerX?: 0.5`, `centerY?: 0.5`, `mode?: 'in'\|'out'`, `fade?: true` |
+| `glitchResolve` | Digital block + RGB split glitch resolves to clean | `intensity?: 1`, `blockSize?: 1.25em`, `fade?: true` |
+| `rgbSplitSnap` | Strong RGB split that snaps to clean with a tiny pop | `amount?: 0.04`, `axis?`, `fade?: true` |
+| `sliceAssemble` | Layer assembles from offset slices | `sliceCount?: 30`, `offset?: 0.18`, `axis?`, `fade?: true` |
+| `noiseDissolve` | Fbm-noise dissolve reveal, with edge band | `noiseScale?: 8`, `edgeWidth?: 0.04`, `softness?: 0.04`, `edgeColor?` |
+| `burnDissolve` | Fiery dissolve with hot embers and ash | `noiseScale?: 6`, `ashAmount?: 0.4`, `burnColor?`, `hotColor?` |
+| `wipeReveal` | Linear wipe along an angle | `angle?: 0`, `softness?: 0.03`, `edgeWidth?: 0.02`, `edgeColor?` |
+| `scanReveal` | Directional scanner reveal with edge glow + jitter | `angle?: 0`, `bandWidth?: 0.05`, `edgeGlow?: 1.2`, `edgeDistortion?` |
+| `lightSweepReveal` | Wipe with a glossy light band sweeping ahead | `angle?: 30`, `bandWidth?: 0.18`, `sweepColor?`, `intensity?: 1.4` |
+| `lensSnap` | Strong fisheye bulge that settles to flat | `strength?: 0.9`, `radius?: 0.5`, `zoom?: 1`, `fade?: true` |
+
+**Textual** (`layerCategory: 'textual'`) — modify the rendered text
+
+| Name | Effect | Notable params |
+| --- | --- | --- |
+| `typewriter` | Reveals one character at a time | `cursorStyle?: 'bar'\|'block'\|'underscore'\|'none'` |
+| `trackingExpand` | Text starts compressed and expands into final spacing | `startTracking?: -0.12em`, `finalTracking?: 0`, `startOpacity?: 0`, `blur?: 0.3em` |
+| `trackingContract` | Text starts wide and contracts into final spacing | `startTracking?: 0.3em`, others as above |
+| `scrambleDecode` | Random characters resolve into the final text | `refreshRate?: 15`, `order?`, `charset?`, `preserveSpaces?: true` |
+| `numberCountUp` | Detects numbers in the text and counts them up | `startValue?: 0`, `mode?`, `formatMode?`, `rounding?` |
+
+Transitions work identically in `BrowserRenderer` (export) and `DomRenderer` (live preview). Custom presets register with `BrowserRenderer.registerTransition(name, fn, options)` (also on `DomRenderer`); the registry is shared, so preview and export always agree.
 
 ## Groups
 
@@ -239,8 +271,8 @@ Wrap any sub-tree of layers in `$.group(...)` to composite them as a single visu
 const card = $.group(
   { position: [0.5, 0.5], scale: 1 },
   {
-    transitionIn:  { transition: 'riseFade', duration: '500ms' },
-    transitionOut: { transition: 'fade',     duration: '500ms' },
+    transitionIn:  { transition: 'slideUp', duration: '500ms' },
+    transitionOut: { transition: 'fadeIn',  duration: '500ms' },
   },
   (group) => {
     // Child timings are relative to the group's start, so this image
