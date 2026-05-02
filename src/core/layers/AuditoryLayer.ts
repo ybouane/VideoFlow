@@ -27,6 +27,10 @@ export type AuditoryLayerSettings = BaseLayerSettings;
 
 export default class AuditoryLayer extends BaseLayer {
 	static type = 'auditory';
+	/**
+	 * Broad layer family — see {@link VisualLayer.category}. Audio layers are
+	 * filtered by transitions tagged `layerCategory: 'audio'` or `'all'`.
+	 */
 	static category = 'audio';
 	declare properties: AuditoryLayerProperties;
 	declare settings: AuditoryLayerSettings;
