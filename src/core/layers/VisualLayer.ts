@@ -57,6 +57,7 @@ export type VisualLayerSettings = BaseLayerSettings;
 
 export default class VisualLayer extends BaseLayer {
 	static type = 'visual';
+	static category = 'visual';
 	declare properties: VisualLayerProperties;
 	declare settings: VisualLayerSettings;
 
