@@ -47,6 +47,7 @@ export type TextualLayerSettings = VisualLayerSettings;
 
 export default class TextualLayer extends VisualLayer {
 	static type = 'textual';
+	static category = 'textual';
 	declare properties: TextualLayerProperties;
 	declare settings: TextualLayerSettings;
 

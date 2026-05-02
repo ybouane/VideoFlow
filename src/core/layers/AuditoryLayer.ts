@@ -27,6 +27,7 @@ export type AuditoryLayerSettings = BaseLayerSettings;
 
 export default class AuditoryLayer extends BaseLayer {
 	static type = 'auditory';
+	static category = 'audio';
 	declare properties: AuditoryLayerProperties;
 	declare settings: AuditoryLayerSettings;
 
