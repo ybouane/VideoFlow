@@ -97,9 +97,9 @@ There are 27+ built-in transitions plus a handful of legacy aliases. See the [co
 
 | Preset | Category | Effect |
 | --- | --- | --- |
-| `fadeIn` | `all` | Opacity (visual) and volume (audio) → 0 |
+| `fade` | `all` | Opacity (visual) and volume (audio) → 0 |
 | `slideUp` / `slideDown` / `slideLeft` / `slideRight` | `visual` | Position slide-in with optional fade |
-| `zoomIn` | `visual` | Scale up from `from` to `1` |
+| `zoom` | `visual` | Scale from `from` to rest (symmetric) |
 | `blurResolve` | `visual` (injects effect) | Gaussian blur resolves to sharp |
 | `motionBlurSlide` | `visual` (injects effect) | Slide with directional motion blur |
 | `typewriter` | `textual` | Reveals text one character at a time |
@@ -205,7 +205,7 @@ The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 reso
         startTime: '0.5s',
         sourceDuration: '4s',
         transitionIn:  { transition: 'slideUp', duration: '600ms' },
-        transitionOut: { transition: 'fadeIn',  duration: '500ms' },
+        transitionOut: { transition: 'fade',  duration: '500ms' },
       },
     );
     $.wait('5s');

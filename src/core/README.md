@@ -193,8 +193,8 @@ const title = $.addText(
     startTime: 0,                // Default: 0
     sourceDuration: '3s',        // Default: undefined (runs to end)
     enabled: true,               // Default: true
-    transitionIn:  { transition: 'fadeIn', duration: '300ms' },
-    transitionOut: { transition: 'fadeIn', duration: '300ms' },
+    transitionIn:  { transition: 'fade', duration: '300ms' },
+    transitionOut: { transition: 'fade', duration: '300ms' },
   }
 );
 ```
@@ -389,7 +389,7 @@ $.group(
   //     do NOT pass them. Override only if you need to.
   {
     transitionIn:  { transition: 'riseFade', duration: '500ms' },
-    transitionOut: { transition: 'fadeIn',     duration: '500ms' },
+    transitionOut: { transition: 'fade',     duration: '500ms' },
   },
   // --- Builder callback. The flow's time pointer resets to 0 inside,
   //     so child timings are relative to the group's start. The argument
@@ -595,7 +595,7 @@ Each preset is tagged with a `layerCategory` (`'all' | 'visual' | 'audio' | 'tex
 
 | Preset | Effect | Params |
 | --- | --- | --- |
-| `fadeIn` | Multiplies opacity (visual) and volume (audio) by `t`. Works on any layer kind. | — |
+| `fade` | Multiplies opacity (visual) and volume (audio) by `t`. Works on any layer kind. | — |
 
 **Visual — position / opacity / scale (CSS-only)**
 
@@ -605,11 +605,11 @@ Each preset is tagged with a `layerCategory` (`'all' | 'visual' | 'audio' | 'tex
 | `slideDown` | Enters from above, slides down to rest | `distance?: 0.10`, `fade?: true` |
 | `slideLeft` | Enters from the right, slides left to rest | `distance?: 0.12`, `fade?: true` |
 | `slideRight` | Enters from the left, slides right to rest | `distance?: 0.12`, `fade?: true` |
-| `zoomIn` | Scales from `from` up to `1` | `from?: 0.85`, `fade?: true` |
+| `zoom` | Scales from `from` to rest (symmetric) | `from?: 0.85`, `fade?: true` |
 | `overshootPop` | Springy scale-in past 1, settles to 1 | `from?: 0.4`, `overshoot?: 1.7`, `tilt?: 6`, `fade?: true` |
 | `rotate3dY` | Y-axis swing into rest | `angle?: 75`, `fade?: true` |
 | `tilt3dUp` | X-axis tilt forward into rest | `angle?: 60`, `lift?: 0.04`, `fade?: true` |
-| `spinIn` | Spin around Z while scaling up | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
+| `spin` | Spin around Z while scaling (symmetric) | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
 
 **Visual — WebGL-effect-injecting**
 
