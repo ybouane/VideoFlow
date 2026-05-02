@@ -75,6 +75,49 @@ import './effects/presets.js';
 import WORKER_SOURCE from './workerBundle.js';
 
 // ---------------------------------------------------------------------------
+//  Audio encoder probe
+//
+//  WebCodecs `AudioEncoder` support varies across platforms:
+//  - macOS / Windows Chrome: AAC available via system codecs.
+//  - Linux Chrome (incl. headless): AAC encoder is NOT shipped due to
+//    licensing. Opus is available everywhere as a fallback.
+//
+//  MP4 supports Opus officially (RFC 8606) and modern players (Chrome,
+//  Firefox, Safari 17+, VLC) handle it. We prefer AAC for maximum
+//  compatibility, fall back to Opus when AAC isn't available, and finally
+//  encode silent video rather than crashing the whole render.
+// ---------------------------------------------------------------------------
+
+export type AudioCodecChoice = { codec: 'aac' | 'opus'; bitrate: number };
+
+const AAC_BITRATE_CANDIDATES = [192_000, 128_000, 96_000];
+const OPUS_BITRATE_CANDIDATES = [128_000, 96_000, 64_000];
+
+export async function pickSupportedAudioCodec(
+	numberOfChannels: number,
+	sampleRate: number,
+): Promise<AudioCodecChoice | null> {
+	if (typeof AudioEncoder === 'undefined') return null;
+
+	const probe = async (codec: string, bitrate: number) => {
+		try {
+			const r = await AudioEncoder.isConfigSupported({ codec, sampleRate, numberOfChannels, bitrate });
+			return r.supported === true;
+		} catch { return false; }
+	};
+
+	// Prefer AAC (universal MP4 player support).
+	for (const bitrate of AAC_BITRATE_CANDIDATES) {
+		if (await probe('mp4a.40.2', bitrate)) return { codec: 'aac', bitrate };
+	}
+	// Fall back to Opus.
+	for (const bitrate of OPUS_BITRATE_CANDIDATES) {
+		if (await probe('opus', bitrate)) return { codec: 'opus', bitrate };
+	}
+	return null;
+}
+
+// ---------------------------------------------------------------------------
 //  Property definition registry — built from core layer classes
 // ---------------------------------------------------------------------------
 
@@ -606,7 +649,10 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const durationSec = this.videoJSON.duration;
 		if (durationSec <= 0) return null;
 
-		const sampleRate = 44100;
+		// 48 kHz is the universal sample rate for video AAC encoding —
+		// 44.1 kHz fails the WebCodecs `AudioEncoder.isConfigSupported`
+		// check on some platforms (notably headless Chrome on Linux).
+		const sampleRate = 48000;
 		const channels = 2;
 		const audioCtx = new OfflineAudioContext(channels, Math.ceil(durationSec * sampleRate), sampleRate);
 
@@ -798,6 +844,11 @@ export default class BrowserRenderer implements ILayerRenderer {
 		// Set up the render canvas
 		this.renderCanvas = new OffscreenCanvas(width, height);
 
+		// Render audio first so we know its config before configuring the
+		// AAC encoder — some platforms reject specific AAC channel/rate combos.
+		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
+		const audioBuffer = await this.renderAudio();
+
 		// Create MediaBunny output
 		const output = new Output({
 			format: new Mp4OutputFormat(),
@@ -810,22 +861,33 @@ export default class BrowserRenderer implements ILayerRenderer {
 		});
 		output.addVideoTrack(videoSource, { frameRate: fps });
 
-		// Audio track
-		const audioSource = new AudioBufferSource({
-			codec: 'aac',
-			bitrate: 192_000,
-		});
-		output.addAudioTrack(audioSource);
+		// Audio track — only added if the platform supports an audio codec
+		// (AAC preferred, Opus fallback). Otherwise we encode silent video
+		// instead of failing the whole render.
+		let audioSource: AudioBufferSource | null = null;
+		if (audioBuffer) {
+			const choice = await pickSupportedAudioCodec(audioBuffer.numberOfChannels, audioBuffer.sampleRate);
+			if (choice) {
+				audioSource = new AudioBufferSource({ codec: choice.codec, bitrate: choice.bitrate });
+				output.addAudioTrack(audioSource);
+				if (choice.codec === 'opus') {
+					console.info(
+						`Using Opus audio (${choice.bitrate / 1000} kbps) — AAC not available on this platform.`,
+					);
+				}
+			} else {
+				console.warn(
+					`No supported audio encoder for ${audioBuffer.numberOfChannels} ch / ${audioBuffer.sampleRate} Hz — encoding silent video.`,
+				);
+			}
+		}
 
 		await output.start();
 
-		// Render and feed audio
-		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
-		const audioBuffer = await this.renderAudio();
-		if (audioBuffer) {
+		if (audioSource && audioBuffer) {
 			await audioSource.add(audioBuffer);
+			audioSource.close();
 		}
-		audioSource.close();
 
 		// Render and feed video frames
 		for (let frame = 0; frame < nFrames; frame++) {
@@ -894,6 +956,12 @@ export default class BrowserRenderer implements ILayerRenderer {
 					break;
 				case 'done':
 					doneResolve(e.data.buffer);
+					break;
+				case 'warn':
+					console.warn(e.data.message);
+					break;
+				case 'info':
+					console.info(e.data.message);
 					break;
 				case 'error':
 					errorReject(new Error(e.data.message));
