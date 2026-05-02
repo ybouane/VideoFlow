@@ -18,7 +18,7 @@
  * the per-layer effect overlay mounted across the layer's lifetime.
  */
 
-import { registerTransition } from '../transitions.js';
+import { registerTransition, getTransitionDefinition } from '../transitions.js';
 
 // ===========================================================================
 // Helpers
@@ -132,15 +132,18 @@ function multOpacity(properties: Record<string, any>, factor: number): void {
 }
 
 // ===========================================================================
-// 1. fadeIn — universal fade. Multiplies opacity (visual layers) and volume
-// (audio layers) by `t`, so it works on any layer kind.
+// 1. fade — universal fade. Multiplies opacity (visual layers) and volume
+// (audio layers) by `t`, so it works on any layer kind. Volume defaults to 1
+// when not explicitly set (auditory layers always have an effective volume).
 // ===========================================================================
-registerTransition('fadeIn', (p, properties) => {
+registerTransition('fade', (p, properties) => {
 	const t = stage(p);
 	multOpacity(properties, t);
-	if (typeof properties.volume === 'number') {
-		properties.volume = Math.max(0, properties.volume * t);
-	}
+	// Auditory layers carry an implicit `volume = 1` even when the property
+	// hasn't been set on the layer, so we always apply the multiplication.
+	// On purely-visual layers this just sets an unused `volume` field, which
+	// is harmless.
+	properties.volume = Math.max(0, Number(properties.volume ?? 1) * t);
 	return properties;
 }, { defaultEasing: 'linear', layerCategory: 'all', fieldsConfig: {} });
 
@@ -217,10 +220,11 @@ registerTransition('slideRight', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 6. zoomIn — scale up from `from` to 1.
+// 6. zoom — scale from `from` to rest. Symmetric: scales up on enter, scales
+// back down on exit (so a `from < 1` produces a "pop in / fall away" pair).
 // params: { from?: 0.85, fade?: true }
 // ===========================================================================
-registerTransition('zoomIn', (p, properties, params) => {
+registerTransition('zoom', (p, properties, params) => {
 	const t = stage(p);
 	const from = typeof params.from === 'number' ? params.from : 0.85;
 	const factor = lerp(from, 1, t);
@@ -421,10 +425,11 @@ registerTransition('tilt3d', (p, properties, params) => {
 });
 
 // ===========================================================================
-// 13. spinIn — spin around Z while scaling up.
+// 13. spin — spin around Z while scaling. Symmetric: spins in on enter and
+// back out on exit.
 // params: { angle?: 360, from?: 0.2, fade?: true }
 // ===========================================================================
-registerTransition('spinIn', (p, properties, params) => {
+registerTransition('spin', (p, properties, params) => {
 	const t = stage(p);
 	const angle = typeof params.angle === 'number' ? params.angle : 360;
 	const from = typeof params.from === 'number' ? params.from : 0.2;
@@ -1084,3 +1089,25 @@ registerTransition('numberCountUp', (p, properties, params) => {
 		locale:      { name: 'Locale',        type: 'option', default: 'auto',       options: { auto: 'Auto', 'en-US': 'English (US)', 'fr-FR': 'French (FR)' } },
 	},
 });
+
+
+// ===========================================================================
+// Legacy aliases — old preset names that read as entry-only ("…In") even
+// though their bodies were always symmetric. Kept registered so existing
+// project JSON keeps rendering. Prefer the renamed presets in new work.
+// ===========================================================================
+
+function alias(oldName: string, newName: string): void {
+	const def = getTransitionDefinition(newName);
+	if (!def) return;
+	registerTransition(oldName, def.fn, {
+		defaultEasing: def.defaultEasing,
+		injectsEffects: def.injectsEffects,
+		layerCategory: def.layerCategory,
+		fieldsConfig: def.fieldsConfig,
+	});
+}
+
+alias('fadeIn', 'fade');
+alias('zoomIn', 'zoom');
+alias('spinIn', 'spin');
