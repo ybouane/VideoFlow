@@ -55,8 +55,8 @@ export function createProject() {
 		{
 			startTime: 0.5,
 			sourceDuration: 2.5,
-			transitionIn:  { transition: 'fade', duration: '400ms' },
-			transitionOut: { transition: 'fade', duration: '400ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '400ms' },
+			transitionOut: { transition: 'fadeIn', duration: '400ms' },
 		},
 	);
 	t1.animate(
@@ -91,8 +91,8 @@ export function createProject() {
 		{
 			startTime: 3.2,
 			sourceDuration: 2.6,
-			transitionIn:  { transition: 'fade', duration: '300ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '300ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 
@@ -124,8 +124,8 @@ export function createProject() {
 		{
 			startTime: 6.2,
 			sourceDuration: 2.6,
-			transitionIn:  { transition: 'fade', duration: '200ms' },
-			transitionOut: { transition: 'fade', duration: '200ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '200ms' },
+			transitionOut: { transition: 'fadeIn', duration: '200ms' },
 		},
 	);
 
@@ -154,8 +154,8 @@ export function createProject() {
 		{
 			startTime: 9.3,
 			sourceDuration: 2.5,
-			transitionIn:  { transition: 'fade', duration: '300ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '300ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 
@@ -193,8 +193,8 @@ export function createProject() {
 		{
 			startTime: 12.3,
 			sourceDuration: 2.5,
-			transitionIn:  { transition: 'fade', duration: '300ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '300ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 
@@ -234,8 +234,8 @@ export function createProject() {
 		{
 			startTime: 15.3,
 			sourceDuration: 2.5,
-			transitionIn:  { transition: 'fade', duration: '300ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '300ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 
@@ -281,8 +281,8 @@ export function createProject() {
 		{
 			startTime: 18.3,
 			sourceDuration: 2.4,
-			transitionIn:  { transition: 'fade', duration: '150ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '150ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 
@@ -320,8 +320,8 @@ export function createProject() {
 		{
 			startTime: 21.3,
 			sourceDuration: 2.5,
-			transitionIn:  { transition: 'fade', duration: '300ms' },
-			transitionOut: { transition: 'fade', duration: '300ms' },
+			transitionIn:  { transition: 'fadeIn', duration: '300ms' },
+			transitionOut: { transition: 'fadeIn', duration: '300ms' },
 		},
 	);
 

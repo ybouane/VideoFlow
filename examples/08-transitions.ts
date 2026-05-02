@@ -5,14 +5,17 @@
  * a short slot where the layer enters with the named preset and exits with
  * the same preset, so you can see both sides of every transition back-to-back.
  *
- * The 20 built-in presets fall into three families:
+ * The built-in visual presets fall into three families:
  *
- *   - Position / opacity / scale (CSS-only):  fadeIn, slideUpFade, slideLeftFade,
- *     zoomInFade, overshootPop.
+ *   - Position / opacity / scale (CSS-only):  fadeIn, slideUp, slideDown,
+ *     slideLeft, slideRight, zoomIn, overshootPop.
  *   - 3D transforms (CSS-only):  rotate3dY, tilt3dUp, spinIn.
  *   - WebGL-effect-injecting:  blurResolve, motionBlurSlide, radialZoom,
  *     glitchResolve, rgbSplitSnap, sliceAssemble, noiseDissolve, burnDissolve,
  *     wipeReveal, scanReveal, lightSweepReveal, lensSnap.
+ *
+ * Text-only presets (typewriter, trackingExpand, trackingContract,
+ * scrambleDecode, numberCountUp) are demonstrated separately.
  *
  * Run:
  *   npx tsx examples/08-transitions.ts
@@ -22,9 +25,11 @@ import VideoFlow from '@videoflow/core';
 
 const PRESETS: Array<{ name: string; params?: Record<string, any> }> = [
 	{ name: 'fadeIn' },
-	{ name: 'slideUpFade' },
-	{ name: 'slideLeftFade' },
-	{ name: 'zoomInFade' },
+	{ name: 'slideUp' },
+	{ name: 'slideDown' },
+	{ name: 'slideLeft' },
+	{ name: 'slideRight' },
+	{ name: 'zoomIn' },
 	{ name: 'overshootPop' },
 	{ name: 'rotate3dY' },
 	{ name: 'tilt3dUp' },
