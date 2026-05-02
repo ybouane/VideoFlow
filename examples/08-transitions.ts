@@ -7,9 +7,9 @@
  *
  * The built-in visual presets fall into three families:
  *
- *   - Position / opacity / scale (CSS-only):  fadeIn, slideUp, slideDown,
- *     slideLeft, slideRight, zoomIn, overshootPop.
- *   - 3D transforms (CSS-only):  rotate3dY, tilt3dUp, spinIn.
+ *   - Position / opacity / scale (CSS-only):  fade, slideUp, slideDown,
+ *     slideLeft, slideRight, zoom, overshootPop.
+ *   - 3D transforms (CSS-only):  rotate3dY, tilt3dUp, spin.
  *   - WebGL-effect-injecting:  blurResolve, motionBlurSlide, radialZoom,
  *     glitchResolve, rgbSplitSnap, sliceAssemble, noiseDissolve, burnDissolve,
  *     wipeReveal, scanReveal, lightSweepReveal, lensSnap.
@@ -24,16 +24,16 @@
 import VideoFlow from '@videoflow/core';
 
 const PRESETS: Array<{ name: string; params?: Record<string, any> }> = [
-	{ name: 'fadeIn' },
+	{ name: 'fade' },
 	{ name: 'slideUp' },
 	{ name: 'slideDown' },
 	{ name: 'slideLeft' },
 	{ name: 'slideRight' },
-	{ name: 'zoomIn' },
+	{ name: 'zoom' },
 	{ name: 'overshootPop' },
 	{ name: 'rotate3dY' },
 	{ name: 'tilt3dUp' },
-	{ name: 'spinIn' },
+	{ name: 'spin' },
 	{ name: 'blurResolve' },
 	{ name: 'motionBlurSlide' },
 	{ name: 'radialZoom' },
@@ -79,8 +79,8 @@ export function createProject() {
 		{
 			startTime: 0,
 			sourceDuration: SLOT_DURATION * PRESETS.length,
-			transitionIn:  { transition: 'fadeIn', duration: '400ms' },
-			transitionOut: { transition: 'fadeIn', duration: '400ms' },
+			transitionIn:  { transition: 'fade', duration: '400ms' },
+			transitionOut: { transition: 'fade', duration: '400ms' },
 		},
 	);
 
@@ -121,8 +121,8 @@ export function createProject() {
 			{
 				startTime,
 				sourceDuration: SLOT_DURATION,
-				transitionIn:  { transition: 'fadeIn', duration: '300ms' },
-				transitionOut: { transition: 'fadeIn', duration: '300ms' },
+				transitionIn:  { transition: 'fade', duration: '300ms' },
+				transitionOut: { transition: 'fade', duration: '300ms' },
 			},
 		);
 	}

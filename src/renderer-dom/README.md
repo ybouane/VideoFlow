@@ -132,7 +132,7 @@ player.fps              // number — frames per second
 
 `DomRenderer` fully supports transitions declared on layers. All built-in presets animate automatically in live preview — no extra setup needed.
 
-The bundled library covers position / scale / opacity (`slideUp`, `slideDown`, `slideLeft`, `slideRight`, `zoomIn`, `overshootPop`, `fadeIn`), 3D transforms (`rotate3dY`, `tilt3dUp`, `spinIn`), WebGL-effect-injecting reveals (`blurResolve`, `motionBlurSlide`, `radialZoom`, `glitchResolve`, `noiseDissolve`, `wipeReveal`, `lensSnap`, …), and text-only effects (`typewriter`, `trackingExpand`, `scrambleDecode`, `numberCountUp`, …). See the [core README → Transitions](../core/README.md#transitions) for the full categorised table and the signed-`p` contract.
+The bundled library covers position / scale / opacity (`slideUp`, `slideDown`, `slideLeft`, `slideRight`, `zoom`, `overshootPop`, `fade`), 3D transforms (`rotate3dY`, `tilt3dUp`, `spin`), WebGL-effect-injecting reveals (`blurResolve`, `motionBlurSlide`, `radialZoom`, `glitchResolve`, `noiseDissolve`, `wipeReveal`, `lensSnap`, …), and text-only effects (`typewriter`, `trackingExpand`, `scrambleDecode`, `numberCountUp`, …). See the [core README → Transitions](../core/README.md#transitions) for the full categorised table and the signed-`p` contract.
 
 Custom presets register with `DomRenderer.registerTransition`, which writes to the same shared registry as `BrowserRenderer.registerTransition`:
 
@@ -200,7 +200,7 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
     {
       sourceDuration: '5s',
       transitionIn:  { transition: 'slideUp', duration: '500ms' },
-      transitionOut: { transition: 'fadeIn',  duration: '400ms' },
+      transitionOut: { transition: 'fade',  duration: '400ms' },
     },
   );
   $.wait('5s');

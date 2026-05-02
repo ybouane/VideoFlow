@@ -218,7 +218,7 @@ Each preset is tagged with a `layerCategory` so editors can filter the picker pe
 
 | Name | Effect | Params |
 | --- | --- | --- |
-| `fadeIn` | Opacity → 0 (visual layers) and volume → 0 (audio layers). Works on any layer. | — |
+| `fade` | Opacity → 0 (visual layers) and volume → 0 (audio layers). Works on any layer. | — |
 
 **Visual** (`layerCategory: 'visual'`) — position / opacity / scale, CSS-only
 
@@ -228,11 +228,11 @@ Each preset is tagged with a `layerCategory` so editors can filter the picker pe
 | `slideDown` | Enters from above, slides down to rest | `distance?: 0.10`, `fade?: true` |
 | `slideLeft` | Enters from the right, slides left to rest | `distance?: 0.12`, `fade?: true` |
 | `slideRight` | Enters from the left, slides right to rest | `distance?: 0.12`, `fade?: true` |
-| `zoomIn` | Scales from `from` up to `1` | `from?: 0.85`, `fade?: true` |
+| `zoom` | Scales from `from` to rest (symmetric) | `from?: 0.85`, `fade?: true` |
 | `overshootPop` | Springy scale-in past 1, settles to 1 | `from?: 0.4`, `overshoot?: 1.7`, `tilt?: 6`, `fade?: true` |
 | `rotate3dY` | Y-axis swing into rest | `angle?: 75`, `fade?: true` |
 | `tilt3dUp` | X-axis tilt forward into rest | `angle?: 60`, `lift?: 0.04`, `fade?: true` |
-| `spinIn` | Spin around Z while scaling up | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
+| `spin` | Spin around Z while scaling (symmetric) | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
 
 **Visual — WebGL-effect-injecting** (`layerCategory: 'visual'`, `injectsEffects: true`)
 
@@ -272,7 +272,7 @@ const card = $.group(
   { position: [0.5, 0.5], scale: 1 },
   {
     transitionIn:  { transition: 'slideUp', duration: '500ms' },
-    transitionOut: { transition: 'fadeIn',  duration: '500ms' },
+    transitionOut: { transition: 'fade',  duration: '500ms' },
   },
   (group) => {
     // Child timings are relative to the group's start, so this image

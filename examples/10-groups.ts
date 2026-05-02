@@ -54,7 +54,7 @@ export function createProject() {
 		{ position: [0.5, 0.5], scale: 1 },
 		{
 			transitionIn:  { transition: 'slideLeft', duration: '600ms', params: { distance: 0.4 } },
-			transitionOut: { transition: 'zoomIn',    duration: '600ms', params: { from: 1.2 } },
+			transitionOut: { transition: 'zoom',    duration: '600ms', params: { from: 1.2 } },
 		},
 		(card) => {
 			// Subtle breathing scale across the card's full lifetime.
@@ -107,7 +107,7 @@ export function createProject() {
 		{ position: [0.5, 0.5] },
 		{
 			transitionIn:  { transition: 'slideUp', duration: '500ms', params: { distance: 0.08 } },
-			transitionOut: { transition: 'fadeIn',  duration: '500ms' },
+			transitionOut: { transition: 'fade',  duration: '500ms' },
 		},
 		(card) => {
 			// Rotate the whole card slightly across its lifetime — children
@@ -156,7 +156,7 @@ export function createProject() {
 			$.group(
 				{ position: [0.7, 0.32], scale: 0.9 },
 				{
-					transitionIn: { transition: 'zoomIn', duration: '350ms', params: { from: 0.5 } },
+					transitionIn: { transition: 'zoom', duration: '350ms', params: { from: 0.5 } },
 				},
 				() => {
 					$.addShape(
