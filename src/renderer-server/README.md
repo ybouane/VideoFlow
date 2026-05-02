@@ -11,9 +11,9 @@ npx playwright install chromium
 
 **Requirements:**
 - Node.js 18+
-- ffmpeg 4.4+
+- ffmpeg 4.4+ — *only required for the legacy pipeline (`{ ffmpeg: true }`).* The default pipeline runs entirely inside the headless browser.
 
-### Installing ffmpeg
+### Installing ffmpeg (legacy pipeline only)
 
 ```bash
 # macOS
@@ -50,7 +50,18 @@ await $.renderVideo({
 - **Generate videos from an API** — accept JSON, return MP4
 - **Batch processing** — render hundreds of videos in a pipeline
 - **Background jobs** — offload rendering to worker processes
-- **High-quality output** — leverages ffmpeg for optimized encoding
+- **WebCodecs-accelerated by default** — encoding happens inside the headless browser using H.264 + AAC, with optional ffmpeg fallback
+
+## Encoding pipelines
+
+There are two encoding pipelines, selected by the `ffmpeg` option:
+
+| Mode                | When                                  | Audio + video encoding | Muxing  | Per-frame screenshot? |
+| ------------------- | ------------------------------------- | ---------------------- | ------- | --------------------- |
+| `ffmpeg: false`     | **Default.** Fast path                | Browser (WebCodecs / MediaBunny) | Browser (MediaBunny → MP4) | No |
+| `ffmpeg: true`      | Legacy / when you need ffmpeg flags    | ffmpeg (libx264 + AAC) | ffmpeg  | Yes (JPEG via Playwright) |
+
+The default path encodes the entire video inside the headless browser via `BrowserRenderer.exportVideo()` and POSTs the finished MP4 back to the server. It is typically several times faster because it avoids the per-frame `page.screenshot()` round-trip and the JPEG → H.264 re-encode. The legacy ffmpeg pipeline remains available for projects that already rely on it or that want to use ffmpeg-specific flags downstream.
 
 ## API
 
@@ -63,7 +74,7 @@ import VideoRenderer from '@videoflow/renderer-server';
 
 const json = await $.compile();
 
-// Render to file
+// Render to file (default fast path — encodes in the browser)
 await VideoRenderer.render(json, {
   outputType: 'file',
   output: './video.mp4',
@@ -72,6 +83,13 @@ await VideoRenderer.render(json, {
 
 // Render to buffer
 const buffer = await VideoRenderer.render(json);
+
+// Force the legacy ffmpeg pipeline
+await VideoRenderer.render(json, {
+  outputType: 'file',
+  output: './video.mp4',
+  ffmpeg: true,
+});
 ```
 
 **Options:**
@@ -79,6 +97,8 @@ const buffer = await VideoRenderer.render(json);
 - `output` — output file path (required when `outputType` is `'file'`)
 - `verbose` — log progress to console
 - `signal` — `AbortSignal` for cancellation
+- `onProgress` — `(progress: number) => void`, called with `0..1`
+- `ffmpeg` — `false` (default, browser-export) or `true` (legacy ffmpeg)
 
 ### Instance Methods
 

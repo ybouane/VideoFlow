@@ -2,18 +2,27 @@
  * ServerRenderer — server-side video rendering engine for VideoFlow.
  *
  * Uses Playwright to run a headless Chromium browser that executes the same
- * browser-based rendering logic (SVG foreignObject → Canvas).  Each frame is
- * captured via `page.screenshot()` and piped into ffmpeg to produce the final
- * MP4 video file with audio.
+ * browser-based rendering logic (SVG foreignObject → Canvas). Two pipelines
+ * are available, selected by `RenderOptions.ffmpeg`:
  *
- * Architecture:
- * 1. Launch a headless Chromium browser via Playwright
- * 2. Open a page, serve the renderer HTML + bundled script via route interception
- * 3. Pass the VideoJSON to the page via an exposed `window.loadProject()` function
- * 4. The page creates a BrowserRenderer and initialises all layers
- * 5. For each frame: call `window.renderFrame(n)` then `page.screenshot()` → pipe to ffmpeg
- * 6. Render audio via `window.renderAudio()` → write WAV file → mux into final MP4
- * 7. Return the resulting MP4 as a Buffer or write to a file
+ * **Browser export (default, `ffmpeg: false`):**
+ * 1. Launch headless Chromium, open a page, serve the bundled renderer
+ * 2. Pass the VideoJSON to the page via `window.loadProject()`
+ * 3. The page creates a `BrowserRenderer` and initialises all layers
+ * 4. The page calls `BrowserRenderer.exportVideo()` which encodes video +
+ *    audio + MP4 mux entirely in the browser (Worker + WebCodecs + MediaBunny)
+ * 5. The page POSTs the finished MP4 to a route that the server intercepts;
+ *    the bytes go straight from the request body to a Node Buffer
+ *
+ * **Legacy ffmpeg (`ffmpeg: true`):**
+ * 1. Launch headless Chromium, open a page, serve the bundled renderer
+ * 2. For each frame: `window.renderFrame(n)` then `page.screenshot()` → pipe
+ *    to ffmpeg stdin as JPEG
+ * 3. Render audio via `window.renderAudio()` → write WAV file → mux with
+ *    ffmpeg into the final MP4
+ *
+ * The browser path is typically several times faster because it eliminates
+ * the per-frame screenshot round-trip and the JPEG → H.264 re-encode.
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -138,6 +147,20 @@ const MIME_TYPES: Record<string, string> = {
 	'.bmp': 'image/bmp', '.avif': 'image/avif',
 };
 
+/**
+ * Per-render upload slot. Set when the browser-export path is in flight so
+ * the route handler knows where to send the POSTed MP4 body. Cleared after
+ * the upload arrives (or the render fails).
+ */
+type UploadSlot = {
+	/** URL the page is expected to POST the finished MP4 to. */
+	url: string;
+	/** Resolved with the uploaded MP4 bytes once the route handler receives them. */
+	resolve: (buf: Buffer) => void;
+	/** Rejected if the upload route handler fails or the render aborts. */
+	reject: (err: Error) => void;
+};
+
 export default class ServerRenderer {
 	private videoJSON: VideoJSON;
 	private context: BrowserContext | null = null;
@@ -147,6 +170,10 @@ export default class ServerRenderer {
 	private localFileMap: Map<string, string> = new Map();
 	/** Temporary files to clean up on destroy. */
 	private tempFiles: string[] = [];
+	/** Active upload slot for the in-flight browser-export render, if any. */
+	private uploadSlot: UploadSlot | null = null;
+	/** Forward progress reports from the page to the active render's callback. */
+	private exportProgressHandler: ((progress: number) => void) | null = null;
 
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
@@ -286,6 +313,13 @@ export default class ServerRenderer {
 			return this.videoJSON;
 		});
 
+		// Bridge for the browser-export path. The page calls this from inside
+		// `BrowserRenderer.exportVideo`'s onProgress; we forward to whichever
+		// callback the current render set up.
+		await this.page.exposeFunction('onExportProgress', (progress: number) => {
+			this.exportProgressHandler?.(progress);
+		});
+
 		const loadedPromise = new Promise<void>(async (resolve, reject) => {
 			const timeout = setTimeout(() => reject(new Error('Timeout loading project')), 120_000);
 
@@ -315,6 +349,22 @@ export default class ServerRenderer {
 					body: bundle,
 					contentType: 'application/javascript',
 				});
+			}
+
+			// Browser-export upload sink. The page POSTs the finished MP4 here
+			// and the route handler hands the body straight to the active
+			// upload slot — no JSON or base64 round-trip. Match against the
+			// per-render URL so concurrent renders on different pages can't
+			// cross-talk.
+			if (this.uploadSlot && url === this.uploadSlot.url && route.request().method() === 'POST') {
+				try {
+					const body = route.request().postDataBuffer();
+					if (!body) throw new Error('Empty upload body');
+					this.uploadSlot.resolve(Buffer.from(body));
+				} catch (err) {
+					this.uploadSlot.reject(err instanceof Error ? err : new Error(String(err)));
+				}
+				return route.fulfill({ status: 200, body: '' });
 			}
 
 			// Serve local files mapped by UUID
@@ -510,7 +560,156 @@ export default class ServerRenderer {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Execute the full server-side rendering pipeline.
+	 * Top-level dispatcher. Picks the encoding pipeline based on
+	 * `options.ffmpeg`; defaults to the in-browser export path.
+	 */
+	private async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
+		if (options.ffmpeg) {
+			return this.renderVideoViaFFmpeg(options);
+		}
+		return this.renderVideoViaBrowser(options);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Browser-export pipeline (default — `ffmpeg: false`)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Render the entire video inside the headless browser using
+	 * `BrowserRenderer.exportVideo()` and stream the finished MP4 back to Node.
+	 *
+	 * The page calls `BrowserRenderer.exportVideo()`, which encodes video
+	 * (WebCodecs H.264) and audio (AAC), muxes both into MP4 via MediaBunny,
+	 * and POSTs the resulting Blob to a per-render URL. The server intercepts
+	 * the POST through Playwright's route handler so the bytes go from the
+	 * page's request body straight into a Node Buffer — no JSON round-trip.
+	 *
+	 * Cancellation is propagated from `options.signal` into the page by
+	 * calling `window.__exportAbort.abort()` via `page.evaluate`. Stalls are
+	 * detected by tracking the time since the last `onExportProgress` tick.
+	 */
+	private async renderVideoViaBrowser(options: RenderOptions = {}): Promise<Buffer | string> {
+		const signal = options.signal;
+		const verbose = options.verbose ?? false;
+		const onProgress = options.onProgress;
+
+		if (verbose) console.log('VideoFlow: Initializing browser-export renderer...');
+
+		await this.ensurePage();
+		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
+
+		if (verbose) {
+			const nFrames = Math.round(this.videoJSON.duration * this.videoJSON.fps);
+			const durationStr = formatTime(this.videoJSON.duration);
+			console.log(`VideoFlow: Rendering ${durationStr} video (${nFrames} frames) entirely in the browser...`);
+		}
+
+		// A per-render URL keeps multiple ServerRenderer instances on the same
+		// shared browser from cross-talking through the route handler.
+		const uploadUrl = `https://videoflow.local/render-output/${this.renderId}`;
+
+		// Wire up the upload slot before kicking off the page-side export.
+		const uploadPromise = new Promise<Buffer>((resolve, reject) => {
+			this.uploadSlot = { url: uploadUrl, resolve, reject };
+		});
+
+		// Stall detection — the page reports progress per frame; if it goes
+		// silent for too long we kill the render.
+		let lastProgressAt = Date.now();
+		let lastReported = 0;
+		this.exportProgressHandler = (progress: number) => {
+			lastProgressAt = Date.now();
+			lastReported = progress;
+			onProgress?.(progress);
+			if (verbose && Math.floor(progress * 10) > Math.floor((progress - 0.001) * 10)) {
+				console.log(`VideoFlow: Encoding ${(progress * 100).toFixed(0)}%`);
+			}
+		};
+
+		// Propagate AbortSignal into the page. We push the abort across with
+		// `page.evaluate` since exposeFunction is server→page only one-way.
+		const onAbort = async () => {
+			try {
+				await this.page!.evaluate(() => window.__exportAbort?.abort());
+			} catch { /* page may be closed */ }
+		};
+		signal?.addEventListener('abort', onAbort, { once: true });
+
+		// Watchdog timer: poll for stalls. Re-armed on every progress tick.
+		const STALL_MS = 120_000;
+		const stallController = new AbortController();
+		const stallWatcher = (async () => {
+			while (!stallController.signal.aborted) {
+				await delay(2000);
+				if (stallController.signal.aborted) return;
+				if (Date.now() - lastProgressAt > STALL_MS) {
+					try {
+						await this.page!.evaluate(() => window.__exportAbort?.abort());
+					} catch { /* ignore */ }
+					this.uploadSlot?.reject(new Error(
+						`Rendering stalled — no progress for ${STALL_MS / 1000} seconds (last reported ${(lastReported * 100).toFixed(1)}%).`
+					));
+					return;
+				}
+			}
+		})();
+
+		let outputBuffer: Buffer | null = null;
+		try {
+			// Drive the in-page export. The page's `exportVideo` only resolves
+			// AFTER its POST completes, so the upload promise is always
+			// resolved by the time the evaluate promise resolves. Running them
+			// through `Promise.all` means either one rejecting (page error,
+			// stall, route handler failure) tears the whole thing down.
+			const [size, buf] = await Promise.all([
+				this.page!.evaluate(
+					(url: string) => window.exportVideo(url),
+					uploadUrl,
+				),
+				uploadPromise,
+			]);
+			outputBuffer = buf;
+
+			if (verbose) {
+				console.log(`VideoFlow: Encoded ${(size / 1024 / 1024).toFixed(2)} MB MP4 in browser.`);
+			}
+		} catch (err) {
+			// Surface aborts as proper AbortError; otherwise rethrow.
+			if (signal?.aborted) {
+				throw new DOMException('Render aborted', 'AbortError');
+			}
+			throw err;
+		} finally {
+			stallController.abort();
+			await stallWatcher.catch(() => {});
+			signal?.removeEventListener('abort', onAbort);
+			this.uploadSlot = null;
+			this.exportProgressHandler = null;
+		}
+
+		if (!outputBuffer) {
+			throw new Error('Browser export produced no output');
+		}
+
+		// Final delivery — write to disk if a path was requested, otherwise
+		// hand back the Buffer.
+		if (options.outputType === 'file' && options.output) {
+			const outputPath = path.resolve(options.output);
+			await fs.writeFile(outputPath, outputBuffer);
+			if (verbose) console.log('VideoFlow: Render complete →', outputPath);
+			return options.output;
+		}
+
+		if (verbose) console.log('VideoFlow: Render complete.');
+		return outputBuffer;
+	}
+
+	// -----------------------------------------------------------------------
+	//  Legacy ffmpeg pipeline (`ffmpeg: true`)
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Execute the legacy server-side rendering pipeline.
 	 *
 	 * 1. Open headless page and load the project
 	 * 2. Render audio to a temporary WAV file
@@ -519,7 +718,7 @@ export default class ServerRenderer {
 	 * 5. Close ffmpeg stdin, wait for it to finish
 	 * 6. Return the output as a Buffer or file path
 	 */
-	private async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
+	private async renderVideoViaFFmpeg(options: RenderOptions = {}): Promise<Buffer | string> {
 		const signal = options.signal;
 		const verbose = options.verbose ?? false;
 		const onProgress = options.onProgress;
