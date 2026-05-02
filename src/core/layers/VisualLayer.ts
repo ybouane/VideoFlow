@@ -57,6 +57,11 @@ export type VisualLayerSettings = BaseLayerSettings;
 
 export default class VisualLayer extends BaseLayer {
 	static type = 'visual';
+	/**
+	 * Broad layer family used to filter UI affordances (e.g. transition pickers,
+	 * property panels). Matches the `layerCategory` field a transition preset
+	 * declares: `'visual' | 'audio' | 'textual' | 'all'`.
+	 */
 	static category = 'visual';
 	declare properties: VisualLayerProperties;
 	declare settings: VisualLayerSettings;

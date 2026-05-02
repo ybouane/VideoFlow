@@ -47,6 +47,11 @@ export type TextualLayerSettings = VisualLayerSettings;
 
 export default class TextualLayer extends VisualLayer {
 	static type = 'textual';
+	/**
+	 * Broad layer family — see {@link VisualLayer.category}. Overrides the
+	 * inherited `'visual'` so text-only transitions (`typewriter`,
+	 * `scrambleDecode`, …) match this category.
+	 */
 	static category = 'textual';
 	declare properties: TextualLayerProperties;
 	declare settings: TextualLayerSettings;

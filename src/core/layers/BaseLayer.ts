@@ -263,7 +263,12 @@ export default class BaseLayer {
 	 * Remove this layer at the current flow position, or after an optional
 	 * offset from it.
 	 *
-	 * `options.in` schedules the removal without advancing the flow pointer.
+	 * `options.in` schedules the removal at `flow + in` without advancing the
+	 * flow pointer — useful when you want a layer to disappear later while
+	 * keeping subsequent `addX()` calls anchored to *now*. The default
+	 * (`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+	 *
+	 * After calling `remove`, any further flow method on this layer throws.
 	 */
 	remove(options: RemoveLayerOptions = {}): this {
 		if (this.removed) throw new Error('Layer already removed');
