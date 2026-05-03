@@ -89,11 +89,11 @@ Every preset receives a **signed** progress value `p ∈ [-1, +1]`:
 
 `p` is pre-eased by the renderer (per-direction easing), so preset bodies stay linear in their math. Presets must multiply / add onto the incoming property values so they compose with keyframed animation.
 
-Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Continuous-motion legacy presets (`rise`, `fall`, `driftLeft`, `driftRight`, `riseFade`) use the signed `p` to travel through rest without reversing.
+Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Callers are still free to compose any in/out pair on a layer.
 
 ### Built-in presets
 
-There are 27+ built-in transitions plus a handful of legacy aliases. See the [core package README](../core/README.md#transitions) for the full categorised table. A short representative sample:
+There are 27+ built-in transitions. See the [core package README](../core/README.md#transitions) for the full categorised table. A short representative sample:
 
 | Preset | Category | Effect |
 | --- | --- | --- |
@@ -137,7 +137,7 @@ Options:
 
 ## GLSL Effects
 
-Shader effects are registered globally and referenced by name in the layer's `effects` property. Built-in effects (`chromaticAberration`, `pixelate`, `vignette`, `rgbSplit`, `invert`) are auto-registered on import.
+Shader effects are registered globally and referenced by name in the layer's `effects` property. Built-in effects (`gaussianBlur`, `motionBlur`, `chromaticAberration`, `rgbSplit`, `bloom`, `glow`, `colorCorrection`, `vignette`, `pixelate`, `vhsDistortion`, `frostedGlass`, `lightSweep`, `noiseDissolve`, …) are auto-registered on import.
 
 ### Built-in effects
 
@@ -149,7 +149,7 @@ Shader effects are registered globally and referenced by name in the layer's `ef
 | `rgbSplit` | Directional chromatic aberration | `angle` (degrees, default `0`), `amount` (default `0.005`) |
 | `invert` | Colour inversion | `amount` (0–1, default `1`) |
 
-All params are animatable via dot-path property keys (e.g. `'effects.pixelate.size'`).
+All params are animatable via dot-path property keys (e.g. `'effects.pixelate.size'`). The full effect catalogue is registered in `src/renderer-browser/effects/presets.ts`.
 
 ### Custom effects
 

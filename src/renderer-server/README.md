@@ -11,9 +11,9 @@ npx playwright install chromium
 
 **Requirements:**
 - Node.js 18+
-- ffmpeg 4.4+ — *only required for the legacy pipeline (`{ ffmpeg: true }`).* The default pipeline runs entirely inside the headless browser.
+- ffmpeg 4.4+ — *only required for the alternative pipeline (`{ ffmpeg: true }`).* The default pipeline runs entirely inside the headless browser.
 
-### Installing ffmpeg (legacy pipeline only)
+### Installing ffmpeg (alternative pipeline only)
 
 ```bash
 # macOS
@@ -59,9 +59,9 @@ There are two encoding pipelines, selected by the `ffmpeg` option:
 | Mode                | When                                  | Audio + video encoding | Muxing  | Per-frame screenshot? |
 | ------------------- | ------------------------------------- | ---------------------- | ------- | --------------------- |
 | `ffmpeg: false`     | **Default.** Fast path                | Browser (WebCodecs / MediaBunny) | Browser (MediaBunny → MP4) | No |
-| `ffmpeg: true`      | Legacy / when you need ffmpeg flags    | ffmpeg (libx264 + AAC) | ffmpeg  | Yes (JPEG via Playwright) |
+| `ffmpeg: true`      | Alternative — when you need ffmpeg flags | ffmpeg (libx264 + AAC) | ffmpeg | Yes (JPEG via Playwright) |
 
-The default path encodes the entire video inside the headless browser via `BrowserRenderer.exportVideo()` and POSTs the finished MP4 back to the server. It is typically several times faster because it avoids the per-frame `page.screenshot()` round-trip and the JPEG → H.264 re-encode. The legacy ffmpeg pipeline remains available for projects that already rely on it or that want to use ffmpeg-specific flags downstream.
+The default path encodes the entire video inside the headless browser via `BrowserRenderer.exportVideo()` and POSTs the finished MP4 back to the server. It is typically several times faster because it avoids the per-frame `page.screenshot()` round-trip and the JPEG → H.264 re-encode. The alternative ffmpeg pipeline remains available for projects that already rely on it or that want to use ffmpeg-specific flags downstream.
 
 ## API
 
@@ -84,7 +84,7 @@ await VideoRenderer.render(json, {
 // Render to buffer
 const buffer = await VideoRenderer.render(json);
 
-// Force the legacy ffmpeg pipeline
+// Force the alternative ffmpeg pipeline
 await VideoRenderer.render(json, {
   outputType: 'file',
   output: './video.mp4',
@@ -98,7 +98,7 @@ await VideoRenderer.render(json, {
 - `verbose` — log progress to console
 - `signal` — `AbortSignal` for cancellation
 - `onProgress` — `(progress: number) => void`, called with `0..1`
-- `ffmpeg` — `false` (default, browser-export) or `true` (legacy ffmpeg)
+- `ffmpeg` — `false` (default, browser-export) or `true` (alternative ffmpeg pipeline)
 
 ### Instance Methods
 
