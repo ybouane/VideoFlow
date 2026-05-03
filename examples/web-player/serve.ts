@@ -61,18 +61,6 @@ async function main() {
 		} else if (url === '/player.js') {
 			res.writeHead(200, { 'Content-Type': 'application/javascript' });
 			res.end(bundledJs);
-		} else if (url === '/sample.mp3' || url === '/sample.mp4' || url === '/sample.jpg') {
-			// Serve sample media files from examples directory
-			const filePath = path.join(__dirname, '..', url);
-			try {
-				const data = await fs.readFile(filePath);
-				const mimeType = url.endsWith('.mp3') ? 'audio/mpeg' : 'video/mp4';
-				res.writeHead(200, { 'Content-Type': mimeType });
-				res.end(data);
-			} catch {
-				res.writeHead(404);
-				res.end('Not found');
-			}
 		} else {
 			res.writeHead(404);
 			res.end('Not found');

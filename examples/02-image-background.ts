@@ -1,8 +1,7 @@
 /**
  * Example 02 — Image Background with Blur Animation
  *
- * Adds a full-cover background image and gradually blurs it while a
- * title fades in on top.
+ * Image as a full-cover background; blurs slowly while a title fades in on top.
  *
  * Run:
  *   npx tsx examples/02-image-background.ts
@@ -18,25 +17,23 @@ export function createProject() {
 		fps: 30,
 	});
 
-	// Background image — covers the whole canvas
 	const bg = $.addImage(
 		{ fit: 'cover' },
-		{ source: 'sample.jpg' },
+		{ source: 'https://videoflow.dev/samples/sample.jpg' },
 	);
 
-	// Slowly blur the background over 4 seconds (non-blocking)
+	// Slowly blur the background over 4 seconds (non-blocking).
 	bg.animate(
 		{ filterBlur: 0 },
 		{ filterBlur: 0.5 },
 		{ duration: '4s', wait: false },
 	);
 
-	// Overlay title appears after a short pause
 	$.wait('500ms');
 
 	const title = $.addText({
 		text: 'Beautiful Scenery',
-		fontSize: 2.3,
+		fontSize: 5,
 		fontWeight: 700,
 		color: '#ffffff',
 		textShadowColor: 'rgba(0,0,0,0.5)',
@@ -44,11 +41,8 @@ export function createProject() {
 	});
 
 	title.fadeIn('1s');
-
 	$.wait('3s');
-
 	title.fadeOut('1s');
-
 	$.wait('500ms');
 
 	return $;
