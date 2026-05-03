@@ -338,13 +338,13 @@ export default class ServerRenderer {
 		await this.page.route('**/*', async (route) => {
 			const url = route.request().url();
 
-			if (url.endsWith('/renderer-page.html') || url === 'https://videoflow.local/') {
+			if (url == 'https://videoflow.local/renderer-page.html') {
 				return route.fulfill({
 					body: htmlContent,
 					contentType: 'text/html',
 				});
 			}
-			if (url.endsWith('/renderer-page-script.js') || url.includes('renderer-page-script')) {
+			if (url == 'https://videoflow.local/renderer-page-script.js') {
 				return route.fulfill({
 					body: bundle,
 					contentType: 'application/javascript',
@@ -388,16 +388,37 @@ export default class ServerRenderer {
 				}
 			}
 
-			// Pass through external requests (fonts, media assets)
+			// Pass through external requests (fonts, media assets) and rewrite
+			// CORS headers so the page can fetch from any origin — including
+			// origins that don't otherwise allow cross-origin requests.
+			//
+			// Important: we read the body *bytes* explicitly via
+			// `response.body()` and rebuild the fulfill payload from scratch,
+			// rather than passing `{ response }` directly. Playwright auto-
+			// decodes any `Content-Encoding` (gzip / brotli) when reading the
+			// body, and forwarding the decoded body alongside the original
+			// `Content-Encoding` / `Content-Length` headers leaves the browser
+			// trying to re-decode plain bytes — which intermittently yields a
+			// truncated or empty image when two or more such requests run
+			// concurrently. Stripping the stale framing headers fixes it.
 			try {
 				const response = await route.fetch();
-				const headers = {
-					...response.headers(),
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-					'Access-Control-Allow-Headers': 'Content-Type',
-				};
-				await route.fulfill({ response, headers });
+				const body = await response.body();
+				const original = response.headers();
+				const headers: Record<string, string> = {};
+				for (const [k, v] of Object.entries(original)) {
+					const lk = k.toLowerCase();
+					if (lk === 'content-encoding' || lk === 'content-length' || lk === 'transfer-encoding') continue;
+					headers[k] = v;
+				}
+				headers['Access-Control-Allow-Origin'] = '*';
+				headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS';
+				headers['Access-Control-Allow-Headers'] = 'Content-Type';
+				await route.fulfill({
+					status: response.status(),
+					headers,
+					body,
+				});
 			} catch {
 				await route.abort();
 			}
