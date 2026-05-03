@@ -208,7 +208,7 @@ Presets receive a signed progress parameter `p ∈ [-1, +1]`:
 - `p =  0` — layer at rest, original properties
 - `p = +1` — end of the `transitionOut` window (layer fully "transitioned out")
 
-Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Continuous-motion legacy aliases (`rise`, `riseFade`, `driftLeft`/`driftRight`) use the sign of `p` to travel through rest without reversing.
+Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Callers are still free to compose any in/out pair on a layer.
 
 ### Built-in transition presets
 
@@ -333,6 +333,8 @@ When the same effect appears more than once, use an index to target a specific o
 | `vignette` | Darkened border vignette | `strength` (default `0.6`), `radius` (default `0.8`) |
 | `rgbSplit` | Directional chromatic aberration | `angle` (degrees), `amount` (default `0.005`) |
 | `invert` | Colour inversion | `amount` (0–1, default `1`) |
+| `bloom` | Bright-area bloom | `threshold`, `intensity`, `radius` |
+| `colorCorrection` | Exposure / contrast / saturation / temperature / tint | `exposure`, `contrast`, `saturation`, `temperature`, `tint`, `gamma` |
 
 All params listed above are animatable. Effects work in both `BrowserRenderer` and `DomRenderer`. Custom effects can be registered with `BrowserRenderer.registerEffect(name, glsl, params)`.
 
@@ -428,9 +430,10 @@ See the [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) fol
 | [05-parallel-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/05-parallel-animations.ts) | Staggered parallel animations |
 | [06-render-frame-and-audio.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/06-render-frame-and-audio.ts) | Render a single frame or audio track |
 | [07-abort-controller.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/07-abort-controller.ts) | Cancelling a render with AbortController |
-| [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, zoom, blur, rise/fall, driftLeft/Right, slideFromX, riseFade) |
-| [09-effects.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/09-effects.ts) | GLSL effects with animated params (pixelate, chromatic aberration, vignette) |
+| [08-transitions.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/08-transitions.ts) | Built-in transition presets (fade, slideUp, zoom, overshootPop, blurResolve, glitchResolve, rotate3dY, lightSweepReveal, typewriter) |
+| [09-effects.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/09-effects.ts) | GLSL effects showcase — bloom, glitch, frosted glass with animated light sweep |
 | [10-groups.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/10-groups.ts) | Layer groups — composite layers as one with shared transitions, animations, and nested groups |
+| [11-keyframe-animations.ts](https://github.com/ybouane/VideoFlow/tree/main/examples/11-keyframe-animations.ts) | Property animations — scale, position, rotation, blur with various easings |
 
 Run any example with:
 
