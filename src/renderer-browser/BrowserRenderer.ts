@@ -493,10 +493,18 @@ export default class BrowserRenderer implements ILayerRenderer {
 				})
 			);
 
+			// Ensure each text layer's specific font variant (weight / style)
+			// is downloaded BEFORE we rasterize effect layers. `document.fonts.
+			// ready` alone is not enough — it waits for in-flight loads but
+			// does NOT initiate new ones, and the browser only initiates a
+			// load for a particular weight when an element gets laid out with
+			// that weight (which can race with rasterization).
+			await this.ensureLayerFontsLoaded();
+			await document.fonts.ready;
+
 			await this.processEffectLayers(frame);
 
 			this.currentFrame = frame;
-			await document.fonts.ready;
 		} catch (e) {
 			if (e !== 'STOP_RENDERING') throw e;
 		} finally {
@@ -541,6 +549,39 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 */
 	private async buildFontCSSForLayer(layer: RuntimeBaseLayer): Promise<string> {
 		return this.fontEmbedder.buildFontCSSForLayer(layer);
+	}
+
+	/**
+	 * Force the browser to start downloading the specific font variant each
+	 * text/caption layer needs at this frame, then await all of them.
+	 *
+	 * `document.fonts.ready` only waits for in-flight loads; it does NOT
+	 * initiate new ones. The browser only initiates a load for a particular
+	 * weight/style when an element actually gets laid out with it — which can
+	 * race with rasterization. Without this step, an effect text layer's SVG
+	 * gets serialised before the gstatic URL appears in the resource timing
+	 * buffer, so {@link FontEmbedder} skips it and the SVG falls back to
+	 * the default font.
+	 */
+	private async ensureLayerFontsLoaded(): Promise<void> {
+		if (typeof document === 'undefined' || !document.fonts) return;
+		const promises: Promise<unknown>[] = [];
+		for (const layer of this.layers) {
+			if (!this.isLayerEnabled(layer)) continue;
+			const t = layer.json.type;
+			if (t !== 'text' && t !== 'captions') continue;
+			const props = layer.lastAppliedProps;
+			if (!props) continue;
+			const family = props.fontFamily;
+			if (typeof family !== 'string' || !this.loadedFonts[family]) continue;
+			const weight = props.fontWeight ?? 400;
+			const style = props.fontStyle ?? 'normal';
+			const spec = `${style} ${weight} 1em "${family}"`;
+			try {
+				promises.push(document.fonts.load(spec));
+			} catch { /* invalid spec — let the layer fall back */ }
+		}
+		if (promises.length > 0) await Promise.allSettled(promises);
 	}
 
 	/**
@@ -772,8 +813,14 @@ export default class BrowserRenderer implements ILayerRenderer {
 	/**
 	 * Apply keyframe automation to an AudioParam from the layer's animations.
 	 *
-	 * Keyframes are stored in absolute source seconds; this method projects
-	 * each one back into timeline seconds for `setValueAtTime`.
+	 * For `volume` we additionally fold in any `transitionIn` / `transitionOut`
+	 * preset that modifies it (e.g. the `fade` preset). The visual render path
+	 * calls `applyTransitions` on every rendered frame, but audio layers have
+	 * no DOM element so their `renderFrame` never runs — without this we'd
+	 * hear the un-faded volume on auditory layers. We sample the combined
+	 * keyframe + transition curve at every timeline frame inside the layer's
+	 * footprint and emit `setValueAtTime` whenever the value actually changes,
+	 * which keeps the gain schedule compact.
 	 */
 	private applyAudioKeyframes(
 		layer: RuntimeBaseLayer,
@@ -781,6 +828,33 @@ export default class BrowserRenderer implements ILayerRenderer {
 		param: AudioParam,
 		audioCtx: OfflineAudioContext
 	): void {
+		const fps = this.videoJSON.fps;
+
+		// `volume` is the only property currently affected by a built-in
+		// transition (`fade`), so for everything else we keep the lightweight
+		// keyframe-only path.
+		const hasTransitions = property === 'volume' && (layer.json.transitionIn || layer.json.transitionOut);
+
+		if (hasTransitions) {
+			const startFrame = layer.startFrame;
+			const endFrame = layer.endFrame;
+			if (!(endFrame > startFrame)) return;
+			let lastEmitted: number | null = null;
+			for (let f = startFrame; f < endFrame; f++) {
+				const baseProps = layer.getPropertiesAtFrame(f);
+				const finalProps = layer.applyTransitions(f, baseProps);
+				const v = Number(finalProps[property] ?? 1);
+				if (!Number.isFinite(v)) continue;
+				// Skip when the value hasn't moved meaningfully — avoids tens of
+				// thousands of redundant `setValueAtTime` calls for the long
+				// at-rest stretch outside the transition windows.
+				if (lastEmitted !== null && Math.abs(v - lastEmitted) < 1e-4) continue;
+				param.setValueAtTime(v, f / fps);
+				lastEmitted = v;
+			}
+			return;
+		}
+
 		const anim = layer.json.animations.find(a => a.property === property);
 		if (!anim || anim.keyframes.length === 0) return;
 

@@ -706,10 +706,17 @@ export default class DomRenderer implements ILayerRenderer {
 				})
 			);
 
+			// Ensure each text layer's specific font variant is downloaded
+			// BEFORE we rasterize effect layers — `document.fonts.ready` waits
+			// for in-flight loads but doesn't initiate new ones, and the
+			// browser only kicks off a fetch for a given weight when an
+			// element gets laid out with it.
+			await this.ensureLayerFontsLoaded();
+			await document.fonts.ready;
+
 			await this.processEffectLayers(frame);
 
 			this.currentFrame = frame;
-			await document.fonts.ready;
 			this.onFrame?.(frame);
 		} catch (e) {
 			if (e !== 'STOP_RENDERING') throw e;
@@ -1006,6 +1013,35 @@ export default class DomRenderer implements ILayerRenderer {
 		const { track } = layer.json;
 		if (track == null) return true;
 		return this.videoJSON?.tracks?.[track]?.enabled !== false;
+	}
+
+	/**
+	 * Force the browser to download the specific font variant each text /
+	 * captions layer needs at this frame, then await all of them. See the
+	 * matching helper on `BrowserRenderer` for the full rationale — the
+	 * short version is that `document.fonts.ready` does not initiate new
+	 * loads, so without this step an effect text layer's SVG can be
+	 * rasterised before its weight-specific gstatic URL has been fetched.
+	 */
+	private async ensureLayerFontsLoaded(): Promise<void> {
+		if (typeof document === 'undefined' || !document.fonts) return;
+		const promises: Promise<unknown>[] = [];
+		for (const layer of this.layers) {
+			if (!this.isLayerEnabled(layer)) continue;
+			const t = layer.json.type;
+			if (t !== 'text' && t !== 'captions') continue;
+			const props = layer.lastAppliedProps;
+			if (!props) continue;
+			const family = props.fontFamily;
+			if (typeof family !== 'string' || !this.loadedFonts[family]) continue;
+			const weight = props.fontWeight ?? 400;
+			const style = props.fontStyle ?? 'normal';
+			const spec = `${style} ${weight} 1em "${family}"`;
+			try {
+				promises.push(document.fonts.load(spec));
+			} catch { /* invalid spec — let the layer fall back */ }
+		}
+		if (promises.length > 0) await Promise.allSettled(promises);
 	}
 
 	// -----------------------------------------------------------------------
@@ -1314,6 +1350,34 @@ export default class DomRenderer implements ILayerRenderer {
 		param: AudioParam,
 		audioCtx: OfflineAudioContext
 	): void {
+		const fps = this.videoJSON?.fps;
+		if (!fps) return;
+
+		// `volume` is the only property currently affected by a built-in
+		// transition (`fade`). For visual layers transitions run inside
+		// `renderFrame`, but auditory layers have no DOM element so we'd
+		// otherwise hear the un-transitioned volume. Sample the combined
+		// keyframe + transition curve at every timeline frame and emit
+		// `setValueAtTime` whenever the value actually changes.
+		const hasTransitions = property === 'volume' && (layer.json.transitionIn || layer.json.transitionOut);
+
+		if (hasTransitions) {
+			const startFrame = layer.startFrame;
+			const endFrame = layer.endFrame;
+			if (!(endFrame > startFrame)) return;
+			let lastEmitted: number | null = null;
+			for (let f = startFrame; f < endFrame; f++) {
+				const baseProps = layer.getPropertiesAtFrame(f);
+				const finalProps = layer.applyTransitions(f, baseProps);
+				const v = Number(finalProps[property] ?? 1);
+				if (!Number.isFinite(v)) continue;
+				if (lastEmitted !== null && Math.abs(v - lastEmitted) < 1e-4) continue;
+				param.setValueAtTime(v, f / fps);
+				lastEmitted = v;
+			}
+			return;
+		}
+
 		const anim = layer.json.animations.find(a => a.property === property);
 		if (!anim || anim.keyframes.length === 0) return;
 
