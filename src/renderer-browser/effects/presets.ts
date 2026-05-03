@@ -476,9 +476,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 });
 
 // ---------------------------------------------------------------------------
-// 13. Color Grade — exposure / contrast / saturation / temperature / tint / gamma.
+// 13. Color Correction — exposure / contrast / saturation / temperature / tint / gamma.
 // ---------------------------------------------------------------------------
-registerEffect('colorGrade', `
+registerEffect('colorCorrection', `
 vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	vec4 c = texture2D(tex, uv);
 	if (c.a < 0.0001) return c;
@@ -1566,7 +1566,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 });
 
 // ---------------------------------------------------------------------------
-// Legacy aliases — keep prior preset names working unchanged for older projects.
+// Invert — RGB colour inversion. Operates in straight-alpha space so
+// premultiplied edges stay clean. `amount` cross-fades between original and
+// inverted (1 = full negative).
 // ---------------------------------------------------------------------------
 registerEffect('invert', `
 vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
