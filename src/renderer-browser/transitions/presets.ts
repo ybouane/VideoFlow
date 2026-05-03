@@ -18,7 +18,7 @@
  * the per-layer effect overlay mounted across the layer's lifetime.
  */
 
-import { registerTransition, getTransitionDefinition } from '../transitions.js';
+import { registerTransition } from '../transitions.js';
 
 // ===========================================================================
 // Helpers
@@ -1089,25 +1089,3 @@ registerTransition('numberCountUp', (p, properties, params) => {
 		locale:      { name: 'Locale',        type: 'option', default: 'auto',       options: { auto: 'Auto', 'en-US': 'English (US)', 'fr-FR': 'French (FR)' } },
 	},
 });
-
-
-// ===========================================================================
-// Legacy aliases — old preset names that read as entry-only ("…In") even
-// though their bodies were always symmetric. Kept registered so existing
-// project JSON keeps rendering. Prefer the renamed presets in new work.
-// ===========================================================================
-
-function alias(oldName: string, newName: string): void {
-	const def = getTransitionDefinition(newName);
-	if (!def) return;
-	registerTransition(oldName, def.fn, {
-		defaultEasing: def.defaultEasing,
-		injectsEffects: def.injectsEffects,
-		layerCategory: def.layerCategory,
-		fieldsConfig: def.fieldsConfig,
-	});
-}
-
-alias('fadeIn', 'fade');
-alias('zoomIn', 'zoom');
-alias('spinIn', 'spin');
