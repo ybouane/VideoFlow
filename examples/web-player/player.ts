@@ -16,6 +16,7 @@ import { createProject as parallelAnimations } from '../05-parallel-animations.j
 import { createProject as transitions } from '../08-transitions.js';
 import { createProject as effects } from '../09-effects.js';
 import { createProject as groups } from '../10-groups.js';
+import { createProject as keyframeAnimations } from '../11-keyframe-animations.js';
 
 const EXAMPLES: Record<string, () => any> = {
 	'01 — Basic Text': basicText,
@@ -26,6 +27,7 @@ const EXAMPLES: Record<string, () => any> = {
 	'08 — Transitions': transitions,
 	'09 — Effects': effects,
 	'10 — Groups': groups,
+	'11 — Keyframe Animations': keyframeAnimations,
 };
 
 const $status = document.getElementById('status')!;

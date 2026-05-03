@@ -1,9 +1,8 @@
 /**
  * Example 01 — Basic Text Video
  *
- * Creates a simple 5-second video with a title that fades in and scales up.
- * Demonstrates the core flow: create a project, add a text layer, animate it,
- * and render to MP4.
+ * 5-second card with a title that fades in (with a subtle scale up), holds,
+ * and fades out (scaling slightly past 1). Demonstrates `addText` + `animate`.
  *
  * Run:
  *   npx tsx examples/01-basic-text.ts
@@ -19,32 +18,25 @@ export function createProject() {
 		fps: 30,
 	});
 
-	// Add a white title centred on screen
 	const title = $.addText({
 		text: 'Hello, VideoFlow!',
-		fontSize: 2.5,
+		fontSize: 9,
 		fontWeight: 800,
 		color: '#ffffff',
 	});
 
-	// Fade in + scale up over 1.5 seconds
 	title.animate(
 		{ opacity: 0, scale: 0.8 },
 		{ opacity: 1, scale: 1 },
-		{ duration: '1.5s' },
+		{ duration: '0.8s' },
 	);
 
-	// Hold for 2 seconds
-	$.wait('2s');
-
-	// Fade out
+	$.wait('1.5s');
 	title.animate(
-		{ opacity: 1 },
-		{ opacity: 0 },
-		{ duration: '1s' },
+		{ opacity: 1, scale: 1 },
+		{ opacity: 0, scale: 1.2 },
+		{ duration: '0.8s' },
 	);
-
-	$.wait('500ms');
 
 	return $;
 }
@@ -55,5 +47,5 @@ if (typeof window === 'undefined') {
 		output: './01-basic-text.mp4',
 		verbose: true,
 	});
-	console.log('Done → 01-basic-text.mp4');
+	console.log('Done → examples/01-basic-text.mp4');
 }

@@ -1,9 +1,8 @@
 /**
  * Example 05 — Parallel Animations
  *
- * Demonstrates running multiple animation branches simultaneously.
- * Three text elements animate in at staggered offsets within a single
- * parallel block.
+ * Three lines animate in on staggered timelines inside a single `$.parallel`
+ * block, then exit together.
  *
  * Run:
  *   npx tsx examples/05-parallel-animations.ts
@@ -20,40 +19,15 @@ export function createProject() {
 		backgroundColor: '#0f0f23',
 	});
 
-	// Create three text layers up front
-	const line1 = $.addText({
-		text: 'Design.',
-		fontSize: 3,
-		fontWeight: 800,
-		color: '#ff6b6b',
-		position: [0.5, 0.3],
-		opacity: 0,
-	});
+	const line1 = $.addText({ text: 'Design.',  fontSize: 7, fontWeight: 800, color: '#ff6b6b', position: [0.5, 0.25], opacity: 0 });
+	const line2 = $.addText({ text: 'Animate.', fontSize: 7, fontWeight: 800, color: '#4ecdc4', position: [0.5, 0.5],  opacity: 0 });
+	const line3 = $.addText({ text: 'Render.',  fontSize: 7, fontWeight: 800, color: '#45b7d1', position: [0.5, 0.75], opacity: 0 });
 
-	const line2 = $.addText({
-		text: 'Animate.',
-		fontSize: 3,
-		fontWeight: 800,
-		color: '#4ecdc4',
-		position: [0.5, 0.5],
-		opacity: 0,
-	});
-
-	const line3 = $.addText({
-		text: 'Render.',
-		fontSize: 3,
-		fontWeight: 800,
-		color: '#45b7d1',
-		position: [0.5, 0.7],
-		opacity: 0,
-	});
-
-	// Animate all three in parallel with staggered timing
 	$.parallel([
 		() => {
 			line1.animate(
-				{ opacity: 0, position: [0.3, 0.3] },
-				{ opacity: 1, position: [0.5, 0.3] },
+				{ opacity: 0, position: [0.3, 0.25] },
+				{ opacity: 1, position: [0.5, 0.25] },
 				{ duration: '800ms', easing: 'easeOut' },
 			);
 		},
@@ -68,16 +42,15 @@ export function createProject() {
 		() => {
 			$.wait('400ms');
 			line3.animate(
-				{ opacity: 0, position: [0.3, 0.7] },
-				{ opacity: 1, position: [0.5, 0.7] },
+				{ opacity: 0, position: [0.3, 0.75] },
+				{ opacity: 1, position: [0.5, 0.75] },
 				{ duration: '800ms', easing: 'easeOut' },
 			);
 		},
 	]);
 
-	$.wait('3s');
+	$.wait('2s');
 
-	// Fade everything out together
 	$.parallel([
 		() => { line1.fadeOut('500ms'); },
 		() => { line2.fadeOut('500ms'); },
