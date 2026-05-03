@@ -67,10 +67,12 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 			this.duration = this.cacheEntry.duration;
 		}
 
-		// Create both video elements for decode-ahead buffering
+		// Create both video elements for decode-ahead buffering. We attach
+		// `oncanplay` / `onerror` BEFORE assigning `src`, otherwise a fast
+		// blob: load can fire the event before the listener is in place and
+		// the awaiting promise hangs forever.
 		const createVideoElement = (): HTMLVideoElement => {
 			const vid = document.createElement('video');
-			vid.src = this.cacheEntry!.objectUrl;
 			vid.controls = false;
 			vid.autoplay = false;
 			vid.loop = false;
@@ -84,51 +86,56 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 		this.vidB = createVideoElement();
 		this.internalMedia = this.vidA; // For backward compatibility
 
-		// Wait for both to be ready
-		await Promise.all([
-			new Promise<void>((resolve, reject) => {
-				this.vidA!.oncanplay = () => {
-					this.dimensions = [this.vidA!.videoWidth, this.vidA!.videoHeight];
-					this.duration = this.vidA!.duration;
-					// Write back into the shared cache entry so other layers
-					// using the same source can skip the metadata wait.
-					if (this.cacheEntry) {
-						if (!this.cacheEntry.dimensions) {
-							this.cacheEntry.dimensions = [this.dimensions[0], this.dimensions[1]];
-						}
-						if (!(this.cacheEntry.duration > 0)) {
-							this.cacheEntry.duration = this.duration;
-						}
+		// Wire up the readiness promises FIRST, then trigger the loads.
+		const readyA = new Promise<void>((resolve, reject) => {
+			this.vidA!.oncanplay = () => {
+				this.dimensions = [this.vidA!.videoWidth, this.vidA!.videoHeight];
+				this.duration = this.vidA!.duration;
+				// Write back into the shared cache entry so other layers
+				// using the same source can skip the metadata wait.
+				if (this.cacheEntry) {
+					if (!this.cacheEntry.dimensions) {
+						this.cacheEntry.dimensions = [this.dimensions[0], this.dimensions[1]];
 					}
-					resolve();
-				};
-				this.vidA!.onerror = () => reject(new Error(`Failed to load video: ${source}`));
-			}),
-			new Promise<void>((resolve, reject) => {
-				this.vidB!.oncanplay = () => resolve();
-				this.vidB!.onerror = () => reject(new Error(`Failed to load video: ${source}`));
-			}),
-		]);
+					if (!(this.cacheEntry.duration > 0)) {
+						this.cacheEntry.duration = this.duration;
+					}
+				}
+				resolve();
+			};
+			this.vidA!.onerror = () => reject(new Error(`Failed to load video: ${source}`));
+		});
+		const readyB = new Promise<void>((resolve, reject) => {
+			this.vidB!.oncanplay = () => resolve();
+			this.vidB!.onerror = () => reject(new Error(`Failed to load video: ${source}`));
+		});
+
+		this.vidA.src = this.cacheEntry!.objectUrl;
+		this.vidB.src = this.cacheEntry!.objectUrl;
+
+		await Promise.all([readyA, readyB]);
 	}
 
 	/**
-	 * Override generateElement to set canvas dimensions and context.
+	 * Create the canvas, size it to the source video, and create the 2D
+	 * context. Idempotent: subsequent calls return the already-prepared
+	 * element without touching `width` / `height`, which would clear the
+	 * canvas bitmap.
 	 */
 	async generateElement(): Promise<HTMLElement | null> {
+		if (this.$element && this.ctx) return this.$element;
 		const $ele = await super.generateElement();
-		if ($ele) {
-			($ele as HTMLCanvasElement).width = this.dimensions[0];
-			($ele as HTMLCanvasElement).height = this.dimensions[1];
-			if (!this.ctx) {
-				this.ctx = ($ele as HTMLCanvasElement).getContext('2d')!;
-				this.ctx.imageSmoothingEnabled = true;
-				// Layer canvas is sized to the source video's intrinsic dims so
-				// the per-frame draw is a 1:1 copy — smoothing quality is
-				// effectively irrelevant. `'low'` is cheaper to set up across
-				// browsers and avoids any path that would Lanczos-resample.
-				this.ctx.imageSmoothingQuality = 'low';
-			}
-		}
+		if (!$ele) return $ele;
+		const canvas = $ele as HTMLCanvasElement;
+		canvas.width = this.dimensions[0];
+		canvas.height = this.dimensions[1];
+		this.ctx = canvas.getContext('2d')!;
+		this.ctx.imageSmoothingEnabled = true;
+		// Layer canvas is sized to the source video's intrinsic dims so the
+		// per-frame draw is a 1:1 copy — smoothing quality is effectively
+		// irrelevant. `'low'` is cheaper to set up across browsers and avoids
+		// any path that would Lanczos-resample.
+		this.ctx.imageSmoothingQuality = 'low';
 		return $ele;
 	}
 
