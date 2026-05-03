@@ -8,16 +8,29 @@
  * URIs can't load external network resources, so fonts must be inlined.
  *
  * Caches aggressively:
- * - `perFontCache` — keyed by font name, rebuilt only when a new font loads.
+ * - `perFontCache` — keyed by font name. Once we've embedded a font's
+ *   `@font-face` rules into a single CSS string we never need to do it
+ *   again, even across frames.
  * - `frameCache`   — memoises the combined CSS for one frame so multiple
  *   layers in the same frame don't trigger redundant work.
+ *
+ * Earlier versions filtered the embedded rules by what was in
+ * `performance.getEntriesByType('resource')` to keep the SVG small. That
+ * filter raced against `document.fonts.load()` for non-default weights:
+ * the FontFace would resolve before the gstatic resource entry appeared,
+ * so the SVG was rasterized with no `@font-face` and the text fell back
+ * to the system default. We now embed every rule for fonts the renderer
+ * has actually been asked to load — robust at the cost of a slightly
+ * larger per-layer SVG, which is well worth the trade-off.
  */
 
 import type RuntimeBaseLayer from './layers/RuntimeBaseLayer.js';
 
 export default class FontEmbedder {
-	/** Outer map: fontName → inner map of fontUrl → embedded CSS rule. */
-	private perFontCache: Record<string, Record<string, string>> = {};
+	/** Per-font merged `@font-face` CSS, with all `url()` references inlined as data URIs. */
+	private perFontCache: Record<string, string> = {};
+	/** In-flight build promise per font, so concurrent callers share one fetch+embed pass. */
+	private inflight: Record<string, Promise<string>> = {};
 	/** Combined CSS for the current frame (cleared at frame boundaries). */
 	private frameCache: string | null = null;
 
@@ -32,62 +45,17 @@ export default class FontEmbedder {
 	}
 
 	/**
-	 * Return `@font-face` CSS for all currently loaded fonts, with font
-	 * file URLs replaced by base64 data URIs. Result is memoised until
-	 * `invalidateFrame()` is called.
+	 * Return `@font-face` CSS for all currently loaded fonts, with every
+	 * `url()` replaced by a base64 data URI. Memoised per frame and per font.
 	 */
 	async buildFrameFontCSS(): Promise<string> {
 		if (this.frameCache !== null) return this.frameCache;
 
-		const usedFontUrls = performance.getEntriesByType('resource')
-			.filter(f => f.name.startsWith('https://fonts.gstatic.com/'))
-			.map(f => f.name);
-
-		let fontCss = '';
-		for (const fontName of Object.keys(this.loadedFonts)) {
-			if (!this.perFontCache[fontName]) {
-				const href = this.loadedFonts[fontName];
-				let fontSheet = '';
-				try {
-					fontSheet = await (await fetch(href, { cache: 'force-cache' })).text();
-				} catch {
-					continue;
-				}
-				this.perFontCache[fontName] = {};
-
-				const styleSheet = new CSSStyleSheet();
-				await styleSheet.replace(fontSheet);
-
-				await Promise.all([...styleSheet.cssRules].map(async rule => {
-					if (rule.type !== CSSRule.FONT_FACE_RULE) return;
-					const url = rule.cssText.match(/url\(([^)]+)\)/)?.[1]?.replace(/['"]/g, '');
-					if (!url) return;
-					if (usedFontUrls.includes(url)) {
-						const embedded = await this.embedFontUrl(rule.cssText);
-						if (embedded) this.perFontCache[fontName][url] = embedded;
-					} else {
-						this.perFontCache[fontName][url] = rule.cssText;
-					}
-				}));
-			}
-
-			for (const [url, cssText] of Object.entries(this.perFontCache[fontName])) {
-				if (usedFontUrls.includes(url)) {
-					if (cssText.includes(url)) {
-						const embedded = await this.embedFontUrl(cssText);
-						if (embedded) {
-							this.perFontCache[fontName][url] = embedded;
-							fontCss += embedded;
-						}
-					} else {
-						fontCss += cssText;
-					}
-				}
-			}
-		}
-
-		this.frameCache = fontCss;
-		return fontCss;
+		const parts = await Promise.all(
+			Object.keys(this.loadedFonts).map(name => this.buildFontCSS(name)),
+		);
+		this.frameCache = parts.join('');
+		return this.frameCache;
 	}
 
 	/**
@@ -100,19 +68,63 @@ export default class FontEmbedder {
 		return this.buildFrameFontCSS();
 	}
 
-	/** Replace a remote font URL inside a `@font-face` rule with a data URI. */
-	private async embedFontUrl(cssText: string): Promise<string | null> {
+	/** Build (or reuse the cached build of) the embedded CSS for one font name. */
+	private buildFontCSS(fontName: string): Promise<string> {
+		const cached = this.perFontCache[fontName];
+		if (cached !== undefined) return Promise.resolve(cached);
+		const inflight = this.inflight[fontName];
+		if (inflight) return inflight;
+
+		const href = this.loadedFonts[fontName];
+		if (!href) return Promise.resolve('');
+
+		const job = (async () => {
+			let fontSheet = '';
+			try {
+				fontSheet = await (await fetch(href, { cache: 'force-cache' })).text();
+			} catch {
+				this.perFontCache[fontName] = '';
+				return '';
+			}
+
+			const sheet = new CSSStyleSheet();
+			await sheet.replace(fontSheet);
+
+			const embeds = await Promise.all(
+				[...sheet.cssRules].map(async rule => {
+					if (rule.type !== CSSRule.FONT_FACE_RULE) return '';
+					return await this.embedFontUrl(rule.cssText);
+				}),
+			);
+
+			const combined = embeds.join('');
+			this.perFontCache[fontName] = combined;
+			return combined;
+		})();
+
+		this.inflight[fontName] = job;
+		job.finally(() => { delete this.inflight[fontName]; });
+		return job;
+	}
+
+	/**
+	 * Replace the first `url(...)` inside an `@font-face` rule with an inline
+	 * `data:` URI. Returns the original cssText unchanged if the fetch fails
+	 * (better than dropping the rule outright — the browser may have it
+	 * cached even if our `fetch` can't reach it).
+	 */
+	private async embedFontUrl(cssText: string): Promise<string> {
 		const url = cssText.match(/url\(([^)]+)\)/)?.[1]?.replace(/['"]/g, '');
-		if (!url) return null;
+		if (!url) return cssText;
 		try {
-			const blob = await (await fetch(url)).blob();
+			const blob = await (await fetch(url, { cache: 'force-cache' })).blob();
 			const base64 = await new Promise<string>((resolve, reject) => {
 				const reader = new FileReader();
 				reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
 				reader.onerror = reject;
 				reader.readAsDataURL(blob);
 			});
-			return cssText.replace(url, `data:${blob.type};base64,${base64}`);
+			return cssText.replace(url, `data:${blob.type || 'font/woff2'};base64,${base64}`);
 		} catch {
 			return cssText;
 		}
