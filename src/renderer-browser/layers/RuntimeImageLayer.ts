@@ -16,42 +16,49 @@ export default class RuntimeImageLayer extends RuntimeMediaLayer {
 
 		this.cacheEntry = await loadedMedia.acquire(source);
 
-		this.internalMedia = document.createElement('img');
-		(this.internalMedia as HTMLImageElement).src = this.cacheEntry.objectUrl;
-
-		await new Promise<void>((resolve, reject) => {
-			(this.internalMedia as HTMLImageElement).onload = () => {
-				this.dimensions = [
-					(this.internalMedia as HTMLImageElement).naturalWidth,
-					(this.internalMedia as HTMLImageElement).naturalHeight,
-				];
-				resolve();
-			};
-			(this.internalMedia as HTMLImageElement).onerror = () =>
-				reject(new Error(`Failed to load image: ${source}`));
-		});
+		const img = document.createElement('img');
+		this.internalMedia = img;
+		// `decode()` returns a promise that resolves once the bytes are fully
+		// decoded — no race with `onload` (which fires before any listener has
+		// a chance to attach when the blob URL resolves on the same microtask)
+		// and no need for crossOrigin since blob URLs are same-origin.
+		img.src = this.cacheEntry.objectUrl;
+		try {
+			await img.decode();
+		} catch (err) {
+			throw new Error(`Failed to load image: ${source} (${(err as Error).message})`);
+		}
+		this.dimensions = [img.naturalWidth, img.naturalHeight];
+		if (this.dimensions[0] === 0 || this.dimensions[1] === 0) {
+			throw new Error(`Failed to load image: ${source} (decoded with zero dimensions)`);
+		}
 	}
 
 	/**
-	 * Override generateElement to set canvas dimensions and draw initial image.
+	 * Create the canvas, size it to the image, and paint the decoded image
+	 * onto it. Idempotent: when called a second time (e.g. when `initLayers`
+	 * runs again after the bootstrap pre-render) we MUST NOT re-assign
+	 * `canvas.width` / `canvas.height` because that resets the canvas bitmap
+	 * to fully transparent, and the painted image would be lost.
 	 */
 	async generateElement(): Promise<HTMLElement | null> {
+		// Already set up — return as-is, do not touch width/height.
+		if (this.$element && this.ctx) return this.$element;
+
 		const $ele = await super.generateElement();
-		if ($ele) {
-			($ele as HTMLCanvasElement).width = this.dimensions[0];
-			($ele as HTMLCanvasElement).height = this.dimensions[1];
-			if (!this.ctx) {
-				this.ctx = ($ele as HTMLCanvasElement).getContext('2d')!;
-				this.ctx.imageSmoothingEnabled = true;
-				this.ctx.imageSmoothingQuality = 'high';
-				this.ctx.clearRect(0, 0, this.dimensions[0], this.dimensions[1]);
-				if (this.internalMedia) {
-					this.ctx.drawImage(
-						this.internalMedia as HTMLImageElement,
-						0, 0, this.dimensions[0], this.dimensions[1],
-					);
-				}
-			}
+		if (!$ele) return $ele;
+		const canvas = $ele as HTMLCanvasElement;
+		canvas.width = this.dimensions[0];
+		canvas.height = this.dimensions[1];
+		this.ctx = canvas.getContext('2d')!;
+		this.ctx.imageSmoothingEnabled = true;
+		this.ctx.imageSmoothingQuality = 'high';
+		this.ctx.clearRect(0, 0, this.dimensions[0], this.dimensions[1]);
+		if (this.internalMedia) {
+			this.ctx.drawImage(
+				this.internalMedia as HTMLImageElement,
+				0, 0, this.dimensions[0], this.dimensions[1],
+			);
 		}
 		return $ele;
 	}

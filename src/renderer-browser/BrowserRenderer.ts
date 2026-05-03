@@ -251,8 +251,9 @@ export default class BrowserRenderer implements ILayerRenderer {
 	//  Initialisation
 	// -----------------------------------------------------------------------
 
-	/** Initialise all layers — load media, create DOM elements. */
+	/** Initialise all layers — load media, create DOM elements. Idempotent. */
 	private async initLayers(): Promise<void> {
+		if (this.elementsSetup) return;
 		// Load default font
 		const defaultFont = 'Noto Sans';
 		await this.loadFont(defaultFont);
