@@ -19,7 +19,7 @@ export function createProject() {
 	});
 
 	$.addAudio(
-		{ volume: 0 },
+		{ volume: 1 },
 		{
 			source: 'https://videoflow.dev/samples/sample.mp3',
 			transitionIn: { transition: 'fade', duration: '1s' },
