@@ -19,13 +19,13 @@ export function createProject() {
 		backgroundColor: '#000',
 	});
 
-	// Panel 1 — bloom + warm color grade.
+	// Panel 1 — bloom + warm color correction.
 	$.addImage(
 		{
 			fit: 'cover',
 			effects: [
-				{ effect: 'colorGrade', params: { exposure: 0.3, saturation: 0.4, temperature: 0.4, contrast: 0.15 } },
-				{ effect: 'bloom',      params: { threshold: 0.6, intensity: 0.9, radius: 1.25 } },
+				{ effect: 'colorCorrection', params: { exposure: 0.3, saturation: 0.4, temperature: 0.4, contrast: 0.15 } },
+				{ effect: 'bloom',           params: { threshold: 0.6, intensity: 0.9, radius: 1.25 } },
 			],
 		},
 		{ source: 'https://videoflow.dev/samples/sample.jpg', startTime: 0, sourceDuration: 3 },
