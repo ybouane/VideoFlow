@@ -788,7 +788,16 @@ export default class VideoFlow {
 					case 'animate': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						const startSourceTimeSec = flowFrameToSourceSec(comp, t);
+						// `$.group()` advances flow `t` to the group's end by default
+						// (waitFor='finish'), so a follow-up `g.animate(...)` would
+						// otherwise plant keyframes past the group's source duration
+						// — outside its visible lifespan. Detect this and anchor the
+						// animation to the group's start, which is what users mean
+						// when they animate a group "during its lifetime".
+						const flowAtOrPastEnd = comp.endTimeFrames !== false && t >= comp.endTimeFrames;
+						const startSourceTimeSec = (comp.type === 'group' && flowAtOrPastEnd)
+							? 0
+							: flowFrameToSourceSec(comp, t);
 						const animTimelineFrames = timeToFrames(action.settings?.duration ?? '1s', fps);
 						const speedAbs = Math.abs(comp.speed) || 1;
 						// `duration` from animate() is timeline seconds. Convert
@@ -837,35 +846,67 @@ export default class VideoFlow {
 		// Execute the flow
 		const totalFrames = await parseSeries(this.flow);
 
-		// Calculate project duration
+		// Calculate the project's overall duration. Only TOP-LEVEL layers count
+		// here — children of groups live in the group's local timeline (their
+		// `startTimeFrames` / `endTimeFrames` are group-relative) so it would
+		// be wrong to mix their numbers with absolute project frames.
 		let projectDuration = totalFrames;
 		for (const comp of compiled.values()) {
+			if (comp.parentGroupId) continue;
 			if (comp.endTimeFrames !== false) {
 				projectDuration = Math.max(projectDuration, comp.endTimeFrames);
 			}
-			// Set unbounded layers to end at the project duration
-			if (comp.endTimeFrames === false) {
-				comp.endTimeFrames = projectDuration;
-			}
 		}
 
-		// Second pass: ensure all unbounded layers are capped to the final duration
+		// Second pass: cap every layer that's still unbounded.
+		//
+		// - Top-level layers and groups end at the overall project duration.
+		// - Children of groups end at their parent group's local duration, so
+		//   their (relative) `endTimeFrames` stays in the same coordinate
+		//   system as their (relative) `startTimeFrames`. Falls through to the
+		//   project duration when the group itself is still unbounded.
 		for (const comp of compiled.values()) {
-			if (comp.endTimeFrames === false) {
-				comp.endTimeFrames = projectDuration;
+			if (comp.endTimeFrames !== false) continue;
+			if (comp.parentGroupId) {
+				const parent = compiled.get(comp.parentGroupId);
+				if (parent && parent.endTimeFrames !== false) {
+					const groupLocalDuration = parent.endTimeFrames - parent.startTimeFrames;
+					comp.endTimeFrames = groupLocalDuration;
+					continue;
+				}
 			}
+			comp.endTimeFrames = projectDuration;
 		}
 
-		// Third pass: clamp children to their parent group's footprint. A child
-		// can never visually persist past the moment the group itself ends —
-		// the renderer would skip it anyway, but emitting an out-of-range
-		// endTime in the JSON is misleading for editors and tools.
+		// Re-derive group bounds now that previously-unbounded children have
+		// been resolved — a group whose only child was open-ended will
+		// otherwise still be `false` at this point.
+		for (const comp of compiled.values()) {
+			if (comp.type !== 'group' || comp.endTimeFrames !== false) continue;
+			if (!comp.childIds || comp.childIds.length === 0) continue;
+			let maxRelEnd = 0;
+			let anyBounded = false;
+			for (const cid of comp.childIds) {
+				const child = compiled.get(cid);
+				if (!child || child.endTimeFrames === false) continue;
+				anyBounded = true;
+				if (child.endTimeFrames > maxRelEnd) maxRelEnd = child.endTimeFrames;
+			}
+			if (anyBounded) comp.endTimeFrames = comp.startTimeFrames + maxRelEnd;
+			else comp.endTimeFrames = projectDuration;
+		}
+
+		// Third pass: clamp children to their parent group's local duration.
+		// `endTimeFrames` for a child is in group-relative frames, so the
+		// comparison must be against the group's relative duration, NOT its
+		// absolute end on the parent timeline.
 		for (const comp of compiled.values()) {
 			if (!comp.parentGroupId) continue;
 			const parent = compiled.get(comp.parentGroupId);
 			if (!parent || parent.endTimeFrames === false) continue;
-			if (typeof comp.endTimeFrames === 'number' && comp.endTimeFrames > parent.endTimeFrames) {
-				comp.endTimeFrames = parent.endTimeFrames;
+			const groupLocalDuration = parent.endTimeFrames - parent.startTimeFrames;
+			if (typeof comp.endTimeFrames === 'number' && comp.endTimeFrames > groupLocalDuration) {
+				comp.endTimeFrames = groupLocalDuration;
 			}
 		}
 
