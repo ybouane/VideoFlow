@@ -132,7 +132,7 @@ export default class TextualLayer extends VisualLayer {
 
 			// Spacing & formatting
 			/** Extra space between characters. Unitless = `em`. Can be negative. */
-			'letterSpacing': { cssProperty: 'letter-spacing', units: ['em', 'px'], default: '0em', animatable: true },
+			'letterSpacing': { cssProperty: 'letter-spacing', units: ['em', 'px'], default: 0, animatable: true },
 			/**
 			 * Line height. Unitless = multiplier of font-size (CSS native):
 			 * `1` = tight, `1.5` = roomy. Also accepts `em` / `px`.
