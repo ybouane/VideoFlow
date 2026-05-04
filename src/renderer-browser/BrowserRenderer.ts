@@ -259,8 +259,29 @@ export default class BrowserRenderer implements ILayerRenderer {
 		await this.loadFont(defaultFont);
 		this.$canvas.style.setProperty('font-family', `"${defaultFont}", sans-serif`);
 
-		// Initialise each layer (fetch media, decode, extract metadata)
-		await Promise.all(this.layers.map(layer => layer.initialize()));
+		// Initialise each layer (fetch media, decode, extract metadata).
+		// Use `allSettled` so that a single broken source — bad URL, CORS,
+		// network error, decode failure — doesn't take the whole render down
+		// with it. Failed layers are flagged disabled and skipped from here on,
+		// matching how a track-disabled or `enabled: false` layer behaves.
+		const initResults = await Promise.all(
+			this.layers.map(async layer => {
+				try {
+					await layer.initialize();
+					return { ok: true as const, layer };
+				} catch (err) {
+					return { ok: false as const, layer, err };
+				}
+			}),
+		);
+		for (const r of initResults) {
+			if (!r.ok) {
+				console.warn(
+					`VideoFlow: layer "${r.layer.json.id}" (${r.layer.json.type}) failed to initialise — disabling it for this render. ${(r.err as Error)?.message ?? r.err}`,
+				);
+				r.layer.json.settings.enabled = false;
+			}
+		}
 
 		// Resolve any deferred trimEnd → duration now that intrinsic media
 		// durations are known. Must run before any frame is rendered.
@@ -275,7 +296,16 @@ export default class BrowserRenderer implements ILayerRenderer {
 		this.effectCanvases.clear();
 		for (const layer of this.layers) {
 			if (!this.isLayerEnabled(layer)) continue;
-			const $el = await layer.generateElement();
+			let $el: HTMLElement | null = null;
+			try {
+				$el = await layer.generateElement();
+			} catch (err) {
+				console.warn(
+					`VideoFlow: layer "${layer.json.id}" (${layer.json.type}) failed to mount — disabling it for this render. ${(err as Error)?.message ?? err}`,
+				);
+				layer.json.settings.enabled = false;
+				continue;
+			}
 			if ($el) {
 				this.$canvas.appendChild($el);
 				if (layer instanceof RuntimeGroupLayer) {

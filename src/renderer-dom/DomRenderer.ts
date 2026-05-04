@@ -241,8 +241,27 @@ export default class DomRenderer implements ILayerRenderer {
 
 			// 2. Initialise them in parallel — this is where each layer acquires
 			//    its source from the global media cache. Sources shared with the
-			//    outgoing layers are reused, not re-fetched.
-			await Promise.all(newLayers.map(layer => layer.initialize()));
+			//    outgoing layers are reused, not re-fetched. A single broken
+			//    source (CORS, 404, decode failure) shouldn't break the whole
+			//    reload, so we tolerate failures and disable the bad layers.
+			const reloadResults = await Promise.all(
+				newLayers.map(async layer => {
+					try {
+						await layer.initialize();
+						return { ok: true as const, layer };
+					} catch (err) {
+						return { ok: false as const, layer, err };
+					}
+				}),
+			);
+			for (const r of reloadResults) {
+				if (!r.ok) {
+					console.warn(
+						`VideoFlow: layer "${r.layer.json.id}" (${r.layer.json.type}) failed to initialise on reload — disabling it. ${(r.err as Error)?.message ?? r.err}`,
+					);
+					r.layer.json.settings.enabled = false;
+				}
+			}
 			if (this.destroyed) {
 				// Release what we just acquired; don't touch the shadow.
 				for (const layer of newLayers) layer.destroy();
@@ -1061,8 +1080,28 @@ export default class DomRenderer implements ILayerRenderer {
 		if (!this.$canvas) return;
 		this.$canvas.style.setProperty('font-family', `"${defaultFont}", sans-serif`);
 
-		// Initialise media (fetch, decode, extract metadata)
-		await Promise.all(this.layers.map(layer => layer.initialize()));
+		// Initialise media (fetch, decode, extract metadata). Use
+		// `allSettled` so a single broken source — bad URL, CORS error,
+		// network failure — doesn't bring the whole preview down with it.
+		// Failed layers are flagged disabled and skipped from here on.
+		const initResults = await Promise.all(
+			this.layers.map(async layer => {
+				try {
+					await layer.initialize();
+					return { ok: true as const, layer };
+				} catch (err) {
+					return { ok: false as const, layer, err };
+				}
+			}),
+		);
+		for (const r of initResults) {
+			if (!r.ok) {
+				console.warn(
+					`VideoFlow: layer "${r.layer.json.id}" (${r.layer.json.type}) failed to initialise — disabling it. ${(r.err as Error)?.message ?? r.err}`,
+				);
+				r.layer.json.settings.enabled = false;
+			}
+		}
 		if (!this.$canvas) return;
 
 		// One-time stylesheet that keeps live effect-layer DOM hidden while
@@ -1078,7 +1117,16 @@ export default class DomRenderer implements ILayerRenderer {
 		this.effectCanvases.clear();
 		for (const layer of this.layers) {
 			if (!layer.json.settings.enabled) continue;
-			const $el = await layer.generateElement();
+			let $el: HTMLElement | null = null;
+			try {
+				$el = await layer.generateElement();
+			} catch (err) {
+				console.warn(
+					`VideoFlow: layer "${layer.json.id}" (${layer.json.type}) failed to mount — disabling it. ${(err as Error)?.message ?? err}`,
+				);
+				layer.json.settings.enabled = false;
+				continue;
+			}
 			if (!this.$canvas) return;
 			if ($el) {
 				this.$canvas.appendChild($el);
