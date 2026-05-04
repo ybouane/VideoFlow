@@ -440,7 +440,7 @@ registerTransition('spin', (p, properties, params) => {
 }, {
 	defaultEasing: 'easeOut',
 	fieldsConfig: {
-		angle: { name: 'Angle',       type: 'number', default: 360, min: -1080, max: 1080, step: 1, unit: 'deg' },
+		angle: { name: 'Angle',       type: 'number', default: 60, min: -1080, max: 1080, step: 1, unit: 'deg' },
 		from:  { name: 'Start scale', type: 'number', default: 0.2, min: 0,     max: 2,    step: 0.01 },
 		fade:  { name: 'Fade',        type: 'toggle', default: true },
 	},
