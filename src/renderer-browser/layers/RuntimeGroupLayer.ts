@@ -133,9 +133,30 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 
 	/**
 	 * Initialise children recursively. The group itself has no media to load.
+	 *
+	 * Uses `allSettled` semantics so that a broken child (CORS / 404 / decode
+	 * failure on its source) doesn't poison every other child in the group
+	 * — the failed child gets flagged disabled and skipped on subsequent
+	 * render passes, while the rest of the group keeps working.
 	 */
 	async initialize(): Promise<void> {
-		await Promise.all(this.children.map(c => c.initialize()));
+		const results = await Promise.all(
+			this.children.map(async child => {
+				try {
+					await child.initialize();
+					return null;
+				} catch (err) {
+					return { child, err };
+				}
+			}),
+		);
+		for (const r of results) {
+			if (!r) continue;
+			console.warn(
+				`VideoFlow: child "${r.child.json.id}" (${r.child.json.type}) of group "${this.json.id}" failed to initialise — disabling it. ${(r.err as Error)?.message ?? r.err}`,
+			);
+			r.child.json.settings.enabled = false;
+		}
 	}
 
 	/** Propagate trim → duration resolution to every descendant. */
@@ -201,7 +222,17 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 		if (this.childrenMounted) return;
 		const host = this.ensureVirtualRoot();
 		for (const child of this.children) {
-			const $el = await child.generateElement();
+			if (child.json.settings.enabled === false) continue;
+			let $el: HTMLElement | null = null;
+			try {
+				$el = await child.generateElement();
+			} catch (err) {
+				console.warn(
+					`VideoFlow: child "${child.json.id}" (${child.json.type}) of group "${this.json.id}" failed to mount — disabling it. ${(err as Error)?.message ?? err}`,
+				);
+				child.json.settings.enabled = false;
+				continue;
+			}
 			if ($el && !$el.parentNode) host.appendChild($el);
 			if (child instanceof RuntimeGroupLayer) {
 				await child.mountVirtualChildren();
