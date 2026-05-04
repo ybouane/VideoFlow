@@ -235,11 +235,13 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 			return;
 		}
 
-		// A group is a sub-timeline: its children's `startTime` / `endTime`
-		// (and any keyframe lookups against `frame`) live in group-local
-		// frames where 0 == the group's own `startFrame`. Translate the
-		// incoming absolute frame into that local space before recursing.
-		const localFrame = frame - this.startFrame;
+		// A group is a sub-timeline: its children live in group-local frames
+		// where 0 == the group's own beginning. Translate the incoming absolute
+		// project frame into that local space using the same `sourceTimeAtFrame`
+		// helper that media layers use to retime themselves — it folds in
+		// `startTime`, `sourceStart`, and `speed` in one place. For the default
+		// `sourceStart: 0`, `speed: 1` this simply equals `frame − startFrame`.
+		const localFrame = Math.round(this.sourceTimeAtFrame(frame) * this.fps);
 
 		// 1. Tick every child so its DOM reflects this frame.
 		await Promise.all(

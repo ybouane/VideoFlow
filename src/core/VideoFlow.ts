@@ -788,14 +788,20 @@ export default class VideoFlow {
 					case 'animate': {
 						const comp = compiled.get(action.id);
 						if (!comp) throw new Error(`Layer ${action.id} not found`);
-						// `$.group()` advances flow `t` to the group's end by default
-						// (waitFor='finish'), so a follow-up `g.animate(...)` would
-						// otherwise plant keyframes past the group's source duration
-						// — outside its visible lifespan. Detect this and anchor the
-						// animation to the group's start, which is what users mean
-						// when they animate a group "during its lifetime".
+						// If the flow pointer is OUTSIDE the layer's footprint —
+						// either before its `startTime` (e.g. user added a group
+						// with `startTime: 10` and then animated it before `wait`-ing)
+						// or past its `endTime` (e.g. `$.group(...)` advanced flow
+						// to the group's end via the default `waitFor: 'finish'`,
+						// then a follow-up `g.animate(...)` runs) — the user means
+						// "animate the layer over its lifetime". Anchor the keyframes
+						// at source 0 instead of projecting an out-of-range flow
+						// position onto the layer's source timeline (which would
+						// give negative or past-the-end keyframe times that the
+						// renderer can't interpolate sensibly).
+						const flowBeforeStart = t < comp.startTimeFrames;
 						const flowAtOrPastEnd = comp.endTimeFrames !== false && t >= comp.endTimeFrames;
-						const startSourceTimeSec = (comp.type === 'group' && flowAtOrPastEnd)
+						const startSourceTimeSec = (flowBeforeStart || flowAtOrPastEnd)
 							? 0
 							: flowFrameToSourceSec(comp, t);
 						const animTimelineFrames = timeToFrames(action.settings?.duration ?? '1s', fps);
