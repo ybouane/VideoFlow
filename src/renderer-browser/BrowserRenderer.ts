@@ -39,7 +39,6 @@
 
 import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
-import { loadedMedia } from '@videoflow/core';
 import RENDERER_CSS from './renderer.css.js';
 export { RENDERER_CSS };
 import {
@@ -55,6 +54,8 @@ import { createRuntimeLayer, RuntimeBaseLayer, type ILayerRenderer } from './lay
 import RuntimeGroupLayer from './layers/RuntimeGroupLayer.js';
 import LayerRasterizer from './LayerRasterizer.js';
 import WebGLEffectCompositor from './WebGLEffectCompositor.js';
+import { renderMixedAudio } from './audio/mixer.js';
+import { sortByTrackRecursive } from './layers/sortByTrack.js';
 import {
 	registerTransition as registerTransitionInRegistry,
 	type TransitionFn,
@@ -288,6 +289,14 @@ export default class BrowserRenderer implements ILayerRenderer {
 		for (const layer of this.layers) {
 			layer.resolveMediaTimings();
 		}
+
+		// Sort by `track` so canvas paint order matches DomRenderer's CSS
+		// `z-index` stacking. Layers without a track keep their natural array
+		// position (treated as "below" any tracked layer, with array order
+		// preserved among themselves) — this mirrors the CSS rule where an
+		// explicit `z-index` always wins over the default `auto`. Recurses
+		// into groups so nested children also paint in track order.
+		sortByTrackRecursive(this.layers);
 
 		this.ensureEffectHiderStyle();
 
@@ -709,204 +718,23 @@ export default class BrowserRenderer implements ILayerRenderer {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Render all audio layers into a single AudioBuffer using OfflineAudioContext.
+	 * Render all audio layers (including layers nested inside groups) into a
+	 * single AudioBuffer using OfflineAudioContext. Group layers are first
+	 * mixed down to their own intermediate buffer — the group's own
+	 * `volume` / `pan` / `pitch` / `mute` / transitions are then applied on
+	 * the parent timeline, mirroring the visual sub-mix model.
 	 *
-	 * Each audio/video layer creates a buffer source node with volume and pan
-	 * keyframe automation, connected to the context's destination.
+	 * 48 kHz is the universal sample rate for video AAC encoding — 44.1 kHz
+	 * fails the WebCodecs `AudioEncoder.isConfigSupported` check on some
+	 * platforms (notably headless Chrome on Linux).
 	 */
 	async renderAudio(): Promise<AudioBuffer | null> {
-		const audioLayers = this.layers.filter(l => l.hasAudio && this.isLayerEnabled(l));
-		if (audioLayers.length === 0) return null;
-
-		const durationSec = this.videoJSON.duration;
-		if (durationSec <= 0) return null;
-
-		// 48 kHz is the universal sample rate for video AAC encoding —
-		// 44.1 kHz fails the WebCodecs `AudioEncoder.isConfigSupported`
-		// check on some platforms (notably headless Chrome on Linux).
-		const sampleRate = 48000;
-		const channels = 2;
-		const audioCtx = new OfflineAudioContext(channels, Math.ceil(durationSec * sampleRate), sampleRate);
-
-		for (const layer of audioLayers) {
-			try {
-				await this.generateLayerAudio(layer, audioCtx);
-			} catch (e) {
-				console.error(`Error generating audio for layer ${layer.json.id}:`, e);
-			}
-		}
-
-		return await audioCtx.startRendering();
-	}
-
-	/**
-	 * Generate audio for a single layer and connect it to the audio context.
-	 *
-	 * Creates a buffer source from the layer's audio data, applies volume
-	 * and pan keyframes, and schedules playback.
-	 */
-	private async generateLayerAudio(layer: RuntimeBaseLayer, audioCtx: OfflineAudioContext): Promise<void> {
-		// Prefer audioSource (pre-extracted WAV from server renderer) over
-		// source (original container) — headless Chromium's decodeAudioData
-		// may not support all container formats (e.g. MP4 video).
-		const audioSource = layer.json.settings.audioSource;
-		const source = audioSource || layer.json.settings.source;
-		if (!source) return;
-
-		// Reuse the layer's pre-decoded AudioBuffer if it has one (audio
-		// layers with unresolved sourceEnd decode during initialize()).
-		let audioBuffer: AudioBuffer | null = !audioSource
-			? ((layer as any).decodedBuffer as AudioBuffer | null) ?? null
-			: null;
-
-		if (!audioBuffer) {
-			// Decode audio data — try the layer's cached blob first, then
-			// acquire a transient ref into the global media cache. Skip the
-			// cached blob if an explicit audioSource was provided (it points
-			// to a pre-extracted WAV which is more reliable to decode).
-			let arrayBuffer: ArrayBuffer;
-			const blob = !audioSource ? (layer as any).dataBlob as Blob | null : null;
-			let acquiredFromCache = false;
-			if (blob) {
-				arrayBuffer = await blob.arrayBuffer();
-			} else if (!audioSource) {
-				const entry = await loadedMedia.acquire(source);
-				acquiredFromCache = true;
-				arrayBuffer = await entry.blob.arrayBuffer();
-			} else {
-				const res = await fetch(source);
-				arrayBuffer = await res.arrayBuffer();
-			}
-
-			try {
-				audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-			} catch (e) {
-				// Audio decoding failed — this layer has no decodable audio
-				// (e.g., video with no audio track, or unsupported format)
-				if (acquiredFromCache) loadedMedia.release(source);
-				return;
-			}
-			if (acquiredFromCache) loadedMedia.release(source);
-		}
-
-		const bufferSource = audioCtx.createBufferSource();
-		const speed = layer.speed;
-		if (speed === 0) return;
-
-		if (speed < 0) {
-			// Reverse the audio
-			const reversed = audioCtx.createBuffer(
-				audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate
-			);
-			for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
-				const data = audioBuffer.getChannelData(ch);
-				reversed.copyToChannel(new Float32Array(data).reverse(), ch);
-			}
-			bufferSource.buffer = reversed;
-		} else {
-			bufferSource.buffer = audioBuffer;
-		}
-		bufferSource.playbackRate.value = Math.abs(speed);
-
-		// Volume automation
-		const gainNode = audioCtx.createGain();
-		gainNode.gain.value = 1;
-		this.applyAudioKeyframes(layer, 'volume', gainNode.gain, audioCtx);
-
-		// Pan automation
-		const panNode = audioCtx.createStereoPanner();
-		panNode.pan.value = 0;
-		this.applyAudioKeyframes(layer, 'pan', panNode.pan, audioCtx);
-
-		// Connect chain: source → gain → pan → destination
-		bufferSource.connect(gainNode).connect(panNode).connect(audioCtx.destination);
-
-		// Schedule playback. The bufferSource's `duration` argument is in
-		// **source seconds** (the buffer's own timing system); combined with
-		// `playbackRate = |speed|` it produces `sourceDuration / |speed|`
-		// timeline seconds of output, exactly matching the layer footprint.
-		const whenSec = layer.startTime;
-		const sourceStartSec = layer.sourceStart;
-		const sourceDurationSec = layer.sourceDuration;
-		let offsetSec: number;
-		if (speed < 0) {
-			// The buffer was reversed end-to-end above. To play the segment
-			// [sourceStart, sourceStart+sourceDuration] in reverse we offset
-			// into the reversed buffer by (totalLen − segmentEnd).
-			const totalLen = audioBuffer.duration;
-			offsetSec = Math.max(0, totalLen - (sourceStartSec + sourceDurationSec));
-		} else {
-			offsetSec = sourceStartSec;
-		}
-		bufferSource.start(whenSec, offsetSec, sourceDurationSec);
-	}
-
-	/**
-	 * Apply keyframe automation to an AudioParam from the layer's animations.
-	 *
-	 * For `volume` we additionally fold in any `transitionIn` / `transitionOut`
-	 * preset that modifies it (e.g. the `fade` preset). The visual render path
-	 * calls `applyTransitions` on every rendered frame, but audio layers have
-	 * no DOM element so their `renderFrame` never runs — without this we'd
-	 * hear the un-faded volume on auditory layers. We sample the combined
-	 * keyframe + transition curve at every timeline frame inside the layer's
-	 * footprint and emit `setValueAtTime` whenever the value actually changes,
-	 * which keeps the gain schedule compact.
-	 */
-	private applyAudioKeyframes(
-		layer: RuntimeBaseLayer,
-		property: string,
-		param: AudioParam,
-		audioCtx: OfflineAudioContext
-	): void {
-		const fps = this.videoJSON.fps;
-
-		// `volume` is the only property currently affected by a built-in
-		// transition (`fade`), so for everything else we keep the lightweight
-		// keyframe-only path.
-		const hasTransitions = property === 'volume' && (layer.json.transitionIn || layer.json.transitionOut);
-
-		if (hasTransitions) {
-			const startFrame = layer.startFrame;
-			const endFrame = layer.endFrame;
-			if (!(endFrame > startFrame)) return;
-			let lastEmitted: number | null = null;
-			for (let f = startFrame; f < endFrame; f++) {
-				const baseProps = layer.getPropertiesAtFrame(f);
-				const finalProps = layer.applyTransitions(f, baseProps);
-				const v = Number(finalProps[property] ?? 1);
-				if (!Number.isFinite(v)) continue;
-				// Skip when the value hasn't moved meaningfully — avoids tens of
-				// thousands of redundant `setValueAtTime` calls for the long
-				// at-rest stretch outside the transition windows.
-				if (lastEmitted !== null && Math.abs(v - lastEmitted) < 1e-4) continue;
-				param.setValueAtTime(v, f / fps);
-				lastEmitted = v;
-			}
-			return;
-		}
-
-		const anim = layer.json.animations.find(a => a.property === property);
-		if (!anim || anim.keyframes.length === 0) return;
-
-		const startTimeSec = layer.startTime;
-		const sourceStartSec = layer.sourceStart;
-		const sourceDurationSec = layer.sourceDuration;
-		const speed = layer.speed;
-		const speedAbs = Math.abs(speed) || 1;
-
-		for (const kf of anim.keyframes) {
-			// kf.time is in source seconds (absolute, from start of source).
-			const sourceOffsetSec = kf.time - sourceStartSec;
-			let timelineSec: number;
-			if (speed < 0) {
-				timelineSec = startTimeSec + (sourceDurationSec - sourceOffsetSec) / speedAbs;
-			} else {
-				timelineSec = startTimeSec + sourceOffsetSec / speedAbs;
-			}
-			if (!Number.isFinite(timelineSec) || timelineSec < 0) continue;
-			param.setValueAtTime(Number(kf.value), timelineSec);
-		}
+		return renderMixedAudio(this.layers, this.videoJSON.duration, {
+			fps: this.videoJSON.fps,
+			sampleRate: 48000,
+			isLayerEnabled: l => this.isLayerEnabled(l),
+			preferAudioSource: true,
+		});
 	}
 
 	// -----------------------------------------------------------------------
