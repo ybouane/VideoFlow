@@ -132,6 +132,20 @@ function fitDims(pw: number, ph: number, mw: number, mh: number, fit: string): [
 	return [Math.min(pw, ph * mw / mh), Math.min(ph, pw * mh / mw)];
 }
 
+/**
+ * Remove CSS that only has meaning *during compositing* — `mix-blend-mode` and
+ * `isolation`. These are honoured by the final `drawImage` call (via
+ * `globalCompositeOperation`); applying them inside the rasterized
+ * `<foreignObject>` would either blend the layer against the SVG's transparent
+ * backdrop (producing implementation-defined pixels for separable blends like
+ * `difference`) or be applied a second time on top of the canvas composite,
+ * giving visibly different results from DomRenderer's native CSS path.
+ */
+function stripCompositingCss(el: HTMLElement): void {
+	el.style.removeProperty('mix-blend-mode');
+	el.style.removeProperty('isolation');
+}
+
 export default class LayerRasterizer {
 	/** One OffscreenCanvas per layer, keyed by layer id. */
 	private surfaces: Map<string, OffscreenCanvas> = new Map();
@@ -391,6 +405,7 @@ export default class LayerRasterizer {
 		if (src.tagName === 'CANVAS') {
 			const img = this.canvasToImg(src as HTMLCanvasElement);
 			img.style.visibility = 'visible';
+			stripCompositingCss(img);
 			return img;
 		}
 
@@ -399,6 +414,7 @@ export default class LayerRasterizer {
 		// hides effect layers so only their effected canvas shows). The clone
 		// needs to be visible so rasterization produces actual pixels.
 		clone.style.visibility = 'visible';
+		stripCompositingCss(clone);
 		const srcElements = Array.from(src.querySelectorAll('*'));
 		const cloneElements = Array.from(clone.querySelectorAll('*'));
 
