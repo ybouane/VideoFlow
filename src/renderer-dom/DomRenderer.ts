@@ -1200,15 +1200,27 @@ export default class DomRenderer implements ILayerRenderer {
 
 	/**
 	 * Inject the shadow-scoped stylesheet that hides elements flagged with
-	 * `data-effect-layer`. Hiding is driven by an attribute (not an inline
-	 * style) so it survives `resetCSSProperties()`'s `cssText = ''` wipe each
-	 * frame.
+	 * `data-effect-layer` while keeping them hit-testable.
+	 *
+	 * Effected layers split into two DOM nodes: the original `$element` (the
+	 * "source") and a sibling `<canvas data-effect-overlay>` that shows the
+	 * post-effect bitmap. We want clicks to land on the source — its
+	 * bounding box is the layer's actual hit target — but only the overlay
+	 * to be visible. So:
+	 *
+	 * - Source: `opacity: 0` (not `visibility: hidden`) keeps it invisible
+	 *   but still receiving pointer events.
+	 * - Overlay: `pointer-events: none` (set inline in `mountEffectOverlay`)
+	 *   so clicks pass through to the source underneath.
+	 *
+	 * Hiding is driven by an attribute (not inline style) so it survives
+	 * `resetCSSProperties()`'s `cssText = ''` wipe each frame.
 	 */
 	private ensureEffectHiderStyle(): void {
 		if (this.shadow.querySelector('style[data-effect-hider]')) return;
 		const style = document.createElement('style');
 		style.setAttribute('data-effect-hider', '');
-		style.textContent = '[data-effect-layer] { visibility: hidden !important; }';
+		style.textContent = '[data-effect-layer] { opacity: 0 !important; }';
 		this.shadow.appendChild(style);
 	}
 
@@ -1216,6 +1228,12 @@ export default class DomRenderer implements ILayerRenderer {
 	 * Flag the layer's live DOM as hidden and insert a sibling `<canvas>`
 	 * right after it. Subsequent renderFrame passes paint the effected
 	 * bitmap onto that canvas.
+	 *
+	 * The overlay covers the full project area regardless of the source
+	 * layer's bounding box — using it as the click target would let clicks
+	 * far outside the layer still select it. Instead we mark the overlay
+	 * `pointer-events: none` so clicks fall through to the source `$el`,
+	 * whose bounding box gives correct hit-testing.
 	 */
 	private mountEffectOverlay(layer: RuntimeBaseLayer, $el: HTMLElement): void {
 		if (!this.$canvas || !this.videoJSON) return;
@@ -1224,17 +1242,17 @@ export default class DomRenderer implements ILayerRenderer {
 		canvas.width = this.videoJSON.width;
 		canvas.height = this.videoJSON.height;
 		canvas.setAttribute('data-effect-overlay', layer.json.id);
-		// Tag the canvas with the layer id so editor hit-testing (which walks
-		// `data-id` in `composedPath`) treats clicks on the overlay as clicks
-		// on the layer itself — the source $el is `visibility: hidden`, so it
-		// can no longer receive pointer events.
-		canvas.setAttribute('data-id', layer.json.id);
 		// Match the absolute-fill layout of sibling layer elements so the
 		// overlay covers the project area in the same coordinate space.
 		canvas.style.position = 'absolute';
 		canvas.style.inset = '0';
 		canvas.style.width = '100%';
 		canvas.style.height = '100%';
+		// Clicks on the overlay must fall through to the source `$el` whose
+		// bounding box defines the layer's actual hit-target. Without this,
+		// any click anywhere on the video would select the topmost effected
+		// layer because the overlay covers the entire project area.
+		canvas.style.pointerEvents = 'none';
 		const track = layer.json.track;
 		if (typeof track === 'number') {
 			canvas.style.zIndex = String(track + 1);
