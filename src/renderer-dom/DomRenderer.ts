@@ -24,7 +24,6 @@
 
 import type { VideoJSON, LayerJSON, LayerSettingsJSON, Animation, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
-import { loadedMedia } from '@videoflow/core';
 import {
 	createRuntimeLayer,
 	RuntimeBaseLayer,
@@ -35,6 +34,8 @@ import {
 	registerTransition as registerTransitionInRegistry,
 	registerEffect as registerEffectInRegistry,
 	buildFontUrl,
+	renderMixedAudio,
+	sortByTrackRecursive,
 	type ILayerRenderer,
 	type TransitionFn,
 	type EffectParamDefinition,
@@ -271,6 +272,10 @@ export default class DomRenderer implements ILayerRenderer {
 			// 3. Resolve any deferred sourceEnd → sourceDuration now that intrinsic
 			//    durations are known.
 			for (const layer of newLayers) layer.resolveMediaTimings();
+
+			// Sort by `track` so iteration order matches BrowserRenderer's
+			// canvas paint order (and CSS z-index stacking when track is set).
+			sortByTrackRecursive(newLayers);
 
 			// 4. Make sure the renderer stylesheet is present. Reuse the existing
 			//    one if the shadow already has it so we don't thrash styles during
@@ -750,26 +755,18 @@ export default class DomRenderer implements ILayerRenderer {
 	}
 
 	/**
-	 * Render the full audio track as an AudioBuffer.
-	 *
-	 * @returns AudioBuffer, or null if there are no audio layers.
+	 * Render the full audio track as an AudioBuffer. Recurses through groups
+	 * via the shared mixer — each group renders into its own intermediate
+	 * buffer so the group's own `volume` / `pan` / `pitch` / `mute` /
+	 * transitions apply to the whole sub-mix.
 	 */
 	async renderAudio(): Promise<AudioBuffer | null> {
 		if (!this.videoJSON) return null;
-		const audioLayers = this.layers.filter(l => l.hasAudio && this.isLayerEnabled(l));
-		if (audioLayers.length === 0) return null;
-
-		const durationSec = this.videoJSON.duration;
-		if (durationSec <= 0) return null;
-
-		const sampleRate = 44100;
-		const audioCtx = new OfflineAudioContext(2, Math.ceil(durationSec * sampleRate), sampleRate);
-
-		for (const layer of audioLayers) {
-			await this.generateLayerAudio(layer, audioCtx);
-		}
-
-		return await audioCtx.startRendering();
+		return renderMixedAudio(this.layers, this.videoJSON.duration, {
+			fps: this.videoJSON.fps,
+			sampleRate: 44100,
+			isLayerEnabled: l => this.isLayerEnabled(l),
+		});
 	}
 
 	/**
@@ -1317,134 +1314,6 @@ export default class DomRenderer implements ILayerRenderer {
 			} else {
 				ctx.drawImage(surface, 0, 0, canvas.width, canvas.height);
 			}
-		}
-	}
-
-	/** Generate audio for a single layer in the OfflineAudioContext. */
-	private async generateLayerAudio(layer: RuntimeBaseLayer, audioCtx: OfflineAudioContext): Promise<void> {
-		const source = layer.json.settings.source;
-		if (!source) return;
-
-		// Reuse the layer's pre-decoded AudioBuffer if it has one.
-		let audioBuffer: AudioBuffer | null = ((layer as any).decodedBuffer as AudioBuffer | null) ?? null;
-
-		if (!audioBuffer) {
-			let arrayBuffer: ArrayBuffer;
-			const blob = (layer as any).dataBlob as Blob | null;
-			let acquiredFromCache = false;
-			if (blob) {
-				arrayBuffer = await blob.arrayBuffer();
-			} else {
-				const entry = await loadedMedia.acquire(source);
-				acquiredFromCache = true;
-				arrayBuffer = await entry.blob.arrayBuffer();
-			}
-
-			try {
-				audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-			} catch (e) {
-				// Audio decoding failed — this layer has no decodable audio
-				// (e.g., video with no audio track, or unsupported format)
-				if (acquiredFromCache) loadedMedia.release(source);
-				return;
-			}
-			if (acquiredFromCache) loadedMedia.release(source);
-		}
-
-		const bufferSource = audioCtx.createBufferSource();
-		const speed = layer.speed;
-		if (speed === 0) return;
-
-		if (speed < 0) {
-			const reversed = audioCtx.createBuffer(
-				audioBuffer.numberOfChannels, audioBuffer.length, audioBuffer.sampleRate
-			);
-			for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
-				const data = audioBuffer.getChannelData(ch);
-				reversed.copyToChannel(new Float32Array(data).reverse(), ch);
-			}
-			bufferSource.buffer = reversed;
-		} else {
-			bufferSource.buffer = audioBuffer;
-		}
-		bufferSource.playbackRate.value = Math.abs(speed);
-
-		const gainNode = audioCtx.createGain();
-		gainNode.gain.value = 1;
-		this.applyAudioKeyframes(layer, 'volume', gainNode.gain, audioCtx);
-
-		const panNode = audioCtx.createStereoPanner();
-		panNode.pan.value = 0;
-		this.applyAudioKeyframes(layer, 'pan', panNode.pan, audioCtx);
-
-		bufferSource.connect(gainNode).connect(panNode).connect(audioCtx.destination);
-
-		const whenSec = layer.startTime;
-		const sourceStartSec = layer.sourceStart;
-		const sourceDurationSec = layer.sourceDuration;
-		let offsetSec: number;
-		if (speed < 0) {
-			const totalLen = audioBuffer.duration;
-			offsetSec = Math.max(0, totalLen - (sourceStartSec + sourceDurationSec));
-		} else {
-			offsetSec = sourceStartSec;
-		}
-		bufferSource.start(whenSec, offsetSec, sourceDurationSec);
-	}
-
-	private applyAudioKeyframes(
-		layer: RuntimeBaseLayer,
-		property: string,
-		param: AudioParam,
-		audioCtx: OfflineAudioContext
-	): void {
-		const fps = this.videoJSON?.fps;
-		if (!fps) return;
-
-		// `volume` is the only property currently affected by a built-in
-		// transition (`fade`). For visual layers transitions run inside
-		// `renderFrame`, but auditory layers have no DOM element so we'd
-		// otherwise hear the un-transitioned volume. Sample the combined
-		// keyframe + transition curve at every timeline frame and emit
-		// `setValueAtTime` whenever the value actually changes.
-		const hasTransitions = property === 'volume' && (layer.json.transitionIn || layer.json.transitionOut);
-
-		if (hasTransitions) {
-			const startFrame = layer.startFrame;
-			const endFrame = layer.endFrame;
-			if (!(endFrame > startFrame)) return;
-			let lastEmitted: number | null = null;
-			for (let f = startFrame; f < endFrame; f++) {
-				const baseProps = layer.getPropertiesAtFrame(f);
-				const finalProps = layer.applyTransitions(f, baseProps);
-				const v = Number(finalProps[property] ?? 1);
-				if (!Number.isFinite(v)) continue;
-				if (lastEmitted !== null && Math.abs(v - lastEmitted) < 1e-4) continue;
-				param.setValueAtTime(v, f / fps);
-				lastEmitted = v;
-			}
-			return;
-		}
-
-		const anim = layer.json.animations.find(a => a.property === property);
-		if (!anim || anim.keyframes.length === 0) return;
-
-		const startTimeSec = layer.startTime;
-		const sourceStartSec = layer.sourceStart;
-		const sourceDurationSec = layer.sourceDuration;
-		const speed = layer.speed;
-		const speedAbs = Math.abs(speed) || 1;
-
-		for (const kf of anim.keyframes) {
-			const sourceOffsetSec = kf.time - sourceStartSec;
-			let timelineSec: number;
-			if (speed < 0) {
-				timelineSec = startTimeSec + (sourceDurationSec - sourceOffsetSec) / speedAbs;
-			} else {
-				timelineSec = startTimeSec + sourceOffsetSec / speedAbs;
-			}
-			if (!Number.isFinite(timelineSec) || timelineSec < 0) continue;
-			param.setValueAtTime(Number(kf.value), timelineSec);
 		}
 	}
 

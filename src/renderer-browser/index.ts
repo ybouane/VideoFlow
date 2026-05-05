@@ -55,3 +55,12 @@ export { default as WebGLEffectCompositor } from './WebGLEffectCompositor.js';
 export type { FontCssForLayerFn } from './LayerRasterizer.js';
 export { buildFontUrl } from './googleFontLoader.js';
 export { default as FontEmbedder } from './FontEmbedder.js';
+
+export {
+	renderMixedAudio,
+	applyAudioKeyframes,
+	layerOrDescendantsHaveAudio,
+	type MixerOptions,
+} from './audio/mixer.js';
+
+export { sortByTrackRecursive } from './layers/sortByTrack.js';
