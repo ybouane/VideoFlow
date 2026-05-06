@@ -193,6 +193,13 @@ export default class BrowserRenderer implements ILayerRenderer {
 		this.$canvas.toggleAttribute('data-renderer', true);
 		this.$canvas.style.setProperty('--project-width', String(videoJSON.width));
 		this.$canvas.style.setProperty('--project-height', String(videoJSON.height));
+		// Match DomRenderer: the project background must be part of the
+		// `[data-renderer]` isolated stacking context so that any layer with
+		// `mix-blend-mode` (CSS path — used by ServerRenderer's legacy
+		// `ffmpeg: true` screenshot mode and by the effect-overlay canvas in
+		// the live DOM) blends against the project bg, not against a
+		// transparent backdrop.
+		this.$canvas.style.backgroundColor = videoJSON.backgroundColor || '#000000';
 		this.$canvas.style.position = 'absolute';
 		this.$canvas.style.left = '-99999px';
 		this.$canvas.style.top = '-99999px';
