@@ -56,6 +56,7 @@ import LayerRasterizer from './LayerRasterizer.js';
 import WebGLEffectCompositor from './WebGLEffectCompositor.js';
 import { renderMixedAudio } from './audio/mixer.js';
 import { sortByTrackRecursive } from './layers/sortByTrack.js';
+import { blendModeToCompositeOp } from './compositing.js';
 import {
 	registerTransition as registerTransitionInRegistry,
 	type TransitionFn,
@@ -380,7 +381,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const h = this.videoJSON.height;
 
 		ctx.save();
-		ctx.globalCompositeOperation = BrowserRenderer.blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
+		ctx.globalCompositeOperation = blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
 
 		// Always resolve effects (cheap when none) so transition-injected
 		// effects on `props.__effects` engage the pipeline regardless of
@@ -408,11 +409,6 @@ export default class BrowserRenderer implements ILayerRenderer {
 		ctx.restore();
 	}
 
-	/** Map a CSS blend-mode name to a canvas `globalCompositeOperation` value.
-	 *  All CSS names match the Canvas API exactly except `'normal'` → `'source-over'`. */
-	private static blendModeToCompositeOp(mode: string | undefined): GlobalCompositeOperation {
-		return (!mode || mode === 'normal') ? 'source-over' : mode as GlobalCompositeOperation;
-	}
 
 	/**
 	 * Inject a document-level style that hides live layer DOM flagged with
@@ -670,7 +666,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 			if (!layer.lastAppliedProps) continue; // Out of range / hidden this frame
 
 			ctx.save();
-			ctx.globalCompositeOperation = BrowserRenderer.blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
+			ctx.globalCompositeOperation = blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
 
 			// Always resolve effects (cheap when none) so transition-injected
 			// effects on `props.__effects` engage the pipeline regardless of
