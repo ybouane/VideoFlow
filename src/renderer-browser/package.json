@@ -2,6 +2,7 @@
   "name": "@videoflow/renderer-browser",
   "version": "1.2.0",
   "description": "Browser-side video renderer for VideoFlow",
+  "keywords": ["videoflow", "video rendering", "browser", "web worker", "canvas", "webgl", "browser rendering", "video editor"],
   "license": "Apache-2.0",
   "homepage": "https://videoflow.dev/renderers",
   "repository": {
