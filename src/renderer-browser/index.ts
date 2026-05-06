@@ -64,3 +64,5 @@ export {
 } from './audio/mixer.js';
 
 export { sortByTrackRecursive } from './layers/sortByTrack.js';
+
+export { blendModeToCompositeOp } from './compositing.js';

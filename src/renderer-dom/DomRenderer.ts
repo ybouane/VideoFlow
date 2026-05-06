@@ -36,6 +36,7 @@ import {
 	buildFontUrl,
 	renderMixedAudio,
 	sortByTrackRecursive,
+	blendModeToCompositeOp,
 	type ILayerRenderer,
 	type TransitionFn,
 	type EffectParamDefinition,
@@ -1163,6 +1164,13 @@ export default class DomRenderer implements ILayerRenderer {
 	 * WebGL effect compositor if it declares effects, and `drawImage` the
 	 * result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
 	 * each child onto the group's canvas.
+	 *
+	 * The child's `blendMode` is honoured here via `globalCompositeOperation`
+	 * so children inside a group blend identically in live preview and
+	 * export. Without this, group-children blend modes would silently no-op
+	 * in DomRenderer because the children render on the off-screen
+	 * `virtualRoot` (their CSS `mix-blend-mode` never has a chance to take
+	 * effect) — only the group's own composited canvas is on-screen.
 	 */
 	async compositeLayerInto(
 		ctx: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D,
@@ -1174,6 +1182,10 @@ export default class DomRenderer implements ILayerRenderer {
 		const rasterizer = this.ensureRasterizer();
 		const w = this.videoJSON.width;
 		const h = this.videoJSON.height;
+
+		ctx.save();
+		ctx.globalCompositeOperation = blendModeToCompositeOp(layer.lastAppliedProps.blendMode);
+
 		// Always resolve effects (cheap when none) so transition-injected
 		// effects on `props.__effects` engage the pipeline regardless of
 		// whether the transition was registered with `injectsEffects: true`.
@@ -1182,6 +1194,7 @@ export default class DomRenderer implements ILayerRenderer {
 			// Fast path — paint straight onto the group's compositor canvas,
 			// skipping the per-child OffscreenCanvas copy.
 			rasterizer.drawDirectInto(layer, layer.lastAppliedProps, ctx);
+			ctx.restore();
 			return;
 		}
 		const surface = await rasterizer.rasterize(layer, layer.lastAppliedProps);
@@ -1196,6 +1209,7 @@ export default class DomRenderer implements ILayerRenderer {
 		} else {
 			ctx.drawImage(surface, 0, 0, w, h);
 		}
+		ctx.restore();
 	}
 
 	/**
