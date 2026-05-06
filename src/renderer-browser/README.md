@@ -1,6 +1,30 @@
+<a href="https://videoflow.dev/renderers">
+  <img src="https://videoflow.dev/images/banner-renderers.png" alt="VideoFlow Renderers" />
+</a>
+
 # @videoflow/renderer-browser
 
-Render [VideoFlow](https://github.com/ybouane/VideoFlow) videos to MP4 files directly in the browser. Generate real video files from VideoFlow's JSON format entirely client-side — no server required.
+[![npm](https://img.shields.io/npm/v/@videoflow/renderer-browser.svg)](https://www.npmjs.com/package/@videoflow/renderer-browser)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../../LICENSE)
+
+Render [VideoFlow](https://videoflow.dev/) videos to MP4 **entirely in the browser** — no server, no upload, no backend. Built on WebCodecs, MediaBunny, and a per-layer rasterization pipeline that pushes encoding to a Web Worker so the page stays responsive.
+
+> **Live demo:** [videoflow.dev/playground](https://videoflow.dev/playground) · **Renderers docs:** [videoflow.dev/renderers](https://videoflow.dev/renderers)
+
+---
+
+## Why use this package?
+
+- **Real MP4 files generated client-side** — H.264 video + AAC (or Opus) audio, muxed by [MediaBunny](https://www.npmjs.com/package/mediabunny).
+- **Zero server cost.** The user's device does the work; you keep their footage on-device.
+- **Worker-based encoding.** Frame rasterization stays on the main thread (SVG `<foreignObject>` decode requires DOM), but encoding/muxing run in a dedicated Worker — UI stays smooth.
+- **Tier-based per-layer rasterization.** Static / simple-transform layers paint with a direct `drawImage` fast path; complex layers go through a cached SVG rasterizer.
+- **WebGL effect compositor.** Layers with `effects` are piped through a ping-pong shader pipeline.
+- **Audio sub-mixes for groups.** A `$.group(...)` whose children produce audio is rendered as its own buffer first, then placed on the parent timeline — group-level `volume` / `pan` / `pitch` / `mute` / fade transitions apply to the sub-mix as a whole.
+
+This is the **export** renderer. For interactive playback / scrubbing in the same browser, pair it with [`@videoflow/renderer-dom`](../renderer-dom) — they share the same transition + effect registries, so live preview and exported MP4 always agree.
+
+---
 
 ## Installation
 
@@ -10,176 +34,175 @@ npm install @videoflow/core @videoflow/renderer-browser
 
 ## Quick Start
 
-```typescript
+```ts
 import VideoFlow from '@videoflow/core';
 import VideoRenderer from '@videoflow/renderer-browser';
 
-// Define a video
+// 1. Define a video
 const $ = new VideoFlow({ width: 1920, height: 1080, fps: 30 });
-const title = $.addText({ text: 'Hello!', fontSize: 3, color: '#fff' });
+const title = $.addText({ text: 'Hello!', fontSize: 6, color: '#fff' });
 title.fadeIn('1s');
 $.wait('3s');
 title.fadeOut('1s');
 
-// Compile to JSON and render to MP4
+// 2. Compile to JSON, render to an MP4 Blob
 const json = await $.compile();
 const blob = await VideoRenderer.render(json);
 
-// Download the video
-const url = URL.createObjectURL(blob);
+// 3. Download
 const a = document.createElement('a');
-a.href = url;
-a.download = 'video.mp4';
+a.href = URL.createObjectURL(blob);
+a.download = 'hello.mp4';
 a.click();
-URL.revokeObjectURL(url);
+URL.revokeObjectURL(a.href);
 ```
 
-## Why Use This Package?
+You can also bypass `compile()` and let VideoFlow auto-detect the environment:
 
-- **Generate real MP4 files in the browser** — no server, no backend setup
-- **Client-side rendering** — video data never leaves the user's device
-- **Works with any VideoFlow JSON** — same format used by all VideoFlow renderers
-- **Per-layer caching** — static layers are rasterized once and reused across frames
-- **Layer groups** — composite a sub-tree of layers as one, with shared transitions / effects / animations applied to the whole composite
-- **WebGL effects** — registered GLSL effects run only for layers that need them; zero overhead for the rest
+```ts
+const blob = await $.renderVideo();   // → Blob in the browser
+```
+
+---
 
 ## API
 
-### VideoRenderer.render
+### `VideoRenderer.render(videoJSON, options?)`
 
-Render a compiled VideoFlow JSON to an MP4 blob.
+Static one-shot — creates a renderer, exports an MP4, and tears everything down.
 
-```typescript
-import VideoRenderer from '@videoflow/renderer-browser';
-
-const blob = await VideoRenderer.render(videoJSON);
+```ts
+const blob = await VideoRenderer.render(videoJSON, {
+  signal: controller.signal,            // AbortSignal — cancel mid-encode
+  onProgress: (p) => console.log((p * 100).toFixed(1) + '%'),
+  worker: true,                         // default; pass false to encode on the main thread
+});
 ```
 
-**Returns:** `Blob` — an MP4 video file
+**Options**
 
-### VideoRenderer.renderFrame
+| Option | Type | Description |
+| --- | --- | --- |
+| `signal` | `AbortSignal` | Cancel the encode mid-flight |
+| `onProgress` | `(p: number) => void` | Called with `0..1` during encode |
+| `worker` | `boolean` | Encode in a dedicated Worker (default `true`). Set `false` for environments without Worker support |
 
-Render a single frame.
+**Returns:** `Blob` (`video/mp4`).
 
-```typescript
-const imageData = await VideoRenderer.renderFrame(videoJSON, frameNumber);
+### `VideoRenderer.renderFrame(videoJSON, frame)`
+
+```ts
+const canvas = await VideoRenderer.renderFrame(videoJSON, 30);  // OffscreenCanvas
 ```
 
-### VideoRenderer.renderAudio
+### `VideoRenderer.renderAudio(videoJSON)`
 
-Render the full audio track.
-
-```typescript
-const audioBuffer = await VideoRenderer.renderAudio(videoJSON);
+```ts
+const audioBuffer = await VideoRenderer.renderAudio(videoJSON); // AudioBuffer | null
 ```
+
+Returns `null` when the project has no audio layers.
+
+### Instance API
+
+For long-lived previews (re-rendering many frames, sharing one rasterizer cache, …) use the constructor + `captureFrame()` / `exportVideo()`:
+
+```ts
+import BrowserRenderer from '@videoflow/renderer-browser';
+
+const renderer = new BrowserRenderer(videoJSON);
+try {
+  for (let f = 0; f < total; f++) {
+    const offscreen = await renderer.captureFrame(f);
+    // …consume the OffscreenCanvas…
+  }
+} finally {
+  renderer.destroy();
+}
+```
+
+---
+
+## How it works
+
+1. **Layer mounting.** Each layer becomes a DOM element in an off-screen `[data-renderer]` container. CSS handles transforms, filters, blend modes, fonts, and `mix-blend-mode` blending.
+2. **Per-frame property pass.** Every layer's interpolated properties at the current frame are written as inline CSS / custom properties.
+3. **Tier-based rasterization** ([`LayerRasterizer`](LayerRasterizer.ts)):
+   - **Tier 1** — simple transform + no filters/borders/shadows → straight `drawImage` from the layer's source bitmap onto the destination canvas.
+   - **Tier 3** — anything else (rotation, 3D, filters, text, shapes, effects-bearing layers) → rasterized through an SVG `<foreignObject>`, cached per layer until the resolved props change.
+4. **Effect pipeline.** Layers with `effects` are piped through a [`WebGLEffectCompositor`](WebGLEffectCompositor.ts) (ping-pong FBOs) before composite.
+5. **Composite onto the final canvas.** Layers paint in sorted track order with their `blendMode` applied via `globalCompositeOperation`. Groups composite their children onto a private project-sized surface first, then drop that surface onto the parent.
+6. **Audio mix.** An `OfflineAudioContext` mixes every audio-bearing layer (recursing through groups). `volume`/`pan` keyframes drive AudioParam automation; `pitch` is decoupled from `speed` via an offline granular pitch shifter; `mute` short-circuits the source.
+7. **Encode + mux.** Frames and audio are fed into a Worker-resident MediaBunny pipeline (WebCodecs `VideoEncoder` / `AudioEncoder`), which produces the final MP4 buffer.
 
 ---
 
 ## Transitions
 
-Transition presets are registered globally and referenced by name in the layer's settings. Built-in presets are auto-registered on import.
-
-### The signed `p` contract
-
-Every preset receives a **signed** progress value `p ∈ [-1, +1]`:
-
-- `p = -1` — start of the `transitionIn` window
-- `p =  0` — layer at rest (original properties; preset must be a no-op)
-- `p = +1` — end of the `transitionOut` window
-
-`p` is pre-eased by the renderer (per-direction easing), so preset bodies stay linear in their math. Presets must multiply / add onto the incoming property values so they compose with keyframed animation.
-
-Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Callers are still free to compose any in/out pair on a layer.
-
-### Built-in presets
-
-There are 27+ built-in transitions. See the [core package README](../core/README.md#transitions) for the full categorised table. A short representative sample:
-
-| Preset | Category | Effect |
-| --- | --- | --- |
-| `fade` | `all` | Opacity (visual) and volume (audio) → 0 |
-| `slideUp` / `slideDown` / `slideLeft` / `slideRight` | `visual` | Position slide-in with optional fade |
-| `zoom` | `visual` | Scale from `from` to rest (symmetric) |
-| `blurResolve` | `visual` (injects effect) | Gaussian blur resolves to sharp |
-| `motionBlurSlide` | `visual` (injects effect) | Slide with directional motion blur |
-| `typewriter` | `textual` | Reveals text one character at a time |
-| `numberCountUp` | `textual` | Counts numbers in the text up to their final value |
+Built-in transition presets (the same library used by `@videoflow/renderer-dom`) auto-register on import. See the [core README → Transitions](https://github.com/ybouane/VideoFlow/tree/main/src/core#transitions) for the full categorised table and the signed-`p` contract.
 
 ### Custom transitions
 
-Register a custom preset with `BrowserRenderer.registerTransition`. The same registry is shared with `DomRenderer`, so a transition registered here also works in live preview.
+`BrowserRenderer.registerTransition()` writes to a registry **shared with `DomRenderer`** — register once, works in both export and live preview.
 
-```typescript
+```ts
 import BrowserRenderer from '@videoflow/renderer-browser';
 
-// Symmetric: spin back to rest on enter and exit
-BrowserRenderer.registerTransition('spin', (p, properties, params) => {
-  const t = 1 - Math.abs(p);
+BrowserRenderer.registerTransition('spinIn', (p, properties, params, ctx) => {
+  const t = 1 - Math.abs(p);                     // 0 at edges, 1 at rest
   properties.rotation = (properties.rotation ?? 0) + (1 - t) * (params.angle ?? 360);
   properties.opacity  = (properties.opacity  ?? 1) * t;
   return properties;
-}, { defaultEasing: 'easeOut', layerCategory: 'visual' });
+}, {
+  defaultEasing: 'easeOut',
+  layerCategory: 'visual',                       // 'all' | 'visual' | 'audio' | 'textual'
+});
 ```
 
 The function receives:
-- `p` — signed progress in `[-1, +1]`, already eased. `-1` is the start of `transitionIn`, `0` is rest, `+1` is the end of `transitionOut`.
+
+- `p` — signed progress in `[-1, +1]`, already eased per the layer's `easing`. `-1` is the start of `transitionIn`, `0` is rest, `+1` is the end of `transitionOut`.
 - `properties` — the layer's resolved properties at this frame. Mutate in place or return a new object.
 - `params` — values from the layer's `transitionIn.params` / `transitionOut.params`.
-- `context` — `{ seed, frame, fps, projectWidth, projectHeight }` for deterministic per-layer randomness and aspect-aware geometry.
+- `ctx` — `{ seed, frame, fps, projectWidth, projectHeight }` for deterministic per-layer randomness and aspect-aware geometry.
 
-Options:
-- `defaultEasing` — easing applied to `p` when the layer doesn't specify one. Default `'linear'`.
-- `layerCategory` — one of `'all' | 'visual' | 'audio' | 'textual'`. Default `'visual'`. Editors filter the picker by this against the target layer class's `static category`.
-- `injectsEffects` — set `true` if the preset pushes WebGL effect entries onto `properties.__effects`; the renderer keeps the effect overlay mounted across the layer's lifetime.
-- `fieldsConfig` — UI metadata for each `params` key (used by editors only).
+Set `injectsEffects: true` if your preset pushes synthetic effects onto `properties.__effects` — the renderer keeps the effect overlay mounted across the layer's lifetime so the WebGL pipeline always engages.
 
 ---
 
-## GLSL Effects
+## GLSL effects
 
-Shader effects are registered globally and referenced by name in the layer's `effects` property. Built-in effects (`gaussianBlur`, `motionBlur`, `chromaticAberration`, `rgbSplit`, `bloom`, `glow`, `colorCorrection`, `vignette`, `pixelate`, `vhsDistortion`, `frostedGlass`, `lightSweep`, `noiseDissolve`, …) are auto-registered on import.
-
-### Built-in effects
-
-| Effect | Description | Params |
-| --- | --- | --- |
-| `chromaticAberration` | Horizontal RGB channel split | `amount` (default `0.005`) |
-| `pixelate` | Pixel mosaic | `size` (pixels, default `8`) |
-| `vignette` | Darkened border | `strength` (default `0.6`), `radius` (default `0.8`) |
-| `rgbSplit` | Directional chromatic aberration | `angle` (degrees, default `0`), `amount` (default `0.005`) |
-| `invert` | Colour inversion | `amount` (0–1, default `1`) |
-
-All params are animatable via dot-path property keys (e.g. `'effects.pixelate.size'`). The full effect catalogue is registered in `src/renderer-browser/effects/presets.ts`.
+Built-in effects (`chromaticAberration`, `pixelate`, `vignette`, `rgbSplit`, `invert`, `bloom`, `colorCorrection`, `frostedGlass`, `lightSweep`, `gaussianBlur`, `motionBlur`, `noiseDissolve`, …) are auto-registered on import. Reference them by name from a layer's `effects` property; animate any param via a dot-path key.
 
 ### Custom effects
 
-```typescript
+```ts
 import BrowserRenderer from '@videoflow/renderer-browser';
 
 BrowserRenderer.registerEffect(
-  'glitch',
+  'glitchShift',
   `
 vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
   vec2 shifted = uv + vec2(u_amount * sin(uv.y * 40.0), 0.0);
   return texture2D(tex, shifted);
-}
-`,
+}`,
   {
     amount: { type: 'float', default: 0.02, min: 0, max: 0.1, animatable: true },
   },
 );
 ```
 
-The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 resolution)` function. Each declared param becomes a `u_<name>` uniform. The compositor wraps the snippet with boilerplate (precision, uniforms, varying `v_uv`, `main`) at registration time.
+The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 resolution)`. Each declared param becomes a `u_<name>` uniform. The compositor wraps the snippet with the precision/uniform/varying boilerplate at registration time.
 
-**Param types:** `'float'`, `'int'`, `'bool'`, `'vec2'`, `'vec3'`, `'vec4'`, `'color'` (CSS colour string, converted to `vec4`).
+Param types: `'float'`, `'int'`, `'bool'`, `'vec2'`, `'vec3'`, `'vec4'`, `'color'` (CSS colour string → `vec4`).
 
 ---
 
-## Example: Export Button with Effects
+## End-to-end example: an export button
 
 ```html
 <button id="exportBtn">Export Video</button>
+<progress id="prog" max="1" value="0"></progress>
 
 <script type="module">
   import VideoFlow from '@videoflow/core';
@@ -188,7 +211,7 @@ The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 reso
   document.getElementById('exportBtn').addEventListener('click', async () => {
     const $ = new VideoFlow({ width: 1280, height: 720, fps: 30 });
 
-    const img = $.addImage(
+    $.addImage(
       {
         fit: 'cover',
         effects: [
@@ -200,35 +223,50 @@ The GLSL snippet defines a single `vec4 effect(sampler2D tex, vec2 uv, vec2 reso
     );
 
     const title = $.addText(
-      { text: 'Made with VideoFlow', fontSize: 3 },
+      { text: 'Made with VideoFlow', fontSize: 5, fontWeight: 800 },
       {
         startTime: '0.5s',
         sourceDuration: '4s',
         transitionIn:  { transition: 'slideUp', duration: '600ms' },
-        transitionOut: { transition: 'fade',  duration: '500ms' },
+        transitionOut: { transition: 'fade',    duration: '500ms' },
       },
     );
     $.wait('5s');
 
     const json = await $.compile();
-    const blob = await VideoRenderer.render(json);
+    const blob = await VideoRenderer.render(json, {
+      onProgress: (p) => { document.getElementById('prog').value = p; },
+    });
 
-    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
+    a.href = URL.createObjectURL(blob);
     a.download = 'export.mp4';
     a.click();
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(a.href);
   });
 </script>
 ```
 
-## See Also
+---
 
-- [`@videoflow/core`](https://github.com/ybouane/VideoFlow/tree/main/src/core) — Define and compose videos programmatically
-- [`@videoflow/renderer-dom`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-dom) — Play back and preview VideoFlow videos in the browser
-- [`@videoflow/renderer-server`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-server) — Render VideoFlow videos to MP4 on the server
+## Notes & requirements
+
+- **WebCodecs.** Required for video encoding. Available in Chrome / Edge / recent Firefox / Safari 17+. The library probes for AAC support and falls back to Opus when AAC isn't available (notably on Linux Chrome). If neither is available the audio track is dropped and a warning is emitted — the video still encodes.
+- **Cross-origin sources.** Video / image / audio sources must be CORS-readable for `decode()` / `decodeAudioData()` to succeed. Same-origin or blob-URL sources always work.
+- **Bundlers.** The encoder Worker is bundled inline as a Blob URL, so no special bundler config is needed (esbuild / Vite / webpack all just work).
+
+## Related packages
+
+- [`@videoflow/core`](../core) — Define and compose videos programmatically
+- [`@videoflow/renderer-dom`](../renderer-dom) — Live preview / scrubbable playback in the browser
+- [`@videoflow/renderer-server`](../renderer-server) — Render to MP4 on Node.js
+
+## Resources
+
+- [Renderers docs](https://videoflow.dev/renderers)
+- [Live playground](https://videoflow.dev/playground)
+- [React Video Editor](https://videoflow.dev/react-video-editor)
 
 ## License
 
-Apache License 2.0
+[Apache-2.0](../../LICENSE)

@@ -1,8 +1,17 @@
 {
   "name": "@videoflow/renderer-browser",
   "version": "1.2.0",
-  "description": "Browser-side video renderer for VideoFlow — renders JSON videos using SVG foreignObject + canvas + MediaBunny",
+  "description": "Browser-side video renderer for VideoFlow",
   "license": "Apache-2.0",
+  "homepage": "https://videoflow.dev/renderers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ybouane/VideoFlow.git",
+    "directory": "src/renderer-browser"
+  },
+  "bugs": {
+    "url": "https://github.com/ybouane/VideoFlow/issues"
+  },
   "type": "module",
   "files": ["dist"],
   "main": "./dist/index.js",

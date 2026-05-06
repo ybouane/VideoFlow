@@ -6,8 +6,7 @@
  * static weight variants, which allows the URL to be built precisely —
  * avoiding the 400 errors that come from requesting axis combinations the
  * font doesn't support.
- *
- * Algorithm ported from the Scrptly renderer.
+ * 
  */
 
 import allFonts from './googlefonts.json';

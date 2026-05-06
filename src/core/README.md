@@ -1,8 +1,28 @@
+<a href="https://videoflow.dev/core">
+  <img src="https://videoflow.dev/images/banner.png" alt="VideoFlow Core" />
+</a>
+
 # @videoflow/core
 
-The core package of [VideoFlow](https://github.com/ybouane/VideoFlow) — define and compose videos programmatically using a fluent TypeScript API, then compile to a portable JSON format.
+[![npm](https://img.shields.io/npm/v/@videoflow/core.svg)](https://www.npmjs.com/package/@videoflow/core)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](../../LICENSE)
 
-This is the foundation of VideoFlow. Use it to build your video's layers, animations, and timeline, then hand off the compiled JSON to a renderer.
+Programmatic video model for [VideoFlow](https://videoflow.dev/). `@videoflow/core` is the foundation everything else is built on:
+
+- A fluent **flow API** (`addText`, `addImage`, `addVideo`, `wait`, `parallel`, `group`, `animate`, …) for describing a video as TypeScript code.
+- A portable **JSON video format** (`VideoJSON`) that any VideoFlow renderer can consume.
+- A **layer hierarchy** with full property/animation/transition/effect schemas.
+- Helpers like time parsing (`'2s'`, `'500ms'`, `'120f'`, `'01:30'`), media probing (auto-detect intrinsic durations), and layer-tree utilities.
+
+> **Live playground:** [videoflow.dev/playground](https://videoflow.dev/playground) · **Full docs:** [videoflow.dev/core](https://videoflow.dev/core)
+
+This package does **not** ship a renderer. Pair it with one of:
+
+- [`@videoflow/renderer-server`](../renderer-server) — Node.js → MP4
+- [`@videoflow/renderer-browser`](../renderer-browser) — Browser → MP4
+- [`@videoflow/renderer-dom`](../renderer-dom) — Browser → live preview
+
+---
 
 ## Installation
 
@@ -12,10 +32,9 @@ npm install @videoflow/core
 
 ## Quick Start
 
-```typescript
+```ts
 import VideoFlow from '@videoflow/core';
 
-// Create a video project
 const $ = new VideoFlow({
   width: 1920,
   height: 1080,
@@ -23,10 +42,9 @@ const $ = new VideoFlow({
   name: 'My Video',
 });
 
-// Add layers and animate them
 const title = $.addText({
   text: 'Hello, VideoFlow!',
-  fontSize: 2.5,
+  fontSize: 7,
   fontWeight: 800,
   color: '#ffffff',
 });
@@ -35,534 +53,351 @@ title.fadeIn('1s');
 $.wait('2s');
 title.fadeOut('1s');
 
-// Compile to portable JSON
-const videoJSON = await $.compile();
+// Compile to portable JSON …
+const json = await $.compile();
 
-// Or render directly to MP4 (auto-detects environment)
+// … or render directly to MP4 (auto-detects environment)
 await $.renderVideo({
   outputType: 'file',
   output: './output.mp4',
 });
 ```
 
-## VideoFlow Class
+---
 
-Main entry point for creating videos.
+## How it works
 
-```typescript
+A `VideoFlow` project keeps an internal **flow time pointer**. Every `add*()` call drops a layer onto the timeline at the current pointer. Helpers like `$.wait()` and `$.parallel()` advance it. `$.compile()` walks the project, resolves every relative time (and any auto-detected media durations) into absolute seconds, and emits a self-describing `VideoJSON`:
+
+```
+$.addText(...)     ← starts at flow time = 0
+$.wait('2s')       ← flow time = 2s
+$.addImage(...)    ← starts at flow time = 2s
+$.parallel([
+  () => layer1.fadeIn('1s'),
+  () => layer2.animate(..., { duration: '0.8s' }),
+])                ← flow time advances by max(child durations) = 1s
+```
+
+The compiled JSON is identical regardless of which renderer you use — code-built videos and editor-built videos share one source of truth.
+
+---
+
+## VideoFlow class
+
+```ts
 const $ = new VideoFlow(options?: {
-  name?: string;           // Default: 'Untitled Video'
-  width?: number;           // Default: 1920
-  height?: number;          // Default: 1080
-  fps?: number;             // Default: 30
-  backgroundColor?: string; // Default: '#000000'
-  autoDetectDurations?: boolean; // Probe video/audio sources at compile() to fill in their duration. Default: true
-  verbose?: boolean;        // Default: false
+  name?: string;             // Default: 'Untitled Video'
+  width?: number;            // Default: 1920
+  height?: number;           // Default: 1080
+  fps?: number;              // Default: 30
+  backgroundColor?: string;  // Default: '#000000'
+  autoDetectDurations?: boolean; // Probe video/audio at compile() time. Default: true
+  defaults?: {
+    easing?: 'step' | 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'; // Default: 'easeInOut'
+    fontFamily?: string;     // Default: 'Noto Sans' (auto-loaded from Google Fonts)
+  };
+  verbose?: boolean;
 });
 ```
 
-## Layer Hierarchy
+### Top-level methods
 
-Layers inherit their properties and settings through a class hierarchy. When you use `addText`, `addImage`, etc., your layer gets everything from every parent class:
+| Method | Purpose |
+| --- | --- |
+| `$.addText(props?, settings?, options?)` | Add a text layer |
+| `$.addImage(props?, settings?, options?)` | Add an image layer |
+| `$.addVideo(props?, settings?, options?)` | Add a video layer (visual + audio) |
+| `$.addAudio(props?, settings?, options?)` | Add an audio-only layer |
+| `$.addCaptions(props?, settings?, options?)` | Add a timed captions/subtitles layer |
+| `$.addShape(props?, settings?, options?)` | Add a vector shape layer (rect / ellipse / polygon / star) |
+| `$.group(props?, settings?, builder?, options?)` | Composite a sub-tree as one |
+| `$.wait(time)` | Advance the flow pointer |
+| `$.parallel([...fns])` | Run animation branches simultaneously |
+| `$.compile()` | Compile to `VideoJSON` |
+| `$.renderVideo(options?)` | Compile and render (auto-detects environment) |
+| `$.renderFrame(frame)` | Compile and render a single frame |
+| `$.renderAudio()` | Compile and render the audio track |
+
+### Layer methods
+
+Every layer returned from an `add*()` call exposes:
+
+| Method | Purpose |
+| --- | --- |
+| `layer.set({ prop: value })` | Set properties at the current flow time |
+| `layer.animate(from, to, { duration, easing?, wait?, delay? })` | Tween between two states |
+| `layer.fadeIn(duration?, easing?, wait?)` | Animate `opacity` 0 → 1 |
+| `layer.fadeOut(duration?, easing?, wait?)` | Animate `opacity` 1 → 0 |
+| `layer.show()` / `layer.hide()` | Toggle visibility |
+| `layer.remove(options?)` | Remove the layer at the current time, or `{ in: '2s' }` from now |
+
+`{ wait: false }` on `animate()` runs the animation in parallel with the rest of the flow — handy for ambient motion (slow drifts, idle sways) that shouldn't block the timeline.
+
+### `addLayer` options
+
+Every `add*()` accepts an optional third argument:
+
+```ts
+{
+  waitFor?: Time | 'finish';  // After adding, advance the flow pointer.
+                              // 'finish' = the layer's full timeline duration.
+  index?: number;             // Position in the layer stack (z-order).
+}
+```
+
+`$.group(...)` defaults `waitFor` to `'finish'`, so the next call after a group starts when the group ends.
+
+---
+
+## Layer hierarchy
+
+Layers inherit properties through a class hierarchy. Anything declared on a parent applies to every descendant.
 
 ```
-BaseLayer              → id, timing (startTime, sourceDuration, speed, sourceStart), enabled
- ├── VisualLayer       → opacity, position, scale, rotation, anchor, borders, filters, shadows, perspective
+BaseLayer              → id, timing (startTime, sourceDuration, sourceStart, speed), enabled
+ ├── VisualLayer       → opacity, position, scale, rotation, anchor, blendMode,
+ │    │                  borders, shadows, filters, perspective, backgroundColor, effects[]
  │    ├── MediaLayer   → source, fit
  │    │    ├── ImageLayer
  │    │    └── VideoLayer (+ volume, pan, pitch, mute)
- │    ├── ShapeLayer   → shape, width, height, fill, stroke, strokeWidth, borderRadius
- │    ├── GroupLayer   → children[] — composites a sub-tree of layers as one
- │    └── TextualLayer → font*, color, text stroke / shadow, letterSpacing, lineHeight, …
+ │    ├── ShapeLayer   → shapeType, width, height, fill, stroke*, cornerRadius, sides, …
+ │    ├── GroupLayer   → children[] (composites a sub-tree as one)
+ │    └── TextualLayer → font*, color, textStroke*, textShadow*, letterSpacing, lineHeight, …
  │         ├── TextLayer     (+ text)
  │         └── CaptionsLayer (+ captions[], maxCharsPerLine, maxLines)
  └── AuditoryLayer     → volume, pan, pitch, mute
       └── AudioLayer   → source
 ```
 
-The samples below list **every** property and setting available on each layer type (including inherited ones), with defaults and inline comments.
+Common settings accepted by every `add*()`:
 
-### Common Settings (all layers)
-
-These settings are accepted by every `add*` call:
-
-```typescript
+```ts
 {
-  name?: string,           // Human-readable name, optional
-  enabled?: boolean,       // Whether the layer renders at all. Default: true
-  startTime?: Time,        // When the layer begins on the timeline. Default: 0
-  sourceDuration?: Time,   // How long the layer plays, in source seconds. Default: until end of timeline (or end of source for video/audio)
-  sourceStart?: Time,      // Skip the first N seconds of the source. Default: 0
-  sourceEnd?: Time,        // Trim N seconds off the end of the source (video/audio only). Default: 0
-  mediaDuration?: Time,    // Intrinsic length of the source (video/audio only). Auto-detected when omitted.
-  speed?: number,          // Playback speed multiplier. 2 = twice as fast, -1 = reverse. Default: 1
-  transitionIn?: {         // Enter transition. Duration defaults to 200ms.
-    transition: string,    // Preset name (e.g. 'fade', 'zoom', 'slideUp')
-    duration?: Time,       // Transition window. Default: '200ms'
-    params?: Record<string, any>, // Preset-specific parameters
-  },
-  transitionOut?: {        // Exit transition, same shape as transitionIn
-    transition: string,
-    duration?: Time,
-    params?: Record<string, any>,
-  },
+  name?: string;
+  enabled?: boolean;       // Default: true
+  startTime?: Time;        // Default: current flow time
+  sourceDuration?: Time;   // Default: source's intrinsic length / until end of timeline
+  sourceStart?: Time;      // Skip the first N seconds of the source. Default: 0
+  sourceEnd?: Time;        // Trim N seconds off the end (video/audio). Default: 0
+  mediaDuration?: Time;    // Auto-detected for video/audio when omitted
+  speed?: number;          // Playback speed; -1 plays in reverse. Default: 1
+  transitionIn?:  { transition: string; duration?: Time; easing?: Easing; params?: object };
+  transitionOut?: { transition: string; duration?: Time; easing?: Easing; params?: object };
 }
 ```
 
-Layers also expose two read-only getters:
-
-- `timelineDuration` — how long the layer occupies on the timeline (`sourceDuration / |speed|`).
-- `endTime` — `startTime + timelineDuration`.
-
-For `addVideo` / `addAudio`, `mediaDuration` is auto-detected at compile time
-(set `autoDetectDurations: false` on the project to opt out). You can also pass
-it manually to skip the probe.
-
-
-`Time` accepts numbers (seconds) or strings like `'2s'`, `'500ms'`, `'60f'`, `'01:30'`. See [Time Format](#time-format).
-
-### addLayer options
-
-All `add*` methods take an optional third argument:
-
-```typescript
-{
-  waitFor?: Time | 'finish',  // After adding, advance the flow pointer by this much.
-                              // 'finish' = wait for the layer's full duration.
-  index?: number,             // Insert position in the layer stack (z-order).
-}
-```
+Layers also expose two read-only getters: `timelineDuration` (`sourceDuration / |speed|`) and `endTime` (`startTime + timelineDuration`).
 
 ---
 
-### addText — text layer
+## Layer types
 
-Renders animated text. Inherits from `TextualLayer` → `VisualLayer` → `BaseLayer`.
+### Text
 
-```typescript
-const title = $.addText(
+```ts
+$.addText(
   {
-    // --- TextLayer ---
-    text: 'Hello, VideoFlow!',   // Text content. Default: 'Type your text here'
-
-    // --- TextualLayer (typography) ---
-    // Sizing defaults to `em`. At the project root, 1em = 1% of project width.
-    fontSize: 4,                 // Unitless = em (4em = 4% of project width). Default: 4
-    fontFamily: 'Noto Sans',     // Google Font name, auto-loaded. Default: 'Noto Sans'
-    fontWeight: 600,             // 100–900 or string. Default: 600
-    fontStyle: 'normal',         // 'normal' | 'italic'. Default: 'normal'
-    fontStretch: 100,            // In %. Default: 100
-    color: '#FFFFFF',            // Text color. Default: '#FFFFFF'
-    textAlign: 'center',         // 'left' | 'right' | 'center' | 'justify'. Default: 'center'
-    verticalAlign: 'middle',     // 'top' | 'middle' | 'bottom'. Default: 'middle'
-    padding: 0,                  // Unitless = em, or [top, right, bottom, left]. Default: 0
-
-    textStroke: false,           // Enable stroke outline around glyphs. Default: false
-    textStrokeWidth: 0,          // Stroke width (unitless = em). Default: 0
-    textStrokeColor: '#000000',  // Stroke color. Default: '#000000'
-
-    textShadow: false,           // Enable text shadow. Default: false
-    textShadowColor: '#000000',  // Shadow color. Default: '#000000'
-    textShadowOffset: [0, 0],    // [x, y] (unitless = em). Default: [0, 0]
-    textShadowBlur: 0,           // Blur radius (unitless = em). Default: 0
-
-    letterSpacing: '0em',        // In em or px. Default: '0em'
-    lineHeight: 1,               // Unitless multiplier of font-size, or em/px. Default: 1
-    wordSpacing: 0,              // In em or px. Default: 0
-    textIndent: 0,               // First-line indent. Default: 0
-    textTransform: 'none',       // 'none' | 'capitalize' | 'uppercase' | 'lowercase'. Default: 'none'
-    textDecoration: 'none',      // 'none' | 'underline' | 'overline' | 'line-through'. Default: 'none'
-    direction: 'ltr',            // 'ltr' | 'rtl'. Default: 'ltr'
-
-    // --- VisualLayer (see "Visual Properties" below for full list) ---
-    visible: true,               // Default: true
-    opacity: 1,                  // 0–1. Default: 1
-    position: [0.5, 0.5],        // Normalized [x, y]. Default: [0.5, 0.5] (centered)
-    scale: 1,                    // Default: 1
-    rotation: 0,                 // Degrees. Default: 0
-    anchor: [0.5, 0.5],          // Normalized anchor point. Default: [0.5, 0.5]
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
-
-    // --- GLSL effects (see "GLSL Effects" section) ---
-    effects: [
-      { effect: 'pixelate', params: { size: 8 } },
-    ],
+    text: 'Hello, VideoFlow!',
+    fontSize: 6,                 // unitless = em ≈ 6 % of project width
+    fontWeight: 800,
+    color: '#ffffff',
+    fontFamily: 'Inter',         // auto-loaded from Google Fonts
+    textAlign: 'center',
+    textStroke: true,
+    textStrokeWidth: 0.15,
+    textStrokeColor: '#000',
   },
-  {
-    // --- Common settings (see above) ---
-    startTime: 0,                // Default: 0
-    sourceDuration: '3s',        // Default: undefined (runs to end)
-    enabled: true,               // Default: true
-    transitionIn:  { transition: 'fade', duration: '300ms' },
-    transitionOut: { transition: 'fade', duration: '300ms' },
-  }
+  { sourceDuration: '3s' },
 );
 ```
 
----
+### Image
 
-### addImage — image layer
-
-Displays a static image. Inherits from `MediaLayer` → `VisualLayer` → `BaseLayer`.
-
-```typescript
-const photo = $.addImage(
-  {
-    // --- MediaLayer ---
-    fit: 'contain',              // 'contain' | 'cover'. Default: 'contain'
-
-    // --- VisualLayer (inherited) ---
-    visible: true,               // Default: true
-    opacity: 1,                  // 0–1. Default: 1
-    position: [0.5, 0.5],        // Normalized [x, y]. Default: centered
-    scale: 1,                    // Default: 1
-    rotation: 0,                 // Degrees. Default: 0
-    anchor: [0.5, 0.5],          // Default: centered
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
-  },
-  {
-    source: 'https://example.com/image.jpg', // REQUIRED: URL or file path
-    startTime: 0,                // Default: 0
-    sourceDuration: '5s',        // Default: undefined
-  }
+```ts
+$.addImage(
+  { fit: 'cover', opacity: 1 },
+  { source: 'https://example.com/photo.jpg', sourceDuration: '4s' },
 );
 ```
 
----
+### Video
 
-### addVideo — video layer
-
-Plays a video clip with synced audio. Inherits from `MediaLayer` → `VisualLayer` plus auditory properties (`volume`, `pan`, `pitch`, `mute`).
-
-```typescript
-const clip = $.addVideo(
-  {
-    // --- MediaLayer ---
-    fit: 'cover',                // 'contain' | 'cover'. Default for video: 'cover'
-
-    // --- Auditory properties ---
-    volume: 1,                   // 0 = silent, 1 = full. Default: 1
-    pan: 0,                      // -1 = left, 0 = center, 1 = right. Default: 0
-    pitch: 1,                    // Pitch multiplier. Default: 1
-    mute: false,                 // Silence without affecting volume value. Default: false
-
-    // --- VisualLayer (inherited) ---
-    visible: true,               // Default: true
-    opacity: 1,                  // Default: 1
-    position: [0.5, 0.5],        // Default: centered
-    scale: 1,                    // Default: 1
-    rotation: 0,                 // Default: 0
-    anchor: [0.5, 0.5],          // Default: centered
-    // …plus backgroundColor, border*, boxShadow*, outline*, filter*, perspective, effects
-  },
-  {
-    source: './clip.mp4',        // REQUIRED: URL or file path
-    startTime: 0,                // Default: 0
-    sourceDuration: '10s',       // Default: undefined (plays to end of source)
-    sourceStart: 0,              // Skip first N seconds of source. Default: 0
-    speed: 1,                    // Default: 1
-  },
-  {
-    waitFor: 'finish',           // Advance flow pointer by the full clip duration
-  }
+```ts
+// `mediaDuration` is auto-detected at compile time — `waitFor: 'finish'` works
+// without any manual bookkeeping.
+$.addVideo(
+  { fit: 'cover', volume: 0.8 },
+  { source: './clip.mp4', sourceStart: '1s' },
+  { waitFor: 'finish' },
 );
 ```
 
----
+### Audio
 
-### addAudio — audio layer
-
-Plays an audio track. No visual output. Inherits from `AuditoryLayer` → `BaseLayer`.
-
-```typescript
-const music = $.addAudio(
-  {
-    volume: 1,                   // 0–1. Default: 1
-    pan: 0,                      // -1 to 1. Default: 0
-    pitch: 1,                    // Pitch multiplier. Default: 1
-    mute: false,                 // Default: false
-  },
-  {
-    source: './music.mp3',       // REQUIRED: URL or file path
-    startTime: 0,                // Default: 0
-    sourceDuration: '30s',       // Default: undefined (plays to end of source)
-    sourceStart: 0,              // Default: 0
-    speed: 1,                    // Default: 1
-  }
+```ts
+$.addAudio(
+  { volume: 0.5 },
+  { source: './music.mp3' },     // duration auto-detected
 );
 ```
 
----
+### Captions
 
-### addCaptions — captions / subtitles layer
-
-Displays timed caption entries from a pre-built array. Inherits from `TextualLayer` → `VisualLayer` → `BaseLayer`, so **all** typography and visual properties from `addText` also apply here.
-
-```typescript
-const subs = $.addCaptions(
+```ts
+$.addCaptions(
   {
-    // --- Typography (same as addText, see TextualLayer properties above) ---
-    fontSize: 3,                 // 3em = 3% of project width
-    fontFamily: 'Inter',
-    fontWeight: 700,
-    color: '#FFFFFF',
-    textStroke: true,            // Common for readable captions
-    textStrokeWidth: 0.15,       // 0.15em — scales with text
-    textStrokeColor: '#000000',
-
-    // --- Visual / transform ---
-    position: [0.5, 0.85],       // Centered horizontally, near bottom
-    // …plus everything from VisualLayer
+    fontSize: 3, fontWeight: 700, color: '#fff',
+    textStroke: true, textStrokeWidth: 0.15, textStrokeColor: '#000',
+    position: [0.5, 0.85],
   },
   {
-    // --- CaptionsLayer-specific settings ---
     captions: [
-      { caption: 'Hello world',   startTime: 0,   endTime: 2 },
-      { caption: 'From VideoFlow', startTime: 2,   endTime: 4 },
-    ],                           // REQUIRED. Times are in seconds.
-    maxCharsPerLine: 32,         // Wrap captions at this width. Default: 32
-    maxLines: 2,                 // Max simultaneous lines. Default: 2
-
-    // --- Common settings ---
-    startTime: 0,                // Default: 0
-    sourceDuration: '4s',        // Default: undefined
-  }
-);
-```
-
----
-
-### addShape — vector shape layer
-
-Renders a vector silhouette (rectangle, ellipse, polygon, or star). Inherits from `VisualLayer` → `BaseLayer`.
-
-The choice of silhouette is a **setting** (`shapeType`, fixed for the layer's lifetime). All size/colour/stroke parameters are properties and therefore animatable.
-
-```typescript
-const card = $.addShape(
-  {
-    // --- Shape box (sized in em — `1em = 1% of project width` at root) ---
-    width: 50,                   // Default: 100
-    height: 30,                  // Default: 100
-
-    // --- Fill / stroke ---
-    fill: '#1c2233',             // Default: '#ffffff'. Use 'transparent' for outline-only.
-    strokeColor: '#3a4257',      // Default: '#000000'
-    strokeWidth: 0.2,            // Default: 0 (no stroke). Animatable.
-    strokeAlignment: 'inner',    // 'inner' | 'center' | 'outer'. Default: 'inner'
-    strokeDash: 0,               // Dash length in em. 0 = solid. Default: 0
-    strokeGap: 0,                // Gap length in em (defaults to strokeDash if 0). Default: 0
-    strokeLinejoin: 'miter',     // 'miter' | 'round' | 'bevel'. Default: 'miter'
-
-    // --- Shape-specific ---
-    cornerRadius: 1.5,           // Rectangles only. In em. Default: 0
-    sides: 6,                    // polygon / star. Integer ≥ 3. Default: 6
-    innerRadius: 0.5,            // Stars only. Inner/outer ratio (0..1). Default: 0.5
-
-    // --- VisualLayer (inherited) ---
-    position: [0.5, 0.5],
-    rotation: 0,
-    opacity: 1,
-    // …plus border*, boxShadow*, outline*, filter*, perspective, effects
+      { caption: 'First line.',  startTime: 0,    endTime: 2.5 },
+      { caption: 'Second line.', startTime: 2.5,  endTime: 5   },
+    ],
+    sourceDuration: '5s',
   },
-  {
-    shapeType: 'rectangle',      // 'rectangle' | 'ellipse' | 'polygon' | 'star'. Default: 'rectangle'
-    startTime: 0,
-    sourceDuration: '3s',
-  }
 );
 ```
 
----
+### Shape
 
-### $.group — composite a sub-tree as one
+```ts
+$.addShape(
+  {
+    width: 30, height: 30,
+    fill: '#0e1524',
+    strokeColor: '#ff5a1f', strokeWidth: 0.2,
+    cornerRadius: 3,
+  },
+  { shapeType: 'rectangle' },     // or 'ellipse' | 'polygon' | 'star'
+);
+```
 
-Wraps a builder callback whose layers are nested **inside** the returned group. The group itself is a regular visual layer — it has its own `position`, `scale`, `rotation`, `opacity`, `transitionIn`/`transitionOut`, and `effects` — and at render time the group's children are first composited onto a private project-sized surface, then that surface is drawn onto the parent canvas with the group's transform / transitions / effects applied as a single pass.
+### Group
 
-```typescript
+Composite a sub-tree as one. Group-level `transitionIn` / `transitionOut` / `effects` apply to the whole composite. Child timings are relative to the group's start.
+
+```ts
 $.group(
-  // --- Group properties (same set as VisualLayer: position, scale,
-  //     rotation, opacity, filter*, border*, boxShadow*, perspective, effects)
-  { position: [0.5, 0.5], scale: 1 },
-  // --- Group settings. `startTime` and `sourceDuration` are auto-derived
-  //     from the flow position and the children's end times — you typically
-  //     do NOT pass them. Override only if you need to.
+  { position: [0.5, 0.5], perspective: 20 },
   {
-    transitionIn:  { transition: 'slideUp', duration: '500ms' },
-    transitionOut: { transition: 'fade',    duration: '500ms' },
+    transitionIn:  { transition: 'zoom', duration: '600ms' },
+    transitionOut: { transition: 'fade', duration: '500ms' },
   },
-  // --- Builder callback. The flow's time pointer resets to 0 inside,
-  //     so child timings are relative to the group's start. The argument
-  //     is the group layer itself, so animations attached to the group
-  //     as a whole live alongside its children.
-  (group) => {
-    $.addImage({ fit: 'cover' }, { source: './bg.jpg', sourceDuration: '3s' });
-    $.addText({ text: 'Hello' }, { sourceDuration: '3s' });
-
-    $.wait('400ms');                    // 400ms relative to the group's start
-    $.addText({ text: 'world' }, { sourceDuration: '2.6s' });
-
-    // Animate the group itself — children come along for the ride.
-    group.animate({ scale: 1 }, { scale: 1.04 }, { duration: '3s', wait: false });
+  () => {
+    $.addShape({ width: 30, height: 30, fill: '#0e1524', cornerRadius: 3 }, { shapeType: 'rectangle' });
+    $.addText({ text: '24', fontSize: 8, fontWeight: 900 });
+    $.addText({ text: 'BOOKS READ', fontSize: 1.8, position: [0.5, 0.42] });
   },
-  // --- AddLayer options. `waitFor` defaults to 'finish' on groups, so the
-  //     next layer added after this call starts when the group ends. Pass a
-  //     Time (e.g. '500ms') to add a fixed delay instead.
 );
 ```
 
-Key semantics:
-
-- **Auto timing.** A group's `startTime` defaults to the flow's current time when `$.group(...)` is called, and `sourceDuration` defaults to the end of its latest child. So a group whose last child finishes at +5s lasts 5s — no manual bookkeeping. Pass them explicitly only to override.
-- **`waitFor` defaults to `'finish'`.** Unlike `$.addText` / `$.addImage` (which leave the flow pointer where it was), `$.group(...)` advances the outer flow pointer to the group's end. The next layer added after a group call starts when the group ends — `$.wait()` between groups is normally not needed.
-- **Relative timing inside the group.** A `wait('1s')` inside the callback advances the **group-local** timeline, not the project timeline. At compile time, child `startTime`s are resolved into absolute project seconds.
-- **Group-level transitions and effects.** `transitionIn`, `transitionOut`, and `effects` on the group apply to the composited sub-tree as a whole. Children may also declare their own — those run before the group's pass.
-- **Nested groups.** Groups can contain other groups. Each level composites independently; transitions/effects stack outward.
-- **DOM preview.** In `DomRenderer`, a group renders as a single `<canvas>` element — children live in a hidden virtual root and never appear in the visible DOM tree.
+`$.group(...)` advances the flow pointer to the group's end (defaults to `waitFor: 'finish'`), so you don't need a `$.wait()` after it. Groups can nest — each level composites independently.
 
 ---
 
-## Visual Properties Reference
+## Visual properties
 
-Every visual layer (text, image, video, captions) inherits the following from `VisualLayer`. All of these can be passed at creation or via `.set()` / `.animate()`. Most are animatable.
+All `VisualLayer` descendants share a unified property vocabulary. **Every property listed below is animatable** unless noted otherwise.
 
-### Unit convention
+### Sizing convention
 
-Sizing properties default to the `em` unit so videos render identically at any
-output resolution. VideoFlow sets the project root font-size so that **`1em`
-= 1% of the project width** — an unstyled `fontSize: 4` resolves to 4% of the
-canvas width (≈ 77px on 1920, ≈ 51px on 1280). Inside a text layer, `em`
-follows the standard CSS cascade (relative to that layer's `fontSize`), which
-is typically what you want for padding/stroke/shadow *around* text.
+Sizing inputs default to `em` and the project root font-size is set so that **`1em = 1% of the project width`**. A layout written with `fontSize: 4` and `borderWidth: 0.2` renders identically at any output resolution. Pass `'24px'` (or `'%'` for `borderRadius`) for absolute units. Rotations are in `deg`, ratios (opacity, scale, multipliers) are unitless.
 
-Size inputs also accept explicit `px` strings, and `borderRadius` additionally
-accepts `%`. Rotations and `filterHueRotate` are in `deg`. Colours are any CSS
-colour string. Unitless ratios (opacity, scale, filter multipliers) stay
-unitless.
+### Transform
 
-### Transform — position, scale, rotation, anchor
-
-Transforms use **normalized 0–1 coordinates** — not pixels. `[0.5, 0.5]` is always the center.
-
-```typescript
-layer.set({
-  // Position of the anchor point within the canvas.
-  // [0, 0] = top-left, [0.5, 0.5] = center, [1, 1] = bottom-right.
-  // Third value (z) is depth in em (1em = 1% of project width). Animatable.
-  position: [0.5, 0.5],        // Default: [0.5, 0.5]
-
-  // Scale multiplier relative to the element's natural size.
-  // Can be a number (uniform) or [x, y] / [x, y, z]. Animatable.
-  scale: 1,                    // Default: 1
-
-  // Rotation in degrees, clockwise. Can be [x, y, z] for 3D rotation. Animatable.
-  rotation: 0,                 // Default: 0
-
-  // Which point on the element maps to `position`.
-  // [0, 0] = top-left of element, [0.5, 0.5] = center, [1, 1] = bottom-right. Animatable.
-  anchor: [0.5, 0.5],          // Default: [0.5, 0.5]
-
-  // 3D perspective distance (unitless = em; 100em = one project-width). Animatable.
-  perspective: 100,            // Default: 100
-});
+```ts
+{
+  position: [0.5, 0.5],   // [x, y] or [x, y, z] — normalised 0–1; z is depth in em
+  scale:    1,            // number or [x, y] / [x, y, z]
+  rotation: 0,            // degrees, or [rx, ry, rz] for 3D
+  anchor:   [0.5, 0.5],   // pivot inside the element
+  perspective: 100,       // 3D viewing distance, em
+}
 ```
 
-**Position examples:**
+### Opacity / blend / visibility
 
-```typescript
-layer.set({ position: [0.5, 0.5] });   // Centered
-layer.set({ position: [0, 0] });       // Top-left corner
-layer.set({ position: [1, 1] });       // Bottom-right corner
-layer.set({ position: [0.5, 0.85] });  // Bottom-center (good for captions)
+```ts
+{
+  opacity: 1,                // 0–1
+  visible: true,             // not animatable; flips instantly
+  blendMode: 'normal',       // CSS mix-blend-mode; not animatable
+  // 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' | 'color-dodge' |
+  // 'color-burn' | 'hard-light' | 'soft-light' | 'difference' | 'exclusion' |
+  // 'hue' | 'saturation' | 'color' | 'luminosity'
+}
 ```
 
-### Opacity & visibility
+### Background / border / radius
 
-```typescript
-layer.animate(
-  { opacity: 0, visible: true },
-  { opacity: 1 },
-  { duration: '1s' }
-);
-// opacity: 0–1, default 1, animatable
-// visible: boolean, default true, NOT animatable (flips instantly)
+```ts
+{
+  backgroundColor: 'transparent',
+  borderWidth: 0,           // unitless = em, or [t, r, b, l]
+  borderStyle: 'solid',     // 'none'|'solid'|'dashed'|'dotted'|'double'|'groove'|'ridge'|'inset'|'outset'
+  borderColor: '#000',
+  innerBorder: false,       // box-sizing: border-box for the border
+  borderRadius: 0,          // em / '%' / 4-corner array
+}
 ```
 
-### Blend mode
+### Box shadow / outline
 
-```typescript
-layer.set({
-  blendMode: 'multiply', // Any CSS mix-blend-mode value. Default: 'normal'. NOT animatable.
-});
-// 'normal' | 'multiply' | 'screen' | 'overlay' | 'darken' | 'lighten' |
-// 'color-dodge' | 'color-burn' | 'hard-light' | 'soft-light' | 'difference' |
-// 'exclusion' | 'hue' | 'saturation' | 'color' | 'luminosity'
+```ts
+{
+  boxShadow: true,                // toggle to render
+  boxShadowColor: '#000',
+  boxShadowOffset: [0, 0],
+  boxShadowBlur: 0,
+  boxShadowSpread: 0,
+
+  outlineWidth: 0,
+  outlineStyle: 'none',
+  outlineColor: '#000',
+  outlineOffset: 0,
+}
 ```
 
-`blendMode` controls how the layer composites against the layers beneath it. The renderer container has `isolation: isolate` so blending stays inside the project canvas.
+### Filters
 
-### Background, border, border-radius
+CSS filter functions, all animatable:
 
-```typescript
-layer.set({
-  backgroundColor: 'transparent', // Default: 'transparent'. Animatable.
-  borderWidth: 0,                 // Unitless = em, or [top, right, bottom, left]. Default: 0. Animatable.
-  borderStyle: 'solid',           // 'none'|'solid'|'dashed'|'dotted'|'double'|'groove'|'ridge'|'inset'|'outset'. Default: 'solid'
-  borderColor: '#000000',         // Default: '#000000'. Animatable.
-  innerBorder: false,             // Draw border inside the layer box (box-sizing: border-box). Default: false
-  borderRadius: 0,                // Unitless = em, or '%', or 4-corner array. Default: 0. Animatable.
-});
+```ts
+{
+  filterBlur:       0,   // em
+  filterBrightness: 1,
+  filterContrast:   1,
+  filterGrayscale:  0,   // 0–1
+  filterSepia:      0,   // 0–1
+  filterInvert:     0,   // 0–1
+  filterHueRotate:  0,   // deg
+  filterSaturate:   1,
+}
 ```
 
-### Box shadow
+### Audio properties (`AuditoryLayer` + `VideoLayer`)
 
-```typescript
-layer.set({
-  boxShadow: true,                // Must be true to render shadow. Default: false
-  boxShadowColor: '#000000',      // Default: '#000000'. Animatable.
-  boxShadowOffset: [0, 0],        // [x, y], unitless = em. Default: [0, 0]. Animatable.
-  boxShadowBlur: 0,               // Unitless = em. Default: 0. Animatable.
-  boxShadowSpread: 0,             // Unitless = em. Default: 0. Animatable.
-});
-```
-
-### Outline
-
-```typescript
-layer.set({
-  outlineWidth: 0,                // Unitless = em. Default: 0. Animatable.
-  outlineStyle: 'none',           // Same enum as borderStyle. Default: 'none'
-  outlineColor: '#000000',        // Default: '#000000'. Animatable.
-  outlineOffset: 0,               // Unitless = em. Default: 0. Animatable.
-});
-```
-
-### Filters (CSS filter functions)
-
-All filters are animatable:
-
-```typescript
-layer.animate({ filterBlur: 0 }, { filterBlur: 1 }, { duration: '2s' });
-
-// filterBlur:       unitless = em,   default 0  (1em = 1% of project width at root)
-// filterBrightness: multiplier,      default 1  (>1 brighter, <1 darker)
-// filterContrast:   multiplier,      default 1
-// filterGrayscale:  0–1,             default 0
-// filterSepia:      0–1,             default 0
-// filterInvert:     0–1,             default 0
-// filterHueRotate:  degrees,         default 0
-// filterSaturate:   multiplier,      default 1
+```ts
+{
+  volume: 1,    // 0 = silent, 1 = full
+  pan: 0,       // -1 = full left, 1 = full right
+  pitch: 1,     // independent from `speed` — 1.5 raises pitch without changing duration
+  mute: false,  // not animatable
+}
 ```
 
 ---
 
 ## Transitions
 
-Attach an enter and/or exit animation to any layer via `transitionIn` / `transitionOut` in the layer's settings. Transitions modify the layer's resolved properties during a bounded window at the layer's start or end — no manual keyframing required.
+Attach an enter and/or exit animation to any layer via `transitionIn` / `transitionOut`. The renderer modifies the layer's resolved properties during a bounded window — no manual keyframing. If `transitionIn.duration + transitionOut.duration` exceeds the layer's duration, both are scaled proportionally.
 
-```typescript
-const title = $.addText(
-  { text: 'Hello!', fontSize: 3 },
+```ts
+$.addText(
+  { text: 'Hello!', fontSize: 4 },
   {
     sourceDuration: '4s',
     transitionIn:  { transition: 'slideUp',     duration: '600ms', params: { distance: 0.1 } },
@@ -571,84 +406,80 @@ const title = $.addText(
 );
 ```
 
-`duration` defaults to `200ms` and accepts any [Time format](#time-format). If the combined in+out duration would exceed the layer's own duration, both are scaled proportionally. Each spec also accepts an `easing` field ([Easing](#easing)) applied to the progress magnitude.
+### The signed `p` contract
 
-### How `p` works
+A preset receives a signed progress value `p ∈ [-1, +1]`:
 
-A transition preset is a pure function that receives a **signed** progress `p ∈ [-1, +1]`:
+- `p = -1` — start of the `transitionIn` window
+- `p =  0` — layer at rest (preset must be a no-op)
+- `p = +1` — end of the `transitionOut` window
 
-- `p = -1` — start of the `transitionIn` window (layer fully "transitioned in")
-- `p =  0` — layer at rest, original properties (no transition applied)
-- `p = +1` — end of the `transitionOut` window (layer fully "transitioned out")
+Most presets compute `t = 1 - |p|` so the same body produces a symmetric mirror exit. Presets must multiply / add onto incoming property values so they compose with keyframed animation.
 
-Most presets read `t = stage(p) = 1 - |p|` so the same body produces a symmetric mirror exit on its own. Callers are still free to compose any in/out pair on a layer.
+### Built-in presets
 
-Presets must multiply / add onto incoming property values so they compose with keyframed animation, and must be a no-op at `p = 0`.
-
-### Layer category
-
-Each preset is tagged with a `layerCategory` (`'all' | 'visual' | 'audio' | 'textual'`) so editors can filter the picker by what kind of layer the user is editing. Layer classes carry a matching `static category` value (`VisualLayer.category = 'visual'`, `AuditoryLayer.category = 'audio'`, `TextualLayer.category = 'textual'`).
-
-### Built-in transition presets
+Each preset is tagged with a `layerCategory` (`'all' | 'visual' | 'audio' | 'textual'`) so editors can filter the picker.
 
 **Universal** (`layerCategory: 'all'`)
 
-| Preset | Effect | Params |
-| --- | --- | --- |
-| `fade` | Multiplies opacity (visual) and volume (audio) by `t`. Works on any layer kind. | — |
+| Preset | Effect |
+| --- | --- |
+| `fade` | Multiplies opacity (visual) and volume (audio) by `t` |
 
-**Visual — position / opacity / scale (CSS-only)**
-
-| Preset | Effect | Notable params |
-| --- | --- | --- |
-| `slideUp` | Enters from below, slides up to rest | `distance?: 0.10`, `fade?: true` |
-| `slideDown` | Enters from above, slides down to rest | `distance?: 0.10`, `fade?: true` |
-| `slideLeft` | Enters from the right, slides left to rest | `distance?: 0.12`, `fade?: true` |
-| `slideRight` | Enters from the left, slides right to rest | `distance?: 0.12`, `fade?: true` |
-| `zoom` | Scales from `from` to rest (symmetric) | `from?: 0.85`, `fade?: true` |
-| `overshootPop` | Springy scale-in past 1, settles to 1 | `from?: 0.4`, `overshoot?: 1.7`, `tilt?: 6`, `fade?: true` |
-| `rotate3dY` | Y-axis swing into rest | `angle?: 75`, `fade?: true` |
-| `tilt3dUp` | X-axis tilt forward into rest | `angle?: 60`, `lift?: 0.04`, `fade?: true` |
-| `spin` | Spin around Z while scaling (symmetric) | `angle?: 360`, `from?: 0.2`, `direction?`, `fade?: true` |
-
-**Visual — WebGL-effect-injecting**
-
-These presets push synthetic entries onto `properties.__effects` and the renderer keeps the per-layer effect overlay mounted across the layer's lifetime.
+**Visual — CSS-only**
 
 | Preset | Effect | Notable params |
 | --- | --- | --- |
-| `blurResolve` | Heavy Gaussian blur resolves to sharp | `amount?: 1.5em`, `fade?: true` |
-| `motionBlurSlide` | Slide-in with directional motion blur matching velocity | `distance?: 0.18`, `blur?: 4.5em`, `angle?: 0`, `fade?: true` |
-| `radialZoom` | Radial zoom blur from a centre | `amount?: 0.4`, `centerX?: 0.5`, `centerY?: 0.5`, `mode?: 'in'\|'out'`, `fade?: true` |
-| `glitchResolve` | Digital block + RGB split glitch | `intensity?: 1`, `blockSize?: 1.25em`, `fade?: true` |
-| `rgbSplitSnap` | Strong RGB split that snaps to clean | `amount?: 0.04`, `axis?`, `fade?: true` |
-| `sliceAssemble` | Layer assembles from offset slices | `sliceCount?: 30`, `offset?: 0.18`, `axis?`, `fade?: true` |
-| `noiseDissolve` | Fbm-noise dissolve reveal | `noiseScale?: 8`, `edgeWidth?: 0.04`, `softness?: 0.04`, `edgeColor?` |
-| `burnDissolve` | Fiery dissolve with hot embers and ash | `noiseScale?: 6`, `ashAmount?: 0.4`, `burnColor?`, `hotColor?` |
-| `wipeReveal` | Linear wipe along an angle | `angle?: 0`, `softness?: 0.03`, `edgeWidth?: 0.02`, `edgeColor?` |
-| `scanReveal` | Directional scanner reveal with edge glow + jitter | `angle?: 0`, `bandWidth?: 0.05`, `edgeGlow?: 1.2` |
-| `lightSweepReveal` | Wipe with a glossy light band sweeping ahead | `angle?: 30`, `bandWidth?: 0.18`, `sweepColor?`, `intensity?: 1.4` |
-| `lensSnap` | Fisheye bulge that settles to flat | `strength?: 0.9`, `radius?: 0.5`, `zoom?: 1`, `fade?: true` |
+| `slideUp` / `slideDown` / `slideLeft` / `slideRight` | Position slide-in with optional fade | `distance?`, `fade?: true` |
+| `zoom` | Symmetric scale from `from` → 1 | `from?: 0.85`, `fade?: true` |
+| `overshootPop` | Springy scale-in past 1, settles to 1 | `from?: 0.4`, `overshoot?: 1.7`, `tilt?: 6` |
+| `rotate3dY` / `tilt3dUp` | 3D swing / tilt into rest | `angle?`, `lift?`, `fade?` |
+| `spin` | Spin around Z while scaling | `angle?: 360`, `from?: 0.2`, `direction?` |
 
-**Textual — modify the rendered text**
+**Visual — WebGL-effect-injecting** (preset pushes synthetic effect entries; renderer keeps the per-layer effect overlay mounted)
+
+| Preset | Effect |
+| --- | --- |
+| `blurResolve` | Heavy Gaussian blur resolves to sharp |
+| `motionBlurSlide` | Slide-in with directional motion blur matching velocity |
+| `radialZoom` | Radial zoom blur from a centre |
+| `glitchResolve` | Digital block + RGB-split glitch |
+| `rgbSplitSnap` | Strong RGB split that snaps clean |
+| `sliceAssemble` | Layer assembles from offset slices |
+| `noiseDissolve` / `burnDissolve` | Noise / fiery dissolve reveal |
+| `wipeReveal` / `scanReveal` / `lightSweepReveal` | Linear / scanner / glossy wipes |
+| `lensSnap` | Fisheye bulge that settles to flat |
+
+**Textual**
 
 | Preset | Effect | Notable params |
 | --- | --- | --- |
 | `typewriter` | Reveals one character at a time | `cursorStyle?: 'bar'\|'block'\|'underscore'\|'none'` |
-| `trackingExpand` | Text starts compressed and expands into final spacing | `startTracking?: -0.12em`, `finalTracking?: 0`, `startOpacity?: 0`, `blur?: 0.3em` |
-| `trackingContract` | Text starts wide and contracts into final spacing | `startTracking?: 0.3em`, others as above |
-| `scrambleDecode` | Random characters resolve into final text | `refreshRate?: 15`, `order?`, `charset?`, `preserveSpaces?: true` |
-| `numberCountUp` | Detects numbers in the text and counts them up | `startValue?: 0`, `mode?`, `formatMode?`, `rounding?` |
+| `trackingExpand` / `trackingContract` | Letter-spacing animates from compressed/expanded into rest | `startTracking?`, `finalTracking?` |
+| `scrambleDecode` | Random characters resolve into the final text | `refreshRate?`, `charset?`, `order?` |
+| `numberCountUp` | Detects numbers in the text and counts them up | `startValue?`, `formatMode?` |
 
-Registering a custom preset: `BrowserRenderer.registerTransition(name, fn, { defaultEasing, layerCategory, injectsEffects, fieldsConfig })` (also available on `DomRenderer`). The registry is shared, so preview and export always agree.
+### Custom presets
+
+```ts
+import BrowserRenderer from '@videoflow/renderer-browser';
+// (DomRenderer.registerTransition writes to the same shared registry.)
+
+BrowserRenderer.registerTransition('spinIn', (p, properties, params, ctx) => {
+  const t = 1 - Math.abs(p);
+  properties.rotation = (properties.rotation ?? 0) + (1 - t) * (params.angle ?? 360);
+  properties.opacity  = (properties.opacity  ?? 1) * t;
+  return properties;
+}, { defaultEasing: 'easeOut', layerCategory: 'visual' });
+```
 
 ---
 
-## GLSL Effects
+## GLSL effects
 
-Attach one or more WebGL shader effects to a layer via the first-argument `effects` property. Effects run in array order, each pass reading from the previous output (ping-pong framebuffers), before the layer is composited.
+Attach one or more WebGL shader effects to a layer via the `effects` property. Effects run in array order (ping-pong framebuffers), then the layer is composited.
 
-```typescript
+```ts
 const img = $.addImage(
   {
     fit: 'cover',
@@ -660,174 +491,161 @@ const img = $.addImage(
   },
   { source: './photo.jpg', sourceDuration: '4s' },
 );
-```
 
-The `effects` array is set at creation time and cannot be animated. Individual params, however, **are** animatable via dot-path property keys:
-
-```typescript
-// Animate the 'size' param of the first 'pixelate' effect
+// Animate effect params with dot-path keys
 img.animate(
   { 'effects.pixelate.size': 48 },
   { 'effects.pixelate.size': 1 },
   { duration: '2s' },
 );
-
-// When the same effect appears more than once, use an index:
-img.animate({}, { 'effects.pixelate[1].size': 4 }, { duration: '1s' });
 ```
 
-### Built-in effect presets
+When the same effect appears more than once, target a specific occurrence with an index: `'effects.pixelate[1].size'`.
 
-| Effect | Description | Params |
-| --- | --- | --- |
-| `chromaticAberration` | Splits RGB channels horizontally | `amount` (default `0.005`) |
-| `pixelate` | Pixel mosaic | `size` (pixels, default `8`) |
-| `vignette` | Darkened border | `strength` (default `0.6`), `radius` (default `0.8`) |
-| `rgbSplit` | Directional chromatic aberration | `angle` (degrees, default `0`), `amount` (default `0.005`) |
-| `invert` | Colour inversion | `amount` (0–1, default `1`) |
-| `bloom` | Bright-area bloom | `threshold`, `intensity`, `radius` |
-| `colorCorrection` | Exposure / contrast / saturation / temperature / tint | `exposure`, `contrast`, `saturation`, `temperature`, `tint`, `gamma` |
-| `frostedGlass` | Frosted-glass / displacement blur | `blurRadius`, `distortion`, `frostAmount` |
-| `lightSweep` | Glossy light band sweeping across the layer | `progress`, `angle`, `width`, `intensity` |
+### Built-in effects
 
-All params are animatable. Effects are supported in both `BrowserRenderer` (export) and `DomRenderer` (live preview).
+| Effect | Params |
+| --- | --- |
+| `chromaticAberration` | `amount` |
+| `pixelate` | `size` (px) |
+| `vignette` | `strength`, `radius` |
+| `rgbSplit` | `angle`, `amount` |
+| `invert` | `amount` (0–1) |
+| `bloom` | `threshold`, `intensity`, `radius` |
+| `colorCorrection` | `exposure`, `contrast`, `saturation`, `temperature`, `tint`, `gamma` |
+| `frostedGlass` | `blurRadius`, `distortion`, `frostAmount` |
+| `lightSweep` | `progress`, `angle`, `width`, `intensity` |
 
----
+### Custom effects
 
-## Timeline Methods
+```ts
+import BrowserRenderer from '@videoflow/renderer-browser';
 
-### wait
-
-Advance the timeline by a duration.
-
-```typescript
-$.wait('2s');
-$.wait('500ms');
-$.wait('60f');  // 60 frames
-```
-
-### parallel
-
-Run multiple animation branches simultaneously.
-
-```typescript
-$.parallel([
-  () => layer1.animate({ opacity: 0 }, { opacity: 1 }, { duration: '1s' }),
-  () => layer2.fadeOut('1s'),
-  () => { /* custom code */ },
-]);
-```
-
-### animate
-
-Animate layer properties over time.
-
-```typescript
-layer.animate(
-  { opacity: 0, scale: 0.8 },      // Start state
-  { opacity: 1, scale: 1 },        // End state
+BrowserRenderer.registerEffect(
+  'glitchShift',
+  `
+vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
+  vec2 shifted = uv + vec2(u_amount * sin(uv.y * 40.0), 0.0);
+  return texture2D(tex, shifted);
+}`,
   {
-    duration: '1.5s',
-    easing?: 'easeOut',
-    delay?: '500ms',
-  }
+    amount: { type: 'float', default: 0.02, min: 0, max: 0.1, animatable: true },
+  },
 );
 ```
 
-### set
+---
 
-Set properties at the current timeline position (no animation).
+## Animation API
 
-```typescript
-layer.set({
-  opacity: 0.5,
-  scale: 1.2,
-});
+### `animate`
+
+```ts
+layer.animate(
+  { opacity: 0, scale: 0.8 },     // from
+  { opacity: 1, scale: 1   },     // to
+  {
+    duration: '1s',
+    easing?: 'easeOut',
+    delay?: '500ms',              // hold the `from` state for this long first
+    wait?: true,                  // false = run in parallel with the flow
+  },
+);
 ```
 
-### fadeIn / fadeOut
+### `set` / `fadeIn` / `fadeOut` / `show` / `hide` / `remove`
 
-Animate opacity to/from 0.
-
-```typescript
+```ts
+layer.set({ opacity: 0.5, scale: 1.2 });
 layer.fadeIn('1s', 'easeOut');
-layer.fadeOut('1s', 'easeOut');
+layer.fadeOut('1s');
+layer.show();
+layer.hide();
+layer.remove();              // remove at current flow time
+layer.remove({ in: '2s' });  // schedule removal 2s from now (no flow advance)
 ```
 
-### show / hide / remove
+### `wait` / `parallel`
 
-Visibility shortcuts.
+```ts
+$.wait('2s');
+$.wait('60f');           // 60 frames at the project's fps
 
-```typescript
-layer.show();   // opacity 1
-layer.hide();   // opacity 0
-layer.remove(); // Remove at current time
-layer.remove({ in: '2s' }); // Remove 2s from now without waiting
+$.parallel([
+  () => layer1.animate({ opacity: 0 }, { opacity: 1 }, { duration: '1s' }),
+  () => layer2.fadeOut('1s'),
+]);
+// Flow advances by max(branch durations).
 ```
 
-## Time Format
+---
 
-All time parameters accept flexible formats:
+## Time formats
 
-| Format | Example | Result |
-|--------|---------|--------|
+Anywhere a time appears (`startTime`, `duration`, `wait(...)`, `sourceDuration`, `kf.time`, …):
+
+| Form | Example | Meaning |
+| --- | --- | --- |
+| Number | `5` | 5 seconds |
 | Seconds | `'5s'` | 5 seconds |
-| Milliseconds | `'500ms'` | 500ms |
-| Minutes | `'2m'` | 2 minutes |
-| Hours | `'1h'` | 1 hour |
-| Frames | `'60f'` | 60 frames at current FPS |
-| Timecode | `'01:30'` | 1 min 30 sec |
-| Full timecode | `'01:02:30'` | 1 hr 2 min 30 sec |
+| Milliseconds | `'500ms'` | 500 ms |
+| Minutes / hours | `'2m'`, `'1h'` | minutes / hours |
+| Frames | `'60f'` | 60 frames at the project's fps |
+| Timecode | `'01:30'`, `'01:02:30'`, `'01:02:30:15'` | mm:ss / hh:mm:ss / hh:mm:ss:ff |
 
-## Compilation & Rendering
+Easings: `'step'`, `'linear'`, `'easeIn'`, `'easeOut'`, `'easeInOut'`.
 
-### compile
+---
 
-Convert the video to a portable VideoJSON object. This JSON can be stored, transferred, and rendered later by any VideoFlow renderer.
+## Compile & render
 
-```typescript
-const videoJSON = await $.compile();
-// Result: { width, height, fps, duration, layers, ... }
+### `compile()`
+
+```ts
+const json = await $.compile();
+// → { name, width, height, fps, duration, backgroundColor, layers, ... }
 ```
 
-### renderVideo
+The result is JSON-serialisable. Pass it to any renderer, save it, or send it over the wire.
 
-Render the video to MP4 (auto-detects environment).
+### `renderVideo(options?)`
 
-```typescript
+```ts
 await $.renderVideo({
-  outputType: 'file',
+  outputType: 'file',        // 'file' | 'buffer' (server) / Blob is returned in browser
   output: './video.mp4',
-  verbose?: boolean,
+  verbose: true,
+  signal: controller.signal, // AbortSignal — cancel mid-flight
+  onProgress: (p) => console.log((p * 100).toFixed(1) + '%'),
 });
 ```
 
-### renderFrame
+Auto-detects the environment and dynamically imports `@videoflow/renderer-browser` (in the browser) or `@videoflow/renderer-server` (in Node.js). The matching renderer must be installed.
 
-Render a single frame.
+### `renderFrame(frame)` / `renderAudio()`
 
-```typescript
-const imageData = await $.renderFrame(0); // Frame 0
+```ts
+const imageData = await $.renderFrame(0);   // Frame 0 → OffscreenCanvas / JPEG Buffer
+const audio     = await $.renderAudio();    // AudioBuffer / WAV Buffer (or null)
 ```
 
-### renderAudio
-
-Render the full audio track.
-
-```typescript
-const audioBuffer = await $.renderAudio();
-```
+---
 
 ## Examples
 
-See the [`examples/`](https://github.com/ybouane/VideoFlow/tree/main/examples) folder for complete, runnable examples.
+See [examples/](https://github.com/ybouane/VideoFlow/tree/main/examples) for runnable scripts covering text, media, captions, parallel animations, transitions, effects, groups, and keyframe animations.
 
-## See Also
+```bash
+npx tsx examples/01-basic-text.ts
+```
 
-- [`@videoflow/renderer-dom`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-dom) — Play back and preview VideoFlow videos in the browser
-- [`@videoflow/renderer-browser`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-browser) — Render VideoFlow videos to MP4 in the browser
-- [`@videoflow/renderer-server`](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-server) — Render VideoFlow videos to MP4 on the server
+## Resources
+
+- [Core docs](https://videoflow.dev/core)
+- [Renderers docs](https://videoflow.dev/renderers)
+- [Live playground](https://videoflow.dev/playground)
+- [React Video Editor](https://videoflow.dev/react-video-editor)
 
 ## License
 
-Apache License 2.0
+[Apache-2.0](../../LICENSE)

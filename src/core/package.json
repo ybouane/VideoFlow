@@ -3,6 +3,15 @@
   "version": "1.2.0",
   "description": "Core library for VideoFlow — data model, layers, flow API, and video JSON compilation",
   "license": "Apache-2.0",
+  "homepage": "https://videoflow.dev/core",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ybouane/VideoFlow.git",
+    "directory": "src/core"
+  },
+  "bugs": {
+    "url": "https://github.com/ybouane/VideoFlow/issues"
+  },
   "type": "module",
   "files": ["dist"],
   "main": "./dist/index.js",
