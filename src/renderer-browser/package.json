@@ -1,6 +1,6 @@
 {
   "name": "@videoflow/renderer-browser",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Browser-side video renderer for VideoFlow",
   "keywords": ["videoflow", "video rendering", "browser", "web worker", "canvas", "webgl", "browser rendering", "video editor"],
   "license": "Apache-2.0",
@@ -14,7 +14,7 @@
     "url": "https://github.com/ybouane/VideoFlow/issues"
   },
   "type": "module",
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -27,7 +27,7 @@
     "build": "npx tsx bundle-worker.ts && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@videoflow/core": "^1.2.0",
+    "@videoflow/core": "^1.2.1",
     "mediabunny": "^1.40.0"
   },
   "devDependencies": {

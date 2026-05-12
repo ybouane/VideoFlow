@@ -1,6 +1,6 @@
 {
   "name": "@videoflow/core",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Turn JSON code into programmatic videos. Core library for VideoFlow — data model, layers, flow API, and video JSON compilation — Open Source Remotion alternative",
   "keywords": ["videoflow", "remotion", "ffmpeg", "video rendering", "video compilation", "video data model", "video layers", "video effects", "video transitions", "video editor", "video API"],
   "license": "Apache-2.0",
@@ -14,7 +14,7 @@
     "url": "https://github.com/ybouane/VideoFlow/issues"
   },
   "type": "module",
-  "files": ["dist"],
+  "files": ["dist", "README.md", "llms.txt", "llms-full.txt"],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
