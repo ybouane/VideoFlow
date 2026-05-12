@@ -1,0 +1,3411 @@
+# VideoFlow — complete documentation
+
+Authoritative single-file dump of every guide and API reference page on https://videoflow.dev/docs. Generated from the same source as the site, so updates flow through automatically.
+
+---
+
+## Guides
+
+<!-- guide: animation-and-keyframes -->
+# Animate & keyframes
+
+Every animatable property on a layer is stored as an array of `{ time, value, easing }` keyframes. You don't write them by hand — `.animate()` and its shortcuts push keyframes onto the layer at the current flow-pointer time.
+
+## .animate(from, to, opts)
+
+```javascript
+layer.animate(
+  { opacity: 0, scale: 0.9, position: [0.4, 0.5] },
+  { opacity: 1, scale: 1,   position: [0.5, 0.5] },
+  { duration: '800ms', easing: 'easeOut' },
+);
+```
+
+Each property in `from` / `to` generates a pair of keyframes: one at the flow pointer, one at `pointer + duration`. Props not in the object are left alone. If the property already has later keyframes, `animate()` inserts into the sequence — the existing keyframes don't move.
+
+### Options
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `duration` | — | Time between the two keyframes. Required. |
+| `easing` | project default | See [Easing](/docs/guide/easing). |
+| `wait` | `true` | If `false`, the flow pointer doesn't advance — use for background animations. |
+
+## .set(patch)
+
+`.set()` patches layer props without creating keyframes. Use it for values that should jump discretely — text content, fontFamily, etc.
+
+```javascript
+chip.set({ text: 'SAVING' });
+```
+
+## Chaining calls
+
+Multiple `.animate()` calls on the same layer simply chain keyframes. The flow pointer after one call is the starting time for the next.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#111' });
+
+const chip = $.addText({
+  text: 'STATUS', fontSize: 8, fontWeight: 700, color: '#fff',
+  backgroundColor: '#22c55e', padding: '0.4em 1em', borderRadius: '999px',
+  position: [0.5, 0.5],
+});
+
+// Chain three animate() calls — each pushes its own keyframe pair.
+chip.animate({ backgroundColor: '#22c55e' }, { backgroundColor: '#eab308' }, { duration: '600ms' });
+chip.set({ text: 'SAVING' });
+chip.animate({ backgroundColor: '#eab308' }, { backgroundColor: '#ef4444' }, { duration: '600ms' });
+chip.set({ text: 'ERROR' });
+chip.animate({ backgroundColor: '#ef4444' }, { backgroundColor: '#22c55e' }, { duration: '600ms' });
+chip.set({ text: 'OK' });
+
+$.wait('1.2s');
+return $;
+```
+
+## Fade shortcuts
+
+```javascript
+layer.fadeIn('500ms');         // animate opacity 0 → 1
+layer.fadeOut('500ms');        // animate opacity 1 → 0
+layer.show();                  // set opacity 1 at the flow pointer (no interpolation)
+layer.hide();                  // set opacity 0 at the flow pointer
+```
+
+## Animatable properties
+
+Any numeric, colour, or array-numeric property. Not exhaustive:
+
+- `opacity`, `scale`, `rotation`
+- `position` — animated as `[x, y]` vector
+- `anchor` — same
+- `color`, `backgroundColor` — RGB interpolated
+- `fontSize`, `letterSpacing`, `lineHeight`
+- `filterBlur`, `filterBrightness`, `filterSaturate`
+- `volume` (audio / video)
+- `effects.<name>.<param>` via dot-path (see [Effects](/docs/guide/effects))
+
+---
+Source: https://videoflow.dev/docs/guide/animation-and-keyframes
+
+
+<!-- guide: builder-api -->
+# Builder API
+
+VideoFlow's builder is a thin fluent shell over a flow pointer. You add layers and animations in source order; the pointer advances automatically after each action. There's no React tree, no component model, no declarative diff — just a sequence of imperative calls that compile to JSON.
+
+## Constructor
+
+```javascript
+const $ = new VideoFlow({
+  name: 'My video',           // used as filename / metadata
+  width: 1920, height: 1080,  // output resolution
+  fps: 30,                    // frames per second — 24, 30, 60 all work
+  backgroundColor: '#000',    // fills under all layers
+  autoDetectDurations: true,  // probe video/audio layers for their duration
+  verbose: false,             // log keyframe/action push events to the console
+  defaults: {
+    easing: 'easeOut',
+    fontFamily: 'Inter',
+  },
+});
+```
+
+## Adding layers
+
+Five factory methods. Each pushes a layer onto the timeline at the current flow pointer and returns the layer instance.
+
+| Call | Returns |
+| --- | --- |
+| `$.addText(props, settings?, options?)` | TextLayer |
+| `$.addImage(props, settings?, options?)` | ImageLayer (settings.source) |
+| `$.addVideo(props, settings?, options?)` | VideoLayer (settings.source) |
+| `$.addAudio(props, settings?, options?)` | AudioLayer (settings.source) |
+| `$.addCaptions(props, settings, options?)` | CaptionsLayer (settings.captions) |
+| `$.addShape(props, settings?, options?)` | ShapeLayer (settings.shapeType: `rectangle`, `ellipse`, `polygon`, `star`) |
+| `$.group(props, settings, fn, options?)` | GroupLayer — children authored inside `fn` are composited as one. See [Groups](/docs/guide/layer-group). |
+
+## Layer instance methods
+
+| Method | Effect |
+| --- | --- |
+| `.animate(from, to, opts)` | Push a pair of keyframes on each listed prop. |
+| `.set(patch)` | Patch static layer props — no keyframes. |
+| `.fadeIn(duration)` | Shorthand for `animate({ opacity: 0 }, { opacity: 1 }, ...)` |
+| `.fadeOut(duration)` | Shorthand for the opposite. |
+| `.show()` / `.hide()` | Toggle visibility at the current time — no interpolation. |
+| `.remove(opts?)` | End the layer at the current flow position. Pass `{ in: time }` to defer. |
+
+## Layer factory options
+
+The third argument to every `add*` / `group` call is an `AddLayerOptions` object that controls how the layer interacts with the flow pointer and the layer stack:
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `waitFor` | `0` (visual layers); `'finish'` (groups, video / audio with explicit duration) | How much the outer flow pointer advances. Pass a `Time` to wait that long, or `'finish'` to wait for the layer's full duration. |
+| `index` | — | Z-order. Negative pushes the layer behind earlier ones; positive pulls it forward. |
+
+## Flow control
+
+| Call | Effect |
+| --- | --- |
+| `$.wait(duration)` | Advance the flow pointer without adding layers. |
+| `$.parallel([fns])` | Run each fn with the same start time; advance the pointer by the longest branch. |
+| `$.compile()` | Finalise and return the VideoJSON. |
+
+### Parallel branches
+
+Each function in `$.parallel([...])` starts at the same flow-pointer time. Inside a branch, `$.wait()` advances only that branch — use it to stagger.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0b0b1f' });
+
+const a = $.addText({ text: 'A', fontSize: 16, fontWeight: 800, color: '#ff6b6b', position: [0.25, 0.5], opacity: 0 });
+const b = $.addText({ text: 'B', fontSize: 16, fontWeight: 800, color: '#4ecdc4', position: [0.5,  0.5], opacity: 0 });
+const c = $.addText({ text: 'C', fontSize: 16, fontWeight: 800, color: '#45b7d1', position: [0.75, 0.5], opacity: 0 });
+
+// All three branches share a start time — stagger each with $.wait().
+$.parallel([
+  () => a.fadeIn('600ms'),
+  () => { $.wait('200ms'); b.fadeIn('600ms'); },
+  () => { $.wait('400ms'); c.fadeIn('600ms'); },
+]);
+$.wait('2s');
+return $;
+```
+
+### Holding the pointer still
+
+`animate(..., { wait: false })` pushes keyframes but doesn't advance the pointer — so you can stack another animation on the same window.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#111' });
+
+const box = $.addText({ text: 'BG', fontSize: 40, fontWeight: 900, color: '#222', position: [0.5, 0.5] });
+const label = $.addText({ text: 'Foreground', fontSize: 8, fontWeight: 700, color: '#fff', position: [0.5, 0.5], opacity: 0 });
+
+// wait: false — the flow pointer doesn't advance while the background pulses,
+// so the label fades in on top during the same window.
+box.animate({ scale: 1 }, { scale: 1.15 }, { duration: '1.5s', easing: 'easeInOut', wait: false });
+label.fadeIn('800ms');
+$.wait('1.5s');
+return $;
+```
+
+## Compiling
+
+```javascript
+const json = await $.compile();
+// json is plain, serialisable VideoJSON — save it, send it, render it later.
+```
+
+Beyond `compile()`, the builder also exposes one-shot convenience methods that skip the intermediate JSON:
+
+```javascript
+await $.renderVideo({ outputType: 'buffer' });    // → Buffer | Blob
+await $.renderFrame(60);                          // → OffscreenCanvas | Buffer
+await $.renderAudio();                            // → AudioBuffer | Buffer
+```
+
+> [!NOTE]
+> These helpers pick a renderer based on the environment (browser → renderer-browser, Node → renderer-server). If you already have a renderer imported, pass it explicitly for finer control.
+
+## Next
+
+- [Time formats](/docs/guide/time-formats) — all the shapes `duration` accepts.
+- [Parallel & wait](/docs/guide/parallel-and-wait) — worked examples of the timing primitives.
+
+---
+Source: https://videoflow.dev/docs/guide/builder-api
+
+
+<!-- guide: core-concepts -->
+# Core concepts
+
+VideoFlow has exactly four moving parts. Once you have these four, everything else is just API surface.
+
+## 1. VideoJSON
+
+The source of truth. Every video is a plain JSON object listing its layers, their properties, and their keyframes. The builder compiles to it; every renderer reads from it. You can save, version, diff, and lint it like any other config.
+
+```json
+{
+  "name": "Hello",
+  "width": 1280, "height": 720, "fps": 30, "duration": 2,
+  "layers": [
+    {
+      "type": "text",
+      "text": "Hello",
+      "fontSize": 2.4,
+      "keyframes": {
+        "opacity": [
+          { "time": 0, "value": 0 },
+          { "time": 0.8, "value": 1 }
+        ]
+      }
+    }
+  ]
+}
+```
+
+## 2. Layers
+
+Six built-in content types plus a group container. Every property on every layer is animatable.
+
+| Type | Use for |
+| --- | --- |
+| `text` | Titles, lower thirds, captions burned at author time. |
+| `image` | PNG/JPG/WebP/SVG. Auto-detected from URL. |
+| `video` | B-roll, clips. Trim start/end in source-media seconds. |
+| `audio` | Music bed, VO. Same trim model as video. |
+| `captions` | Subtitle tracks with word-level timing (WhisperX JSON, SRT, VTT). |
+| `shape` | Rectangles, ellipses, polygons, stars — vector primitives with fills, strokes, and corner radii. |
+| `group` | A composited sub-tree that transforms, transitions, and animates as one. Created with `$.group()`. |
+
+See the layer guides under **Layers** in the sidebar for the full property tables.
+
+## 3. Time
+
+Every duration in the API passes through the same Time parser. Give it whatever form is clearest in context:
+
+| Input | Meaning |
+| --- | --- |
+| `5` | 5 seconds (any plain number) |
+| `'500ms'` | 500 milliseconds |
+| `'2s'` | 2 seconds |
+| `'3m'` | 3 minutes |
+| `'1h'` | 1 hour |
+| `'120f'` | 120 frames (uses the project fps) |
+| `'00:30'` | mm:ss |
+| `'01:20:05'` | hh:mm:ss |
+| `'01:20:05:12'` | hh:mm:ss:ff (frames) |
+
+## 4. Keyframes
+
+Any property on any layer can be animated. A keyframe is simply `{ time, value, easing?: string }`. The builder never asks you to write keyframes by hand — `.animate(from, to, opts)`, `.fadeIn()`, and `.fadeOut()` push them for you.
+
+> [!NOTE]
+> **Trim-aware keyframes.** Keyframes on `video` and `audio` layers are expressed in *source-media seconds*, not timeline seconds. Trimming or moving a clip doesn't change the keyframe times — that's how the React video editor can scrub without re-baking keyframes.
+
+---
+Source: https://videoflow.dev/docs/guide/core-concepts
+
+
+<!-- guide: easing -->
+# Easing functions
+
+VideoFlow ships 5 named easings. Set one per project via `defaults.easing`, or override per-animation with the `easing` option.
+
+| Name | Shape | When to use |
+| --- | --- | --- |
+| `step` | Hold → jump | Discrete state (text swaps, SFX cues). |
+| `linear` | Constant velocity | Ken Burns pans, scrolling credits. |
+| `easeIn` | Starts slow, accelerates | Exiting offscreen. |
+| `easeOut` | Fast start, soft stop | Default for most UI motion. |
+| `easeInOut` | Soft start and stop | Long transforms. |
+
+## Compare side-by-side
+
+Each row is a dot sliding across with a different easing:
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0b0b1f' });
+
+const rows = [
+  { label: 'linear',     easing: 'linear',     y: 0.2 },
+  { label: 'easeIn',     easing: 'easeIn',     y: 0.35 },
+  { label: 'easeOut',    easing: 'easeOut',    y: 0.5 },
+  { label: 'easeInOut',  easing: 'easeInOut',  y: 0.65 },
+  { label: 'step',       easing: 'step',       y: 0.8 },
+];
+
+$.parallel(rows.map((r) => () => {
+  const dot = $.addText({ text: '●', fontSize: 8, color: '#ff5a1f', position: [0.35, r.y] });
+  $.addText({ text: r.label, fontSize: 4, color: '#888', position: [0.04, r.y], textAlign: 'left' });
+  dot.animate({ position: [0.35, r.y] }, { position: [0.9, r.y] }, { duration: '2s', easing: r.easing });
+}));
+$.wait('1s');
+return $;
+```
+
+## Per-keyframe easing
+
+Each keyframe carries its own `easing` — it describes the *outgoing* interpolation from that keyframe to the next. The last keyframe in a sequence is a terminator; its easing is ignored.
+
+> [!NOTE]
+> **Custom easings.** Roll your own by pushing raw keyframes instead of using `.animate()` — set the keyframe's `easing` to any cubic-bezier or custom function accepted by the renderer.
+
+---
+Source: https://videoflow.dev/docs/guide/easing
+
+
+<!-- guide: editor-custom-panels -->
+# Custom panels
+
+The editor is built from four top-level panels: `Titlebar`, `Preview`, `Sidebar`, `Timeline`. Pass a `components` prop to replace any of them. Your component receives the editor context via hooks — see [Hooks & commands](/docs/guide/editor-hooks).
+
+```jsx
+import { VideoEditor, useEditor } from '@videoflow/react-video-editor';
+
+function MyTitlebar() {
+  const video = useEditor((s) => s.video);
+  return (
+    <header>
+      <h1>{video.name}</h1>
+      <button>Export</button>
+    </header>
+  );
+}
+
+<VideoEditor
+  video={v}
+  components={{ Titlebar: MyTitlebar }}
+/>
+```
+
+## Panel defaults
+
+| Panel | Responsibilities |
+| --- | --- |
+| `Titlebar` | Project name, undo/redo, Save / Export buttons. |
+| `Preview` | The DomRenderer host + transport bar. |
+| `Sidebar` | Inspector: selection props, media library, effects. |
+| `Timeline` | Tracks, playhead, ruler, drag-and-drop. |
+
+## Partial replacement
+
+Pass only the panels you want to replace — the editor keeps its defaults for the rest.
+
+```jsx
+<VideoEditor video={v} components={{
+  Titlebar: MyTitlebar,
+  Sidebar: ({ selection }) => selection ? <MyInspector /> : <MyMediaLibrary />,
+}} />
+```
+
+> [!TIP]
+> **Don't swap `Preview` unless you have to.** It hosts the `DomRenderer` instance every other panel assumes exists. If you just want to add overlays, wrap the default preview inside your replacement.
+
+## Titlebar slot props
+
+The `Titlebar` slot is special — when you replace it, the editor forwards the same handlers it would have given the default titlebar.
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `onExport` | `() => void` | Pre-bound — calls your `onExport` if set, otherwise opens the built-in export modal. |
+| `onSave` | `() => void` | Pre-bound — calls your `onSave` with the current video. |
+| `branding` | `ReactNode | null | false` | Whatever you passed to `VideoEditor`'s `branding` prop. |
+
+---
+Source: https://videoflow.dev/docs/guide/editor-custom-panels
+
+
+<!-- guide: editor-hooks -->
+# Hooks & commands
+
+The editor exposes its Zustand store via hooks. For reads, call `useEditor(selector)` — it subscribes only to the slice you pick. For writes that should be undoable, dispatch **commands** instead of calling setState directly.
+
+## Reading state
+
+```jsx
+import { useEditor } from '@videoflow/react-video-editor';
+
+function LayerCount() {
+  const count = useEditor((s) => s.video.layers.length);
+  return <span>{count} layers</span>;
+}
+```
+
+| Hook | Returns |
+| --- | --- |
+| `useEditor(selector)` | Memoised slice of the store. |
+| `useVideo()` | The current VideoJSON. |
+| `useSelection()` | `{ ids: string[], layers: LayerJSON[] }` — selected ids and the resolved layers. |
+| `usePlayhead()` | `{ frame, playing }` — current frame and play state. |
+| `useViewport()` | Timeline zoom / scroll state. |
+| `useHistoryState()` | `{ canUndo, canRedo }`. |
+| `useActiveLayers()` | `LayerJSON[]` — layers currently in scope (respects the active group context). |
+| `useActiveGroup()` | `LayerJSON | null` — the group the user has drilled into. |
+| `useActiveGroupChain()` | `LayerJSON[]` — full ancestor chain of the active group. |
+| `useActiveGroupPath()` | `string[]` — the active group ids, root-to-leaf. |
+| `useEditorStore()` | Raw Zustand store for escape hatches. |
+
+## Commands
+
+A command is a pure function that returns an `Immer` patch plus metadata. Dispatching a command pushes a history entry (undoable, merge-aware) and triggers `onChange`.
+
+```jsx
+import { useEditorStore, commands } from '@videoflow/react-video-editor';
+
+function NudgeRight() {
+  const dispatch = useEditorStore((s) => s.dispatch);
+  return (
+    <button onClick={() => dispatch(commands.moveLayersCommand({ ids, dx: 10 }))}>
+      Move right 10px
+    </button>
+  );
+}
+```
+
+### Available commands
+
+| Command | Use for |
+| --- | --- |
+| `addLayerCommand` | Insert a layer. |
+| `removeLayersCommand` | Delete one or more layers. |
+| `reorderLayersCommand` | Change stacking / track order. |
+| `moveLayersCommand` | Translate by dx / dy. |
+| `resizeLayerCommand` | Change width / height. |
+| `trimStartCommand` | Trim a clip's start. |
+| `setPropertyCommand` | Set any layer property. |
+| `unsetPropertyCommand` | Reset to default. |
+| `setSettingCommand` | Patch project settings. |
+| `setLayerEnabledCommand` | Toggle a layer on/off. |
+| `set3DTransformCommand` | Set 3D translate / rotate. |
+| `setKeyframeCommand` / `removeKeyframeCommand` | Edit keyframes. |
+| `setTransitionCommand` | Swap transitionIn / Out. |
+| `addEffectCommand` / `removeEffectCommand` / `moveEffectCommand` | Manage effects stack. |
+| `setEffectParamCommand` | Patch one effect param. |
+| `setProjectSettingsCommand` | Patch the project metadata. |
+| `setTrackSettingsCommand` | Patch per-track metadata. |
+
+## History model
+
+- Up to **200** entries retained per session.
+- Merges within an **800 ms** window — rapid inputs collapse into one undo step.
+- Cmd+Z / Cmd+Shift+Z hooked up automatically.
+
+## Renderer bridge
+
+For advanced programmatic control, reach the underlying DomRenderer via `state.bridge`:
+
+```javascript
+const { bridge } = useEditorStore.getState();
+await bridge.seek(120);
+await bridge.renderFrame(120);
+```
+
+---
+Source: https://videoflow.dev/docs/guide/editor-hooks
+
+
+<!-- guide: editor-quickstart -->
+# Editor quickstart
+
+`@videoflow/react-video-editor` is a drop-in editor UI — timeline, preview, inspector, keyboard shortcuts, undo/redo. You feed it a `VideoJSON` and it hands back a new one on every change.
+
+## Minimal example
+
+```jsx
+import { VideoEditor } from '@videoflow/react-video-editor';
+import '@videoflow/react-video-editor/style.css';
+
+const initialVideo = {
+  name: 'My project',
+  width: 1920, height: 1080, fps: 30, duration: 10,
+  layers: [],
+};
+
+export default function App() {
+  return (
+    <VideoEditor
+      video={initialVideo}
+      onChange={(next) => console.log('edited', next)}
+      onSave={(video) => saveToServer(video)}
+      onExportComplete={(blob) => downloadBlob(blob, 'out.mp4')}
+      theme="dark"
+    />
+  );
+}
+```
+
+> [!NOTE]
+> **Export.** Most apps should leave `onExport` undefined and rely on the built-in export modal + `onExportComplete` to receive the rendered Blob. Set `onExport` only when you want to skip the modal and run your own UI / pipeline; whatever it resolves to is forwarded to `onExportComplete`.
+
+## Props
+
+| Prop | Type | Notes |
+| --- | --- | --- |
+| `video` | `VideoJSON` | Initial state. Controlled re-renders supported. |
+| `onChange` | `(video) => void` | Fires on every edit. Debounced internally. |
+| `onSave` | `(video) => void | Promise<void>` | Fires on Cmd+S / titlebar Save. Setting it makes a Save button appear and the editor tracks an `isSaved` flag. |
+| `onExport` | `() => Promise<unknown>` | Optional custom export. When set, replaces the built-in modal; whatever it resolves to is forwarded to `onExportComplete`. |
+| `onExportComplete` | `(video) => void` | Receives the rendered Blob from the built-in modal (or the value `onExport` resolved to). When set with the built-in modal, the editor skips its auto-download. |
+| `onUpload` | `(file) => Promise<string>` | Resolve to a URL. See [Uploads](/docs/guide/editor-upload-handler). |
+| `theme` | `'light' | 'grey' | 'dark' | 'night'` | Defaults to `'dark'`. See [Theming](/docs/guide/editor-theming). |
+| `branding` | `ReactNode | null | false` | Leading brand node for the titlebar (logo + wordmark). Omit / pass `null` to fall back to the project-name input. |
+| `components` | `{ Titlebar, Preview, Sidebar, Timeline }` | Swap any panel. See [Custom panels](/docs/guide/editor-custom-panels). |
+
+## Sizing
+
+The editor fills its parent. Wrap it in a block with an explicit height — typically `100vh` minus your app chrome.
+
+```jsx
+<section style={{ height: 'calc(100vh - 64px)' }}>
+  <VideoEditor video={v} onChange={setV} theme="dark" />
+</section>
+```
+
+> [!NOTE]
+> **SSR.** The editor is client-only. Dynamically import it in Next / Remix / React Router — or guard with a `useEffect`.
+
+---
+Source: https://videoflow.dev/docs/guide/editor-quickstart
+
+
+<!-- guide: editor-shortcuts -->
+# Keyboard shortcuts
+
+All shortcuts work anywhere the editor has focus. On Windows / Linux, substitute Ctrl for Cmd.
+
+| Shortcut | Action |
+| --- | --- |
+| `Space` | Play / pause. |
+| `←` / `→` | Step one frame. |
+| `Shift + ←` / `Shift + →` | Step one second. |
+| `Home` | Jump to frame 0. |
+| `End` | Jump to last frame. |
+| `Cmd + Z` | Undo. |
+| `Cmd + Shift + Z` | Redo. |
+| `Cmd + S` | Fire `onSave`. |
+| `Delete` / `Backspace` | Delete selection. |
+| `Z` | Zoom timeline to fit. |
+| `+` / `-` | Zoom in / out on the timeline. |
+| `K` | Add a keyframe for the current property on the selection. |
+| `S` | Split at playhead. |
+| `Escape` | Clear selection. |
+
+> [!NOTE]
+> **Disabling shortcuts.** Wrap your custom Titlebar input in a container with `onKeyDown` that `stopPropagation()`s — the editor's global handler sits on the outer shell.
+
+---
+Source: https://videoflow.dev/docs/guide/editor-shortcuts
+
+
+<!-- guide: editor-theming -->
+# Editor theming
+
+Pick a built-in theme with the `theme` prop, then override any CSS variable inline or from your own stylesheet — the editor reads from its own custom element scope so overrides don't bleed.
+
+## Built-in themes
+
+The editor ships four themes: **Light**, **Grey**, **Dark**, and **Night**. Open any of them live in the [Playground](/playground?step=video-editor).
+
+- [Light theme preview](/playground?step=video-editor&theme=light)
+- [Grey theme preview](/playground?step=video-editor&theme=grey)
+- [Dark theme preview](/playground?step=video-editor&theme=dark)
+- [Night theme preview](/playground?step=video-editor&theme=night)
+
+```jsx
+<VideoEditor theme="light" />
+<VideoEditor theme="grey" />
+<VideoEditor theme="dark" />
+<VideoEditor theme="night" />
+```
+
+## Brand overrides
+
+```jsx
+<VideoEditor
+  theme="night"
+  style={{
+    '--vf-primary':       '#a855f7',
+    '--vf-primary-hover': '#9333ea',
+    '--vf-accent':        '#ec4899',
+  }}
+/>
+```
+
+## Every variable
+
+| Variable | Role |
+| --- | --- |
+| `--vf-bg` | Root background. |
+| `--vf-panel` | Panel surface (sidebar, timeline). |
+| `--vf-panel-2` | Elevated surface. |
+| `--vf-border` | Default border. |
+| `--vf-text` | Primary text. |
+| `--vf-text-muted` | Secondary text. |
+| `--vf-primary` | Brand colour (buttons, selection). |
+| `--vf-primary-hover` | Brand hover. |
+| `--vf-accent` | Secondary brand. |
+| `--vf-success` / `--vf-warning` / `--vf-danger` | Status colours. |
+| `--vf-titlebar-height` | Default `48px`. |
+| `--vf-sidebar-width` | Default `320px`. |
+| `--vf-timeline-height` | Default `260px`. |
+| `--vf-radius` | Default radius. |
+| `--vf-font-family` | Default `system-ui`. |
+
+> [!NOTE]
+> **Scoped.** The editor's styles are scoped to its custom-element shell, so overrides you make inline never leak out.
+
+---
+Source: https://videoflow.dev/docs/guide/editor-theming
+
+
+<!-- guide: editor-upload-handler -->
+# Editor uploads
+
+When the user drops a file into the timeline or the sidebar, the editor calls `onUpload(file)`. Resolve the promise with a public URL and the editor uses that for all references — playback, rendering, caching.
+
+## Signature
+
+```typescript
+type UploadHandler = (file: File) => Promise<string>;
+```
+
+## S3 example
+
+```jsx
+<VideoEditor
+  video={v}
+  onUpload={async (file) => {
+    const { url, fields } = await fetch('/api/presigned', {
+      method: 'POST',
+      body: JSON.stringify({ name: file.name, type: file.type }),
+    }).then((r) => r.json());
+
+    const body = new FormData();
+    Object.entries(fields).forEach(([k, v]) => body.append(k, v));
+    body.append('file', file);
+
+    await fetch(url, { method: 'POST', body });
+    return `${url}/${fields.key}`;
+  }}
+/>
+```
+
+## Cloudflare R2 / Supabase
+
+```jsx
+<VideoEditor
+  onUpload={async (file) => {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch('/api/upload', { method: 'POST', body: form });
+    const { url } = await res.json();
+    return url;
+  }}
+/>
+```
+
+## Fallback: object URLs
+
+If you don't pass `onUpload`, the editor wraps dropped files with `URL.createObjectURL()` and revokes them on unmount. Great for demos — a dead end for anything persisted.
+
+> [!WARNING]
+> **CORS.** Whatever URL you return must be reachable with CORS enabled so the editor's renderer can decode it. S3 and R2 both need an explicit `GET` policy allowing your app origin.
+
+---
+Source: https://videoflow.dev/docs/guide/editor-upload-handler
+
+
+<!-- guide: effects -->
+# Effects
+
+Effects are GPU shaders the renderer applies on top of a layer's normal paint. Add them via the `effects` property — an array of `{ effect, params?, enabled? }` entries that run in order, each pass reading the previous pass's output. Every effect parameter is animatable using dot-path strings — `'effects.pixelate.pixelSize'` — as the key into `animate()`.
+
+## Pixelate reveal
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#000' });
+
+const t = $.addText({
+  text: 'PIXELATED',
+  fontSize: 13, fontWeight: 900, color: '#ff5a1f',
+  position: [0.5, 0.5],
+  effects: [
+    { effect: 'pixelate', params: { pixelSize: 8 } },
+  ],
+});
+
+// Effect params animate via dot-path: effects.<name>.<param>.
+t.animate({ 'effects.pixelate.pixelSize': 8 }, { 'effects.pixelate.pixelSize': 0.2 }, { duration: '1.5s', easing: 'easeOut' });
+$.wait('1.2s');
+return $;
+```
+
+## Available effects
+
+The renderer ships **42 GLSL effects**. The complete catalogue, grouped by family:
+
+| Group | Effects |
+| --- | --- |
+| Blur | `gaussianBlur`, `motionBlur`, `zoomBlur`, `streakBlur`, `spinBlur` |
+| Glow / bloom | `glow`, `bloom`, `edgeGlow`, `lightRays`, `volumetricLight`, `lightLeak` |
+| Color | `colorGrade`, `vignette`, `duotone`, `halftone`, `invert` |
+| Distortion | `displacement`, `lensDistortion`, `fisheye`, `waveWarp`, `liquidRipple`, `shockwave`, `heatHaze` |
+| Glass / refraction | `frostedGlass`, `glassRefraction`, `prismSplit` |
+| Chromatic / RGB | `chromaticAberration`, `rgbSplit` |
+| Glitch / VHS | `sliceGlitch`, `digitalBlocks`, `datamoshSmear`, `vhsDistortion`, `filmGrain`, `crtScanlines` |
+| Pixel / mosaic | `pixelate`, `mosaicReveal`, `burnDissolve` |
+| Reveal / mask | `wipeMask`, `noiseDissolve`, `scanReveal`, `radialReveal`, `lightSweep` |
+
+Each preset registers its own `fieldsConfig` describing parameter names, types, and ranges — the API reference picks these up automatically. See [renderer-browser API](/docs/api/renderer-browser).
+
+## Combining effects
+
+```javascript
+const layer = $.addImage(
+  {
+    fit: 'cover',
+    effects: [
+      { effect: 'vignette',            params: { intensity: 0.4, radius: 0.7 } },
+      { effect: 'chromaticAberration', params: { amount: 0.002 } },
+      { effect: 'bloom', enabled: false, params: { threshold: 0.7, intensity: 0.8 } },
+    ],
+  },
+  { source: 'https://videoflow.dev/samples/sample.jpg' },
+);
+
+// Animate one effect param using a dot-path key.
+layer.animate(
+  { 'effects.chromaticAberration.amount': 0.002 },
+  { 'effects.chromaticAberration.amount': 0.012 },
+  { duration: '800ms', easing: 'easeOut' },
+);
+```
+
+> [!NOTE]
+> **Effect stacking order.** Entries in the array are applied in order — each pass's output feeds the next. Set `enabled: false` on any entry to keep its config but skip the pass at render time (useful for A/B iteration in the editor without losing tuning).
+
+### Multiple instances of the same effect
+
+When the same effect appears more than once in `effects` (for example two `rgbSplit` passes on different bands), address each one by index:
+
+```javascript
+layer.animate(
+  { 'effects.rgbSplit[0].amount': 0    },
+  { 'effects.rgbSplit[0].amount': 0.02 },
+  { duration: '600ms' },
+);
+layer.animate(
+  { 'effects.rgbSplit[1].amount': 0    },
+  { 'effects.rgbSplit[1].amount': 0.04 },
+  { duration: '600ms' },
+);
+```
+
+---
+Source: https://videoflow.dev/docs/guide/effects
+
+
+<!-- guide: getting-started -->
+# Installation
+
+VideoFlow is split into small, independent packages. You always need `@videoflow/core` (the builder that compiles to VideoJSON) plus at least one renderer that turns the JSON into frames.
+
+```bash
+# Core builder + the renderer you need
+npm install @videoflow/core @videoflow/renderer-browser
+
+# Optional — add any renderer you need
+npm install @videoflow/renderer-server   # MP4 output on Node
+npm install @videoflow/renderer-dom      # live preview inside a DOM node
+
+# Optional — drop-in editor UI
+npm install @videoflow/react-video-editor
+```
+
+## What each package does
+
+| Package | Purpose |
+| --- | --- |
+| `@videoflow/core` | Fluent builder, Time parser, VideoJSON compiler. |
+| `@videoflow/renderer-browser` | Encodes MP4 from a browser tab using WebCodecs + WebWorkers. |
+| `@videoflow/renderer-server` | Renders to an MP4 file or buffer from Node — no ffmpeg dependency by default; opt in with `{ ffmpeg: true }`. |
+| `@videoflow/renderer-dom` | Seekable 60 fps preview painted into a real DOM element. |
+| `@videoflow/react-video-editor` | Ready-made editor UI — timeline, preview, inspector. |
+
+## Requirements
+
+- **Node ≥ 20** for the server renderer and for building the browser renderer bundle.
+- **Modern Chromium / Firefox / Safari** for `renderer-browser`. WebCodecs is used under the hood.
+- **ESM everywhere** — VideoFlow ships ESM only. Use `"type": "module"` or a bundler (Vite, Next, etc).
+
+## Next
+
+Skim [Quick start](/docs/guide/quick-start) for runnable examples, or jump to [Core concepts](/docs/guide/core-concepts) for the mental model.
+
+---
+Source: https://videoflow.dev/docs/guide/getting-started
+
+
+<!-- guide: layer-audio -->
+# Audio layers
+
+`$.addAudio()` adds an invisible layer that only contributes to the final mix. Trim, offset, fade, and duck volume just like any animatable prop.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0a0d18' });
+
+// Audio is invisible — the visible label just signals "the music is playing".
+const music = $.addAudio(
+  { volume: 0.6 },
+  { source: 'https://videoflow.dev/samples/sample.mp3' },
+);
+music.fadeIn('500ms');
+
+const label = $.addText(
+  { text: '♪   Music playing', fontSize: 4.5, fontWeight: 700, color: '#4ecdc4' },
+  {
+    transitionIn:  { transition: 'fade', duration: '500ms' },
+    transitionOut: { transition: 'fade', duration: '400ms' },
+  },
+);
+
+$.wait('3s');
+label.remove();
+music.fadeOut('500ms');
+music.remove();
+return $;
+```
+
+```javascript
+const music = $.addAudio(
+  { volume: 0.6 },
+  { source: '/audio/bed.mp3', sourceStart: '10s' },
+);
+music.fadeIn('1s');
+
+// Duck under a VO
+music.animate({ volume: 0.6 }, { volume: 0.18 }, { duration: '500ms', wait: false });
+const vo = $.addAudio(
+  { volume: 1 },
+  { source: '/audio/vo.wav' },
+);
+$.wait('4s');
+music.animate({ volume: 0.18 }, { volume: 0.6 }, { duration: '500ms' });
+music.fadeOut('2s');
+```
+
+## Properties
+
+| Prop | Default | Notes |
+| --- | --- | --- |
+| `source` *(setting)* | — | MP3, WAV, OGG, M4A, FLAC. |
+| `volume` | `1` | 0–1 (or higher to amplify). Animatable. |
+| `pan` | `0` | −1 (full left) → 1 (full right). Animatable. |
+| `pitch` | `1` | Pitch multiplier. `2` = one octave up, `0.5` = down. Animatable. |
+| `mute` | `false` | Silence without changing `volume`. Not animatable. |
+| `sourceStart` / `sourceEnd` *(settings)* | | Source-media seconds. |
+| `.fadeIn()` / `.fadeOut()` *(methods)* | | Shortcut for volume keyframes. |
+| `speed` | `1` | Playback rate. |
+
+---
+Source: https://videoflow.dev/docs/guide/layer-audio
+
+
+<!-- guide: layer-captions -->
+# Captions layers
+
+Captions render animated subtitles with optional word-by-word highlighting. Feed them a WhisperX-style JSON array, an SRT string, a VTT string, or a URL to any of the above.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#000' });
+
+const captions = $.addCaptions(
+  {
+    fontSize: 9,
+    fontWeight: 800,
+    color: '#ffffff',
+    position: [0.5, 0.5],
+    textAlign: 'center',
+  },
+  {
+    captions: [
+      { caption: 'VideoFlow',           startTime: 0.0, endTime: 1.2 },
+      { caption: 'renders',             startTime: 1.3, endTime: 2.2 },
+      { caption: 'beautiful captions.', startTime: 2.3, endTime: 3.5 },
+    ],
+    maxCharsPerLine: 24,
+    maxLines: 2,
+  },
+);
+$.wait('3.5s');
+captions.remove();
+return $;
+```
+
+## Input shape
+
+```javascript
+// Pass typography in properties; timed entries in settings.captions
+$.addCaptions(
+  {
+    fontSize: 2,
+    fontWeight: 600,
+    color: '#ffffff',
+    position: [0.5, 0.85],
+    textAlign: 'center',
+  },
+  {
+    captions: [
+      { caption: 'Hello world.',     startTime: 0,   endTime: 1.5 },
+      { caption: 'Built from JSON.', startTime: 1.5, endTime: 3.0 },
+    ],
+    maxCharsPerLine: 40,
+    maxLines: 2,
+  },
+);
+```
+
+## Properties
+
+| Prop | Default | Notes |
+| --- | --- | --- |
+| `captions` *(setting)* | — | Array of `{ caption, startTime, endTime }`. |
+| `fontSize` / `fontWeight` / `fontFamily` / `color` | | Same as text layer. |
+| `backgroundColor` / `padding` / `borderRadius` | | Per-line pill. |
+| `position` | `[0.5, 0.85]` | Bottom-centre by default. |
+| `maxCharsPerLine` *(setting)* | `40` | Line-break hint. |
+| `maxLines` *(setting)* | `2` | — |
+
+---
+Source: https://videoflow.dev/docs/guide/layer-captions
+
+
+<!-- guide: layer-group -->
+# Layer groups
+
+`$.group(properties, settings, fn)` creates a container layer. The children authored inside `fn` are composited onto a private project-sized surface, then the group's own transform / opacity / transitions / effects pipeline runs on that surface — exactly as if the group were a single visual layer.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0a0d18' });
+
+// One transition + one rotation animation applies to the whole sub-tree.
+const card = $.group(
+  { position: [0.5, 0.5] },
+  {
+    transitionIn:  { transition: 'overshootPop', duration: '600ms', params: { from: 0.6 } },
+    transitionOut: { transition: 'blurResolve',  duration: '450ms' },
+  },
+  () => {
+    $.addShape(
+      {
+        width: 50, height: 32,
+        fill: '#0e1524',
+        strokeColor: '#4ecdc4', strokeWidth: 0.25,
+        cornerRadius: 2.5,
+      },
+      { shapeType: 'rectangle' },
+    );
+    $.addText({
+      text: 'CARD', fontSize: 2, fontWeight: 700, color: '#4ecdc4',
+      position: [0.5, 0.40], letterSpacing: 0.2,
+    });
+    $.addText({
+      text: '128', fontSize: 11, fontWeight: 900, color: '#f1f5f9',
+      position: [0.5, 0.58],
+    });
+    $.wait('2.6s'); // group's duration auto-derives from this
+  },
+);
+card.animate(
+  { rotation: -3 },
+  { rotation:  3 },
+  { duration: '2.6s', easing: 'easeInOut', wait: false },
+);
+return $;
+```
+
+## Why groups?
+
+- Apply one transition to a whole card scene instead of per-layer.
+- Animate `scale` / `rotation` / `opacity` on the composite.
+- Run a GLSL effect over the entire sub-tree (one bloom pass over a card, not three).
+
+## Auto timing
+
+A group's `startTime` is the current flow time when `$.group(...)` is called. Its `sourceDuration` auto-derives from the latest child's end. Children authored inside `fn` see the group-relative timeline starting at `0`.
+
+```javascript
+$.group(
+  { position: [0.5, 0.5], scale: 1 },
+  {
+    transitionIn:  { transition: 'slideLeft', duration: '600ms' },
+    transitionOut: { transition: 'zoom',      duration: '600ms' },
+  },
+  (card) => {
+    // Children's timing is relative to the group — `0` here is the
+    // group's start, not the project start.
+    $.addImage({ fit: 'cover', opacity: 0.55 }, { source: 'https://videoflow.dev/samples/sample.jpg' });
+    $.addText({ text: 'Card', fontSize: 4, color: '#fff' });
+    $.wait('400ms');
+    $.addText({ text: 'Composite as one', fontSize: 1.4, color: '#cdd5e1', position: [0.5, 0.6] });
+  },
+);
+```
+
+## Animating the group
+
+The callback receives the group layer itself, so you can animate it from inside the block. Use `wait: false` so the animation doesn't advance the group's local flow pointer.
+
+```javascript
+$.group(
+  { position: [0.5, 0.5] },
+  {},
+  (card) => {
+    card.animate({ scale: 1, rotation: -3 }, { scale: 1.04, rotation: 3 }, { duration: '3s', wait: false });
+    $.addShape({ width: 40, height: 24, fill: '#1c2233', cornerRadius: 1.5 }, { shapeType: 'rectangle' });
+    $.addText({ text: '128k', fontSize: 5, fontWeight: 800, color: '#fff', position: [0.5, 0.5] });
+    $.wait('3s'); // group's sourceDuration auto-derives from this
+  },
+);
+```
+
+## Nested groups
+
+Groups compose. A nested badge group has its own transition and its own timeline; it composites along with its parent and inherits the parent's transform.
+
+```javascript
+$.group({}, {}, () => {
+  $.addShape({ width: 40, height: 24, fill: '#1c2233' }, { shapeType: 'rectangle' });
+
+  $.group(
+    { position: [0.7, 0.32], scale: 0.9 },
+    { transitionIn: { transition: 'zoom', duration: '350ms' } },
+    () => {
+      $.addShape({ width: 8, height: 3, fill: '#4ecdc4', cornerRadius: 1.5 }, { shapeType: 'rectangle' });
+      $.addText({ text: 'NEW', fontSize: 0.9, fontWeight: 800, color: '#0a0d18' });
+    },
+  );
+});
+```
+
+---
+Source: https://videoflow.dev/docs/guide/layer-group
+
+
+<!-- guide: layer-image -->
+# Image layers
+
+`$.addImage(props, { source })` adds a still image. VideoFlow auto-detects the format from the URL or `content-type`. Positioning, sizing, and rotation all share the same model as text layers.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30 });
+
+// Ken-Burns drift on a full-cover image with a label on top.
+const bg = $.addImage(
+  { fit: 'cover', scale: 1 },
+  { source: 'https://videoflow.dev/samples/sample.jpg' },
+);
+bg.animate(
+  { scale: 1,    position: [0.55, 0.5] },
+  { scale: 1.18, position: [0.45, 0.5] },
+  { duration: '4s', easing: 'easeInOut', wait: false },
+);
+
+const label = $.addText(
+  {
+    text: 'Beautiful scenery',
+    fontSize: 4.5, fontWeight: 800, color: '#fff',
+    textShadowColor: 'rgba(0,0,0,0.55)', textShadowBlur: 0.6,
+  },
+  {
+    transitionIn:  { transition: 'fade', duration: '600ms' },
+    transitionOut: { transition: 'fade', duration: '500ms' },
+  },
+);
+$.wait('3s');
+label.remove();
+$.wait('500ms');
+bg.remove();
+return $;
+```
+
+```javascript
+const logo = $.addImage(
+  {
+    position: [0.5, 0.4],
+    scale: 0.8,
+  },
+  {
+    source: 'https://example.com/logo.png',
+    transitionIn:  { transition: 'zoom', duration: '800ms', easing: 'easeOut' },
+    transitionOut: { transition: 'fade', duration: '500ms' },
+  },
+);
+$.wait('2s');
+logo.remove(); // triggers transitionOut
+```
+
+## Properties
+
+| Prop | Type / default | Notes |
+| --- | --- | --- |
+| `source` *(setting)* | `string` | URL, data URL, or path. SVG, PNG, JPG, WebP, GIF all supported. |
+| `fit` | `cover | contain` / `contain` | How the image sizes to the project canvas. |
+| `position` / `anchor` | `[x, y]` | Same as text. |
+| `scale` / `rotation` / `opacity` | | Animatable transforms. |
+| `borderRadius` | `string` | CSS radius. Clips the image. |
+| `filterBlur` | `0–1` | Normalised blur. Animatable. |
+| `filterBrightness` | `1.0` | Animatable. |
+| `filterSaturate` | `1.0` | Animatable. |
+| `startTime` *(setting)* | `Time` | Rarely needed — the flow pointer sets it for you. |
+
+## Ken Burns pan
+
+```javascript
+const bg = $.addImage(
+  { fit: 'cover', scale: 1.1 },
+  { source: '/hero.jpg' },
+);
+bg.animate(
+  { scale: 1.1, position: [0.55, 0.5] },
+  { scale: 1.25, position: [0.45, 0.5] },
+  { duration: '8s', easing: 'linear', wait: false },
+);
+// Foreground content runs on top while the background drifts.
+```
+
+---
+Source: https://videoflow.dev/docs/guide/layer-image
+
+
+<!-- guide: layer-shape -->
+# Shape layers
+
+`$.addShape(props, settings)` draws a vector primitive. Pick the silhouette via `settings.shapeType` (`rectangle`, `ellipse`, `polygon`, or `star`). Width, height, fills, strokes, and corner radii are all animatable.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0f0f23' });
+
+// All four shapeTypes pop in side by side.
+const SHAPES = [
+  { type: 'rectangle', x: 0.18, color: '#ff5a1f' },
+  { type: 'ellipse',   x: 0.39, color: '#4ecdc4' },
+  { type: 'polygon',   x: 0.61, color: '#a78bfa' },
+  { type: 'star',      x: 0.82, color: '#facc15' },
+];
+
+const layers = [];
+for (const s of SHAPES) {
+  layers.push($.addShape(
+    {
+      width: 16, height: 16,
+      fill: s.color,
+      position: [s.x, 0.5],
+      sides: 6, innerRadius: 0.45,
+    },
+    {
+      shapeType: s.type,
+      transitionIn:  { transition: 'overshootPop', duration: '500ms', params: { from: 0.3 } },
+      transitionOut: { transition: 'fade', duration: '400ms' },
+    },
+    { waitFor: 0 },
+  ));
+  $.wait('150ms');
+}
+$.wait('1.5s');
+for (const l of layers) l.remove();
+$.wait('500ms');
+return $;
+```
+
+## Shape types
+
+| shapeType | Looks like | Knobs |
+| --- | --- | --- |
+| `rectangle` | Box with optional rounded corners. | `width`, `height`, `cornerRadius` |
+| `ellipse` | Oval / circle when width = height. | `width`, `height` |
+| `polygon` | Regular n-gon (triangle, hexagon, …). | `width`, `height`, `sides` |
+| `star` | n-pointed star. | `width`, `height`, `sides`, `innerRadius` |
+
+## Properties
+
+| Prop | Type / default | Notes |
+| --- | --- | --- |
+| `width` / `height` | `em` / `100` | 1 em = 1% of project width. Animatable. |
+| `fill` | `css colour` / `#ffffff` | `'transparent'` disables the fill. |
+| `strokeColor` | `css colour` / `#000000` | Animatable. |
+| `strokeWidth` | `em` / `0` | `0` hides the stroke. Animatable. |
+| `strokeAlignment` | `inner | center | outer` / `inner` | Where the stroke sits relative to the box edge. |
+| `strokeDash` / `strokeGap` | `em` / `0` | Dash pattern. `0` = solid. |
+| `strokeLinejoin` | `miter | round | bevel` | Corner style. |
+| `cornerRadius` | `em` / `0` | Rectangle only. Capped at half the shorter side. |
+| `sides` | `6` | Polygon vertices / star points. Integer ≥ 3. Not animatable. |
+| `innerRadius` | `0.5` | Star only. Ratio of inner to outer radius. |
+| `shapeType` *(setting)* | `rectangle` | Pick the silhouette. |
+
+## Examples
+
+```javascript
+// A pill-shaped backdrop behind a heading
+const pill = $.addShape(
+  {
+    width: 60, height: 12,
+    fill: '#1c2233',
+    strokeColor: '#3a4257', strokeWidth: 0.2,
+    cornerRadius: 6,
+    position: [0.5, 0.5],
+  },
+  { shapeType: 'rectangle' },
+);
+$.wait('3s');
+pill.remove();
+
+// A six-pointed star that pulses
+const star = $.addShape(
+  { width: 30, height: 30, fill: '#facc15', sides: 6, innerRadius: 0.4 },
+  { shapeType: 'star' },
+);
+star.animate({ scale: 1 }, { scale: 1.15 }, { duration: '600ms', wait: false });
+```
+
+---
+Source: https://videoflow.dev/docs/guide/layer-shape
+
+
+<!-- guide: layer-text -->
+# Text layers
+
+Text layers render a typographic element with full CSS-style control: font, weight, letter-spacing, alignment, background pill, padding, border-radius. Every property is animatable via `.animate()`.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0f0f23' });
+
+$.addText(
+  {
+    text: 'Design.\nAnimate.\nShip.',
+    fontSize: 11,
+    fontWeight: 800,
+    color: '#ffffff',
+    fontFamily: 'Inter',
+    letterSpacing: '0.02em',
+    lineHeight: 1.15,
+    position: [0.5, 0.5],
+    textAlign: 'center',
+    backgroundColor: 'rgba(255, 90, 31, 0.15)',
+    padding: '0.3em 0.6em',
+    borderRadius: '16px',
+  },
+  { transitionIn: { transition: 'zoom', duration: '800ms', easing: 'easeOut' } },
+);
+
+$.wait('1.5s');
+return $;
+```
+
+## Properties
+
+| Prop | Type / default | Notes |
+| --- | --- | --- |
+| `text` | `string` | Plain or multiline. Supports `\n`. Not animatable. |
+| `fontSize` | `em` / `4` | Unitless = em (`1em` = 1% of project width). |
+| `fontWeight` | `100–900` / `600` | Only weights the font actually ships are rendered. |
+| `fontFamily` | `string` / `Noto Sans` | Google Fonts resolved automatically. Not animatable. |
+| `color` | `css colour` / `#FFFFFF` | Any CSS colour. |
+| `letterSpacing` | `em` / `0em` | Animatable. |
+| `lineHeight` | `number` / `1` | Multiplier of `fontSize`, or `'XXem'` / `'XXpx'`. |
+| `wordSpacing` / `textIndent` | `em` / `0` | Animatable. |
+| `textAlign` | `left | center | right | justify` / `center` | Not animatable. |
+| `verticalAlign` | `top | middle | bottom` / `middle` | Not animatable. |
+| `fontStyle` | `normal | italic` / `normal` | Not animatable. |
+| `textTransform` | `none | capitalize | uppercase | lowercase` | Not animatable. |
+| `textDecoration` | `none | underline | overline | line-through` | Not animatable. |
+| `direction` | `ltr | rtl` / `ltr` | Bidirectional text. Not animatable. |
+| `backgroundColor` | `css colour` / `transparent` | Pill background; pairs well with `padding`. |
+| `padding` | `em` / `0` | Single value or `[t,r,b,l]`. |
+| `borderWidth` / `borderColor` / `borderStyle` | `em` / colour / enum | `borderStyle` ∈ `none | solid | dashed | dotted | double | groove | ridge | inset | outset`. |
+| `borderRadius` | `em` or `'XX%'` / `0` | Single value or `[tl,tr,br,bl]`. |
+| `boxShadow` + `boxShadowBlur` / `boxShadowColor` / `boxShadowOffset` / `boxShadowSpread` | `boolean` + props | Set `boxShadow: true` to enable; props animatable. |
+| `outlineWidth` / `outlineStyle` / `outlineColor` / `outlineOffset` | `em` + enum | CSS outline. `outlineStyle` not animatable. |
+| `textShadow` + `textShadowBlur` / `textShadowColor` / `textShadowOffset` | `boolean` + props | Set `textShadow: true` to enable; props animatable. |
+| `textStroke` + `textStrokeWidth` / `textStrokeColor` | `boolean` + props | Set `textStroke: true` to enable; props animatable. |
+| `position` | `[x, y]` / `[0.5, 0.5]` | Normalised `0..1` coordinates of the anchor. Accepts `[x, y, z]`. |
+| `anchor` | `[x, y]` / `[0.5, 0.5]` | Pivot inside the layer bbox (for position + rotation + scale). |
+| `scale` | `number | [sx, sy] | [sx, sy, sz]` / `1` | Animatable. |
+| `rotation` | `degrees | [rx, ry, rz]` / `0` | Animatable. |
+| `perspective` | `em` / `100` | 3D perspective for child rotations / translations. Animatable. |
+| `opacity` | `0–1` / `1` | Animatable. |
+| `visible` | `boolean` / `true` | Hard on/off (no interpolation). |
+| `blendMode` | `16 values` / `normal` | Maps to CSS `mix-blend-mode` — normal, multiply, screen, overlay, darken, lighten, color-dodge, color-burn, hard-light, soft-light, difference, exclusion, hue, saturation, color, luminosity. Not animatable. |
+| `filterBlur` / `filterBrightness` / `filterContrast` / `filterSaturate` / `filterGrayscale` / `filterSepia` / `filterInvert` / `filterHueRotate` | `em` / multiplier / 0–1 / deg | Per-layer CSS filter chain. All animatable. |
+| `effects` | `LayerEffect[]` | Creation-time only — see [Effects](/docs/guide/effects). Individual params are animatable via dot-path keys. |
+| `startTime` *(setting)* | `Time` / current flow pointer | See [Time formats](/docs/guide/time-formats). |
+| `sourceDuration` *(setting)* | `Time` | Rarely needed — prefer the flow pattern (`add → $.wait() → .remove()`). |
+
+## Kinetic typography
+
+Give each layer its own `transitionIn` and space them with `$.wait()` for the classic "kinetic type" stagger — no manual keyframing required.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#111' });
+
+$.addText(
+  {
+    text: 'NOW AVAILABLE',
+    fontSize: 4, fontWeight: 700, color: '#22c55e',
+    letterSpacing: '0.3em', position: [0.5, 0.4],
+  },
+  { transitionIn: { transition: 'fade', duration: '600ms' } },
+);
+
+$.wait('150ms');
+
+$.addText(
+  {
+    text: 'Videos\nas code.',
+    fontSize: 14, fontWeight: 800, color: '#fff',
+    lineHeight: 1.1, textAlign: 'center', position: [0.5, 0.58],
+  },
+  { transitionIn: { transition: 'slideUp', duration: '900ms', easing: 'easeOut' } },
+);
+
+$.wait('2s');
+return $;
+```
+
+> [!NOTE]
+> **Fonts.** Pass any Google Font name as `fontFamily` — the renderer fetches WOFF2 at render time. For local fonts, register them on the `VideoFlow` instance before adding the layer.
+
+---
+Source: https://videoflow.dev/docs/guide/layer-text
+
+
+<!-- guide: layer-video -->
+# Video layers
+
+Add a video clip to the timeline. VideoFlow reads its duration (if `autoDetectDurations` is on), decodes frames on demand, and lets you trim, offset, and animate transforms over it.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#000' });
+
+const clip = $.addVideo(
+  { fit: 'cover' },
+  { source: 'https://videoflow.dev/samples/sample.mp4' },
+);
+$.wait('4s');
+clip.remove();
+return $;
+```
+
+```javascript
+const clip = $.addVideo(
+  { fit: 'cover', volume: 0.8, mute: false },
+  {
+    source: 'https://videoflow.dev/samples/sample.mp4',
+    sourceStart: '2s', // skip the first 2s of the source
+  },
+);
+clip.animate({ scale: 1 }, { scale: 1.05 }, { duration: '10s', easing: 'linear', wait: false });
+
+// Stop the clip after 10s of timeline play instead of letting it run to its
+// own end. .remove() is the preferred way to bound a media layer's duration.
+$.wait('10s');
+clip.remove();
+```
+
+## Properties
+
+| Prop | Type / default | Notes |
+| --- | --- | --- |
+| `source` *(setting)* | `string` | MP4 / WebM / MOV. Must be decodable by the chosen renderer. |
+| `sourceStart` *(setting)* | `Time` / 0 | In source-media seconds. |
+| `sourceEnd` *(setting)* | `Time` / 0 | Trim from the END of the source (source seconds). |
+| `sourceDuration` *(setting)* | `Time` | Auto-detected from the file. Set it only when you need to clip a sub-segment. |
+| `speed` *(setting)* | `number` / 1 | Playback speed multiplier. |
+| `volume` | `0–1` / 1 | Animatable. |
+| `mute` | `boolean` | — |
+| `fit` | `cover | contain` / `cover` | How the video sizes to the project canvas. |
+| `position` / `anchor` / `scale` / `rotation` | | Animatable. |
+| `opacity` / `filterBlur` / `filterBrightness` | | Animatable. |
+
+> [!WARNING]
+> **Source-media seconds.** Animations on a video layer are keyed in source-media seconds, not timeline seconds. If you `sourceStart: '5s'` and then `animate(from, to, { duration: '3s' })`, the animation runs from source 5s → source 8s.
+
+---
+Source: https://videoflow.dev/docs/guide/layer-video
+
+
+<!-- guide: parallel-and-wait -->
+# Parallel & wait
+
+Every VideoFlow timeline is built from two primitives: `$.wait(duration)` pushes the flow pointer forward, and `$.parallel([...])` runs multiple branches starting at the same pointer. That's the whole model — everything else is sequenced layer calls.
+
+## Sequential by default
+
+Calls run in source order. `.animate()` and `.fadeIn()` advance the pointer by their duration — so the next call starts when the previous finishes.
+
+```javascript
+title.fadeIn('500ms');   // pointer: 0 → 0.5s
+$.wait('1s');            // pointer: 0.5 → 1.5s
+title.fadeOut('500ms');  // pointer: 1.5 → 2s
+```
+
+## Stagger with parallel
+
+Inside each branch, `$.wait()` advances only that branch. The parent pointer jumps to the longest branch when `parallel()` returns.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0a0a1a' });
+
+const lines = ['First', 'Second', 'Third', 'Fourth'].map((t, i) =>
+  $.addText({ text: t, fontSize: 7, fontWeight: 700, color: '#fff', position: [0.5, 0.3 + i * 0.13], opacity: 0 })
+);
+
+$.parallel(lines.map((l, i) => () => {
+  $.wait(`${i * 120}ms`);
+  l.animate({ opacity: 0, position: [0.42, 0.3 + i * 0.13] }, { opacity: 1, position: [0.5, 0.3 + i * 0.13] }, { duration: '600ms', easing: 'easeOut' });
+}));
+$.wait('1.5s');
+
+return $;
+```
+
+## Overlapping with wait: false
+
+Without `parallel()`, you can still overlap by setting `wait: false` on the longer animation. The pointer ignores it, so subsequent calls start immediately.
+
+```javascript
+bg.animate({ scale: 1 }, { scale: 1.2 }, { duration: '3s', wait: false });
+// 3s pulse runs in background, rest of the flow keeps its own rhythm
+title.fadeIn('500ms');
+$.wait('2s');
+title.fadeOut('500ms');
+```
+
+## Nesting
+
+`$.parallel([...])` can be nested inside another parallel branch. Each level creates a new scope for its `wait` calls.
+
+```javascript
+$.parallel([
+  () => title.fadeIn('500ms'),
+  () => $.parallel([
+    () => sub1.fadeIn('500ms'),
+    () => { $.wait('200ms'); sub2.fadeIn('500ms'); },
+  ]),
+]);
+```
+
+> [!TIP]
+> **Rule of thumb.** If two animations need to happen at the same time on the timeline, they belong in the same `parallel()` call. If one is a backdrop effect that shouldn't block, `wait: false` is simpler.
+
+---
+Source: https://videoflow.dev/docs/guide/parallel-and-wait
+
+
+<!-- guide: preview-with-dom -->
+# Live preview with the DOM renderer
+
+`@videoflow/renderer-dom` paints a running composition into a DOM element you own. It's what the [playground](/playground) and the React video editor use internally. Seekable, no recompilation on each edit, and completely isolated in a shadow root.
+
+## Minimal example
+
+```javascript
+import DomRenderer from '@videoflow/renderer-dom';
+
+const host = document.getElementById('player');
+const r = new DomRenderer(host);
+
+await r.loadVideo(videoJSON);
+await r.play();                   // auto-loops
+
+// Or scrub precisely:
+await r.seek(42);                 // frame 42
+await r.renderFrame(0);           // paint a single frame
+r.stop();
+r.destroy();
+```
+
+## Methods
+
+| Method | Effect |
+| --- | --- |
+| `new DomRenderer(host)` | Attach to a DOM element. Creates a shadow root internally. |
+| `.loadVideo(json)` | Load or swap in a VideoJSON. Resolves when media is ready. |
+| `.play()` | Start a rAF loop. Auto-loops by default. |
+| `.stop()` | Pause at the current frame. |
+| `.seek(frame)` | Jump to a specific frame (integer). |
+| `.renderFrame(frame)` | Paint a single frame without starting a play loop. |
+| `.destroy()` | Tear down. Call on unmount. |
+
+## Properties & events
+
+| Name | Notes |
+| --- | --- |
+| `onFrame: (frame) => void` | Fires on every painted frame during playback. Use for a scrub bar. |
+| `currentFrame` | Read-only. Last painted frame. |
+| `duration` | Composition duration in seconds. |
+| `fps` | From the loaded video. |
+
+## Granular updates
+
+Calling `loadVideo()` reloads everything. For typing-speed edits, use the incremental patch API — it skips decode for unchanged layers:
+
+```javascript
+r.updateVideo({ duration: 4 });          // top-level patch
+r.addLayer(newLayer);                    // append a layer
+r.removeLayer(layerId);                  // drop one
+r.updateLayer(layerId, { scale: 1.2 });  // patch props on an existing layer
+r.reorderLayers([id3, id1, id2]);        // reorder
+```
+
+> [!NOTE]
+> **Use it as a headless player.** Mount it in a hidden host, call `renderFrame(n)` to rasterise thumbnails, and read the canvas contents — no MP4 encode needed.
+
+---
+Source: https://videoflow.dev/docs/guide/preview-with-dom
+
+
+<!-- guide: quick-start -->
+# Quick start
+
+Five minimal scenes, each one a complete VideoFlow composition. Press play on any preview to see it run, switch to **VideoJSON** to inspect the compiled output, or open it in the playground to fork it. By the end you'll have seen a layer, an animation, a parallel timeline, a transition, and a multi-element scene — enough to start building.
+
+> [!NOTE]
+> **The contract.** Every snippet uses the same conventions: build with `const $ = new VideoFlow({...})`, push layers via `$.addText / $.addImage / $.addShape / …`, and end with `return $` so the sandbox can compile it. Positions are `[x, y]` as fractions of the project (`0..1`); sizes default to `em`, where `1em` is `1%` of the project width.
+
+## 1. A single layer
+
+The smallest useful composition: one text layer that fades in. You never write keyframes by hand — `.fadeIn()` pushes them for you, and the flow pointer auto-advances by the duration.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  width: 1280, height: 720, fps: 30,
+  backgroundColor: '#0f0f23',
+});
+
+$.addText({
+  text: 'Hello, VideoFlow',
+  fontSize: 4,
+  fontWeight: 700,
+  color: '#ffffff',
+  textAlign: 'center',
+}).fadeIn('600ms');
+
+$.wait('1.2s');
+
+return $;
+```
+
+## 2. Animate any property
+
+Every layer property is animatable. `.animate(from, to, opts)` pushes a pair of keyframes and advances the flow pointer by `duration`. Easings are strings — `linear`, `easeIn`, `easeOut`, `easeInOut`, or `step`. See the [easing guide](/docs/guide/easing) for details.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  width: 1280, height: 720, fps: 30,
+  backgroundColor: '#0a0a1a',
+});
+
+const title = $.addText({
+  text: 'Spring in',
+  fontSize: 5,
+  fontWeight: 800,
+  color: '#ffffff',
+  textAlign: 'center',
+});
+
+title.animate(
+  { scale: 0.6, opacity: 0, position: [0.5, 0.55] },
+  { scale: 1,   opacity: 1, position: [0.5, 0.50] },
+  { duration: '700ms', easing: 'easeOut' },
+);
+
+$.wait('800ms');
+title.fadeOut('400ms');
+
+return $;
+```
+
+## 3. Run things in parallel
+
+`$.parallel([...])` takes an array of functions. Each one runs on its own branch from the current flow position; after the block, the pointer advances to the end of the longest branch.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  width: 1280, height: 720, fps: 30,
+  backgroundColor: '#11131a',
+});
+
+const left = $.addText({
+  text: 'Left',
+  fontSize: 4,
+  color: '#7dd3fc',
+  textAlign: 'center',
+  position: [0.30, 0.5],
+  opacity: 0,
+});
+
+const right = $.addText({
+  text: 'Right',
+  fontSize: 4,
+  color: '#fca5a5',
+  textAlign: 'center',
+  position: [0.70, 0.5],
+  opacity: 0,
+});
+
+$.parallel([
+  () => left.animate(
+    { opacity: 0, position: [0.20, 0.5] },
+    { opacity: 1, position: [0.30, 0.5] },
+    { duration: '600ms', easing: 'easeOut' },
+  ),
+  () => right.animate(
+    { opacity: 0, position: [0.80, 0.5] },
+    { opacity: 1, position: [0.70, 0.5] },
+    { duration: '600ms', easing: 'easeOut' },
+  ),
+]);
+
+$.wait('700ms');
+
+return $;
+```
+
+## 4. Transitions between layers
+
+`transitionIn` and `transitionOut` live in a layer's *settings* (the second argument to `addText`) and reference a registered preset by name. The renderer ships `fade`, `slideUp`, `slideLeft`, `zoom`, `overshootPop`, `blurResolve`, and more — see [Transitions](/docs/guide/transitions).
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  width: 1280, height: 720, fps: 30,
+  backgroundColor: '#0b1020',
+});
+
+const first = $.addText(
+  { text: 'First', fontSize: 5, color: '#fef3c7', textAlign: 'center' },
+  {
+    transitionIn:  { transition: 'fade',      duration: '300ms' },
+    transitionOut: { transition: 'slideLeft', duration: '400ms' },
+  },
+);
+$.wait('900ms');
+first.remove();
+
+const second = $.addText(
+  { text: 'Second', fontSize: 5, color: '#bae6fd', textAlign: 'center' },
+  {
+    transitionIn:  { transition: 'zoom', duration: '400ms' },
+    transitionOut: { transition: 'fade', duration: '300ms' },
+  },
+);
+$.wait('900ms');
+second.remove();
+
+return $;
+```
+
+## 5. A real scene
+
+Putting it together: a coloured backdrop shape that scales in, a title that rides on top of it, then a punch-line that lands after the title settles. Both title and backdrop start on the same frame via `$.parallel`.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  width: 1280, height: 720, fps: 30,
+  backgroundColor: '#0f172a',
+});
+
+const bar = $.addShape(
+  {
+    fill: '#7c3aed',
+    width: 120, height: 18,
+    position: [0.5, 0.42],
+    rotation: -6,
+    opacity: 0,
+    scale: 0,
+  },
+  { shapeType: 'rectangle' },
+);
+
+const title = $.addText({
+  text: 'Code',
+  fontSize: 6,
+  fontWeight: 800,
+  color: '#ffffff',
+  textAlign: 'center',
+  position: [0.5, 0.42],
+  opacity: 0,
+});
+
+$.parallel([
+  () => bar.animate(
+    { scale: 0, opacity: 0 },
+    { scale: 1, opacity: 0.9 },
+    { duration: '500ms', easing: 'easeOut' },
+  ),
+  () => title.animate(
+    { opacity: 0, position: [0.5, 0.48] },
+    { opacity: 1, position: [0.5, 0.42] },
+    { duration: '600ms', easing: 'easeOut' },
+  ),
+]);
+
+$.wait('300ms');
+
+$.addText({
+  text: 'pixels.',
+  fontSize: 9,
+  fontWeight: 900,
+  color: '#facc15',
+  textAlign: 'center',
+  position: [0.5, 0.65],
+  opacity: 0,
+  scale: 0.7,
+}).animate(
+  { opacity: 0, scale: 0.7 },
+  { opacity: 1, scale: 1 },
+  { duration: '450ms', easing: 'easeOut' },
+);
+
+$.wait('1.2s');
+
+return $;
+```
+
+## Where to next
+
+- [Core concepts](/docs/guide/core-concepts) — VideoJSON, layers, time, keyframes.
+- [Builder API](/docs/guide/builder-api) — the full fluent surface.
+- [Animation & keyframes](/docs/guide/animation-and-keyframes) — every way to push keyframes.
+- [Browser renderer](/docs/guide/rendering-browser) — encode MP4 from a browser tab.
+
+---
+Source: https://videoflow.dev/docs/guide/quick-start
+
+
+<!-- guide: rendering-browser -->
+# Rendering in the browser
+
+`@videoflow/renderer-browser` encodes frames with WebCodecs and muxes into MP4 inside a Web Worker. It runs in any recent Chrome, Edge, Firefox, or Safari and returns a `Blob` you can download, upload, or play back.
+
+## Minimal example
+
+```javascript
+import BrowserRenderer from '@videoflow/renderer-browser';
+import VideoFlow from '@videoflow/core';
+
+const $ = new VideoFlow({ width: 1920, height: 1080, fps: 30 });
+$.addText({ text: 'Exported from the browser' }).fadeIn('500ms');
+$.wait('2s');
+
+const json = await $.compile();
+const blob = await BrowserRenderer.render(json);
+
+// Download
+const url = URL.createObjectURL(blob);
+Object.assign(document.createElement('a'), { href: url, download: 'out.mp4' }).click();
+```
+
+## Options
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `signal` | — | `AbortSignal` — abort() cancels cleanly. |
+| `onProgress` | — | `(p: number) => void`. `p` is the fraction of frames done (`0..1`). |
+| `worker` | `true` | Set `false` to run on the main thread (debugging only). |
+| `verbose` | `false` | Log frame-level timing to the console. |
+| `bitrate` | auto | Bits per second. Auto scales with resolution. |
+| `codec` | `'avc'` | `avc | vp9 | hevc` where the browser supports it. |
+
+## Progress UI
+
+```javascript
+const ctrl = new AbortController();
+
+const blob = await BrowserRenderer.render(json, {
+  signal: ctrl.signal,
+  onProgress: (p) => {
+    // p is 0..1 (fraction of frames done)
+    progressBar.style.width = (p * 100).toFixed(1) + '%';
+  },
+});
+
+// Cancel from a UI button:
+cancelBtn.addEventListener('click', () => ctrl.abort());
+```
+
+> [!WARNING]
+> **Memory.** A 1080p60 30-second render at AVC ~8 Mbps fits comfortably. For longer clips or 4K, keep an eye on the Worker's memory — prefer chunked muxing (the renderer does this by default) over holding all encoded frames in RAM.
+
+## One-shot helper
+
+If you're already in a `VideoFlow` instance and don't need to hold the JSON, call `$.renderVideo()` — it compiles and picks a renderer for you.
+
+```javascript
+const blob = await $.renderVideo({ onProgress: (p) => console.log(`${Math.round(p * 100)}%`) });
+```
+
+---
+Source: https://videoflow.dev/docs/guide/rendering-browser
+
+
+<!-- guide: rendering-server -->
+# Rendering on a server
+
+`@videoflow/renderer-server` runs in Node. It launches headless Chromium via Playwright, loads the same browser renderer the browser package uses, and exports an MP4 — by default **entirely inside the browser** (WebCodecs + MediaBunny mux), with no ffmpeg dependency. An alternative ffmpeg pipeline is also available for hosts that need custom encoder flags.
+
+## Install
+
+```bash
+npm install @videoflow/core @videoflow/renderer-server
+npx playwright install chromium
+```
+
+Node 18+ is required. **ffmpeg is optional** — only install it system-wide if you plan to pass `{ ffmpeg: true }`.
+
+## To a file
+
+```javascript
+import ServerRenderer from '@videoflow/renderer-server';
+import VideoFlow from '@videoflow/core';
+
+const $ = new VideoFlow({ width: 1920, height: 1080, fps: 30 });
+// ... build flow ...
+const json = await $.compile();
+
+await ServerRenderer.render(json, {
+  outputType: 'file',
+  output: './out.mp4',
+  onProgress: (p) => console.log(`${Math.round(p * 100)}%`),
+});
+```
+
+## To a buffer
+
+```javascript
+const buffer = await ServerRenderer.render(json, { outputType: 'buffer' });
+// e.g. upload to S3 straight from memory
+await s3.send(new PutObjectCommand({ Bucket, Key, Body: buffer, ContentType: 'video/mp4' }));
+```
+
+## Options
+
+| Option | Default | Notes |
+| --- | --- | --- |
+| `ffmpeg` | `false` | When `true`, switches to the alternative per-frame screenshot → ffmpeg pipeline. Requires `ffmpeg` 4.4+ on `PATH`. |
+| `outputType` | `'buffer'` | `'file' | 'buffer'`. |
+| `output` | — | Path when `outputType: 'file'`. |
+| `signal` | — | `AbortSignal` for cancellation. |
+| `onProgress` | — | `(p: 0..1) => void`. |
+| `verbose` | `false` | Stream stage logs to the console. |
+
+## Pipelines
+
+|  | Browser export *(default)* | ffmpeg pipeline |
+| --- | --- | --- |
+| Encoder | WebCodecs (H.264) + MediaBunny mux | JPEG screenshots → libx264 via ffmpeg |
+| Audio | Encoded inside the browser, muxed with video | Rendered to WAV, muxed by ffmpeg |
+| System deps | Playwright Chromium only | Playwright + ffmpeg 4.4+ |
+| Speed | Several × faster — no per-frame round-trip | Slower; useful when you need ffmpeg flags |
+| Output | MP4 (H.264 + AAC) | MP4 (configurable via ffmpeg) |
+
+## Single frame and audio
+
+Need a thumbnail or a music-only export? The renderer exposes per-frame and audio-only methods on the instance:
+
+```javascript
+const renderer = new ServerRenderer(json);
+const jpeg = await renderer.renderFrame(120);   // Buffer (JPEG)
+const wav  = await renderer.renderAudio();      // Buffer (WAV) | null
+await renderer.cleanup();
+```
+
+## Inside an HTTP handler
+
+```javascript
+// Express / Node / Bun
+app.post('/render', async (req, res) => {
+  const json = req.body;
+  try {
+    const buffer = await ServerRenderer.render(json, { outputType: 'buffer' });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', 'attachment; filename="video.mp4"');
+    res.end(buffer);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+```
+
+> [!NOTE]
+> **Scaling.** Render jobs are CPU-heavy. In production, push them into a queue (BullMQ, SQS, Temporal) and cap concurrency to your CPU count. Call `closeSharedBrowser()` on shutdown — the package keeps a single Chromium instance alive across renders.
+
+---
+Source: https://videoflow.dev/docs/guide/rendering-server
+
+
+<!-- guide: time-formats -->
+# Time formats
+
+Every duration in VideoFlow passes through a single parser. You can give it a number, a string with a unit, a clock form, or a frame count — the parser returns seconds, and every downstream API works in seconds.
+
+## Supported inputs
+
+| Input | Seconds | Notes |
+| --- | --- | --- |
+| `5` | `5` | Any plain number is seconds. |
+| `0.5` | `0.5` | Fractions fine. |
+| `'2s'` | `2` | Seconds with suffix. |
+| `'500ms'` | `0.5` | Milliseconds. |
+| `'3m'` | `180` | Minutes. |
+| `'1h'` | `3600` | Hours. |
+| `'120f'` | depends on fps | At 30 fps → 4s. At 60 → 2s. |
+| `'00:30'` | `30` | mm:ss form. |
+| `'01:20:05'` | `4805` | hh:mm:ss form. |
+| `'00:05:10:15'` | depends on fps | hh:mm:ss:ff — ff is frames. |
+
+## Where you can pass them
+
+Anywhere the API accepts a duration. A partial list:
+
+```javascript
+$.wait('2s');
+$.wait(0.5);
+$.wait('120f');                                    // 120 frames
+
+layer.animate({...}, {...}, { duration: '750ms' });
+layer.animate({...}, {...}, { duration: '30f' });  // frame-exact
+layer.fadeIn('500ms');
+layer.fadeOut('1s');
+
+// Trim a clip's source — start 5s in, play sourceStart-relative.
+$.addVideo({}, { source, sourceStart: '00:00:05' });
+
+// Schedule a layer with the flow pattern instead of an explicit sourceDuration.
+$.wait('2s');
+const t = $.addText({ text: 'hi' });
+$.wait('3s');
+t.remove();
+```
+
+## Frames and fps
+
+Frame-count inputs (`'120f'`, `'hh:mm:ss:ff'`) are parsed against the project's `fps`. If your flow is 30 fps, `'30f'` is one second. If you change the fps after the fact, all frame-based durations shift accordingly.
+
+> [!NOTE]
+> **Tip.** Mix units for readability: `$.wait('1s'); $.wait('15f')` is clearer than `$.wait(1.5)` when the 15 frames matter.
+
+---
+Source: https://videoflow.dev/docs/guide/time-formats
+
+
+<!-- guide: transitions -->
+# Transitions
+
+Transitions are a declarative shortcut for common layer in/out motion. Set `transitionIn` and `transitionOut` on any layer; the builder expands them into the matching keyframe sequence when the layer starts and ends.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({ width: 512, height: 512, fps: 30, backgroundColor: '#0a0a1a' });
+
+const t = $.addText(
+  {
+    text: 'Slide + blur',
+    fontSize: 10, fontWeight: 800, color: '#fff',
+    position: [0.5, 0.5],
+  },
+  {
+    transitionIn:  { transition: 'slideUp',     duration: '700ms', easing: 'easeOut' },
+    transitionOut: { transition: 'blurResolve', duration: '500ms' },
+  },
+);
+$.wait('1.5s');
+t.remove();
+$.wait('500ms');
+return $;
+```
+
+## Built-in presets
+
+The renderer ships **27 transition presets**. Each one is a single registered name you reference under `transition`; pass preset-specific knobs through `params`.
+
+| Group | Presets |
+| --- | --- |
+| Opacity / scale | `fade`, `zoom`, `overshootPop`, `radialZoom` |
+| Slide | `slideUp`, `slideDown`, `slideLeft`, `slideRight` |
+| Blur | `blurResolve`, `motionBlurSlide` |
+| 3D / spin | `rotate3dY`, `tilt3d`, `spin` |
+| Glitch / RGB | `glitchResolve`, `rgbSplitSnap` |
+| Slice / dissolve | `sliceAssemble`, `noiseDissolve`, `burnDissolve` |
+| Wipe / reveal | `wipeReveal`, `scanReveal`, `lightSweepReveal`, `lensSnap` |
+| Type | `typewriter`, `scrambleDecode`, `trackingExpand`, `trackingContract`, `numberCountUp` |
+
+## Options
+
+```javascript
+const t = $.addText(
+  { text: 'Announce' },
+  {
+    transitionIn: {
+      transition: 'slideUp',
+      duration: '700ms',
+      easing: 'easeOut',
+      params: { distance: 0.1 }, // preset-specific knobs go in params
+    },
+    transitionOut: {
+      transition: 'blurResolve',
+      duration: '500ms',
+    },
+  },
+);
+$.wait('2s');
+t.remove(); // triggers transitionOut
+```
+
+> [!TIP]
+> **Transitions vs `.animate()`.** Transitions are a shortcut. If you want something custom (two axes at different speeds, colour shifts, effect-parameter interpolation), use `.animate()` directly.
+
+---
+Source: https://videoflow.dev/docs/guide/transitions
+
+
+<!-- guide: your-first-video -->
+# Your first video
+
+The snippet below is a complete, runnable VideoFlow composition. Press play on the preview to see it. The sandbox exposes the `VideoFlow` class globally and expects you to `return $` at the end.
+
+```js
+// LiveFlowDemo
+const $ = new VideoFlow({
+  name: 'Hello world',
+  width: 512, height: 512, fps: 30,
+  backgroundColor: '#0f0f23',
+});
+
+const title = $.addText({
+  text: 'Hello,\nVideoFlow!',
+  fontSize: 10,
+  fontWeight: 800,
+  lineHeight: 1.15,
+  textAlign: 'center',
+  color: '#ffffff',
+});
+
+title.animate({ opacity: 0, scale: 0.85 }, { opacity: 1, scale: 1 }, { duration: '800ms', easing: 'easeOut' });
+$.wait('1.5s');
+title.fadeOut('500ms');
+$.wait('700ms');
+
+return $;
+```
+
+## Line by line
+
+1. `new VideoFlow({...})` — create a composition. Set `width`, `height`, `fps`, and a default `backgroundColor`.
+2. `$.addText({...})` — push a text layer. Returns the layer instance so you can animate it.
+3. `title.animate(from, to, opts)` — push a pair of keyframes. By default, the flow pointer advances by `duration`.
+4. `$.wait('1.5s')` — advance the flow pointer without adding layers.
+5. `return $` — the sandbox compiles the returned instance to VideoJSON.
+
+## Export it
+
+Outside the playground, compile and render with any renderer:
+
+```javascript
+import VideoFlow from '@videoflow/core';
+import BrowserRenderer from '@videoflow/renderer-browser';
+
+const $ = new VideoFlow({ width: 1280, height: 720, fps: 30 });
+// ... build your flow ...
+
+const json = await $.compile();
+const blob = await BrowserRenderer.render(json, {
+  onProgress: (p) => console.log(`${Math.round(p.percent)}%`),
+});
+
+const url = URL.createObjectURL(blob);
+window.open(url);
+```
+
+## Where to next
+
+- [Builder API](/docs/guide/builder-api) — the full fluent surface.
+- [Animation & keyframes](/docs/guide/animation-and-keyframes) — how `.animate()` works.
+- [Text layers](/docs/guide/layer-text) — every property on the text layer.
+
+---
+Source: https://videoflow.dev/docs/guide/your-first-video
+
+
+---
+
+## API reference
+
+<!-- api: core -->
+# @videoflow/core — API reference
+
+The builder, layer classes, Time parser, and VideoJSON compiler.
+
+## Classes
+
+### AudioLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `AuditoryLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `AudioLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: AuditoryLayerProperties, settings: AudioLayerSettings): AudioLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+### CaptionsLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `TextualLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `CaptionsLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: TextualLayerProperties, settings: CaptionsLayerSettings): CaptionsLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+### ImageLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `MediaLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `MediaLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: MediaLayerProperties, settings: MediaLayerSettings): ImageLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+### ShapeLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `ShapeLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `ShapeLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: ShapeLayerProperties, settings: ShapeLayerSettings): ShapeLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+### TextLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `TextLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `BaseLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: TextLayerProperties, settings: BaseLayerSettings): TextLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+### VideoFlow
+
+#### Properties
+
+- `flow`: `Action[]` — The sequential list of flow actions.
+This is the "program" that gets compiled into the video JSON.
+- `layers`: `BaseLayer[]` — All layers created through the flow API.
+Used during compilation to look up layer metadata.
+- `settings`: `Required<ProjectSettings>` — Project settings (dimensions, fps, defaults).
+- `loadedMedia`
+
+#### Methods
+
+- `constructor(settings: ProjectSettings): VideoFlow`
+- `addAudio(properties?: AuditoryLayerProperties, settings?: AudioLayerSettings, options?: AddLayerOptions): AudioLayer` — Add an audio layer from a URL or file path.
+- `addCaptions(properties?: TextualLayerProperties, settings?: CaptionsLayerSettings, options?: AddLayerOptions): CaptionsLayer` — Add a captions layer with pre-defined timed captions.
+- `addImage(properties?: MediaLayerProperties, settings?: MediaLayerSettings, options?: AddLayerOptions): ImageLayer` — Add an image layer from a URL or file path.
+- `addLayer(LayerClass: (parent: VideoFlow, properties?: any, settings?: any) => T, properties: Record<string, any>, settings: Record<string, any>, options: AddLayerOptions): T` — Add a layer of the given class to the flow.
+- `addShape(properties?: ShapeLayerProperties, settings?: ShapeLayerSettings, options?: AddLayerOptions): ShapeLayer` — Add a vector shape layer (rectangle, ellipse, polygon, or star).
+- `addText(properties?: TextLayerProperties, settings?: BaseLayerSettings, options?: AddLayerOptions): TextLayer` — Add a text layer.
+- `addVideo(properties?: VideoLayerProperties, settings?: MediaLayerSettings, options?: AddLayerOptions): VideoLayer` — Add a video layer from a URL or file path.
+- `compile(): Promise<VideoJSON>` — Compile the flow into a VideoJSON object.
+
+This method:
+1. Walks the flow actions sequentially, maintaining a time pointer.
+2. Converts all time values to frame numbers.
+3. Builds keyframe arrays from `set` / `animate` actions.
+4. Calculates the total project duration.
+5. Returns the complete JSON ready for rendering.
+
+Media metadata (image dimensions, video/audio duration) is resolved
+during compilation so that `waitFor: 'finish'` and auto-duration work
+correctly.
+- `group(properties: VisualLayerProperties, settings: BaseLayerSettings, fn: (group: GroupLayer) => void, options: AddLayerOptions): GroupLayer` — Add a layer group — a container that nests other layers and treats them
+as one. Inside `fn`, the flow's time pointer resets to `0` (relative to
+the group's start), so children's timing is authored independently of
+where the group sits on the project timeline. The flow pointer of the
+outer scope advances by the group's `waitFor` (default `'finish'` = the
+group's full footprint).
+
+The group itself is a VisualLayer, so its `position`, `scale`,
+`rotation`, `opacity`, filters, transitions and effects all apply to the
+composited child sub-tree.
+
+```ts
+const card = $.group({ position: [0.5, 0.5], scale: 1 }, {}, () => {
+  $.addShape({ width: 60, height: 30, fill: '#fff' });
+  $.addText({ text: 'Hello' });
+});
+card.animate({ scale: 1 }, { scale: 1.1 }, { duration: '500ms' });
+```
+
+Group timing is auto-derived: `startTime` defaults to the current flow
+time, and `sourceDuration` defaults to the latest child's end (so a
+group whose last child finishes at +5s lasts 5s). Both can still be
+overridden in `settings` if you need to.
+- `parallel(funcs: () => void[]): this` — Execute multiple sequences of actions in parallel.
+
+Each function receives its own timeline; the overall flow pointer
+advances to the end of the longest parallel branch.
+
+```ts
+$.parallel([
+  () => { text.animate({opacity:0},{opacity:1},{duration:'1s'}); },
+  () => { bg.animate({filterBlur:0},{filterBlur:5},{duration:'2s'}); },
+]);
+```
+- `pushAction(action: Action): void` — Push a raw action onto the current flow pointer.
+ Used by layers to record their actions.
+- `renderAudio(): Promise<any>` — Compile and render the full audio track of the video.
+
+Automatically detects the environment and uses the appropriate renderer.
+The renderer package must be installed separately.
+- `renderFrame(frame: number): Promise<any>` — Compile and render a single frame of the video.
+
+Automatically detects the environment and uses the appropriate renderer.
+The renderer package must be installed separately.
+- `renderVideo(options: Record<string, any>): Promise<any>` — Compile and render the video in one call.
+
+Automatically detects the environment and uses the appropriate renderer:
+- **Browser** (window/DOM present) → `@videoflow/renderer-browser`
+- **Node.js** (no DOM, `process.versions.node` exists) → `@videoflow/renderer-server`
+
+The renderer package must be installed separately.
+- `wait(time: Time): this` — Pause the timeline for the given duration before the next action.
+
+### VideoLayer
+
+#### Properties
+
+- `id`: `string` — Unique identifier for this layer instance.
+- `properties`: `VideoLayerProperties` — Layer properties — the visual/auditory attributes that can be animated.
+
+Each property key maps to either a static value or an array of
+Keyframe objects describing its animation over time.
+- `settings`: `MediaLayerSettings` — Layer settings (timing, enable state, etc.).
+- `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
+- `endFrame`
+- `endTime`
+- `sourceDurationFrames`
+- `sourceStartFrames`
+- `startFrame`
+- `timelineDuration`
+- `timelineDurationFrames`
+- `defaultProperties`
+- `defaultSettings`
+- `propertiesDefinition`
+- `settingsKeys`
+
+#### Methods
+
+- `constructor(parent: any, properties: VideoLayerProperties, settings: MediaLayerSettings): VideoLayer`
+- `animate(from: Record<string, any>, to: Record<string, any>, settings: { duration?: Time; easing?: Easing; wait?: boolean }): this` — Animate properties from one state to another.
+- `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
+- `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
+- `hide(): this` — Hide the layer (set `visible` to `false`).
+- `remove(): this` — Remove this layer at the current flow position.
+
+Once removed, calling any further flow method on this layer throws.
+- `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
+- `show(): this` — Show the layer (set `visible` to `true`).
+- `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
+
+Properties stored as keyframe arrays are converted into the
+`animations` array, while static properties go into `properties`.
+
+## Functions
+
+### formatTime
+
+Format a duration in seconds as a human-readable `mm:ss` or `hh:mm:ss` string.
+
+```ts
+formatTime(seconds: number): string
+```
+
+**Parameters**
+
+- `seconds` — `number`
+
+**Returns** `string`
+
+### framesToTime
+
+Convert a frame number back to seconds.
+
+```ts
+framesToTime(frames: number, fps: number): number
+```
+
+**Parameters**
+
+- `frames` — `number`: Frame number.
+- `fps` — `number`: Frames per second.
+
+**Returns** `number`
+
+### parseTime
+
+Parse a flexible Time value into seconds.
+
+Accepted formats:
+- `number` — seconds directly
+- `"5"` — seconds (unitless string)
+- `"5s"` / `"2m"` / `"1h"` / `"500ms"` — seconds / minutes / hours / ms
+- `"120f"` — frames, requires `fps` parameter
+- `"mm:ss"` / `"hh:mm:ss"` / `"hh:mm:ss:ff"` — colon-separated
+
+```ts
+parseTime(time: Time, fps: number): number
+```
+
+**Parameters**
+
+- `time` — `Time`: The value to parse.
+- `fps` — `number`: Frames per second (needed when the value ends with `"f"` or
+              contains a frames component in `hh:mm:ss:ff`).
+
+**Returns** `number`
+
+### probeMediaDuration
+
+Probe the intrinsic duration of a media source (in seconds).
+
+Environment-aware:
+- **Browser**: spins up a transient `<video>` or `<audio>` element, waits
+  for `loadedmetadata`, reads `.duration`, then disposes of the element.
+- **Node**: dynamically imports `child_process` and spawns `ffprobe -v error
+  -of json -show_format <source>`, parsing `format.duration` from the JSON.
+  Requires `ffprobe` to be installed and available on PATH (the same binary
+  `@videoflow/renderer-server` already depends on).
+
+Throws on any failure (missing binary, network error, decode failure).
+Callers should catch and decide whether to fall back to "unknown duration".
+
+```ts
+probeMediaDuration(source: string, kind: "video" | "audio"): Promise<number>
+```
+
+**Parameters**
+
+- `source` — `string`: URL or filesystem path to the media file.
+- `kind` — `"video" | "audio"`: `'video'` or `'audio'` (only matters for the browser path).
+
+**Returns** `Promise<number>`
+
+### timeToFrames
+
+Convert a Time value to a frame number.
+
+```ts
+timeToFrames(time: Time, fps: number): number
+```
+
+**Parameters**
+
+- `time` — `Time`: Flexible time value.
+- `fps` — `number`: Frames per second.
+
+**Returns** `number`
+
+## Type aliases
+
+### Action
+
+Union of all possible flow actions produced by the VideoFlow builder.
+
+The flow is a sequential list of these actions that gets compiled into the
+final VideoJSON by the `compile()` method.
+
+```ts
+Action: { duration: Time; statement: "wait" } | { actions: Action[][]; statement: "parallel" } | { id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "addLayer"; type: string } | { actions: Action[]; id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "group" } | { id: Id; statement: "removeLayer" } | { id: Id; statement: "set"; value: Record<string, any> } | { from: Record<string, any>; id: Id; settings: { duration: Time; easing?: Easing; wait?: boolean }; statement: "animate"; to: Record<string, any> }
+```
+
+### AddLayerOptions
+
+Options passed when adding a layer to the flow.
+
+- `waitFor` controls how long the flow pointer advances after the layer is
+  added. `'finish'` waits for the layer's full duration; a Time
+  value waits for that specific amount.
+- `index` sets the visual stacking order (negative = back, positive = front).
+
+### Animation
+
+A single animation definition attached to a layer.
+
+Each animation targets one property and defines a sequence of keyframes
+with an optional default easing function.
+
+### AudioLayerProperties
+
+```ts
+AudioLayerProperties: AuditoryLayerProperties
+```
+
+### AudioLayerSettings
+
+```ts
+AudioLayerSettings: AuditoryLayerSettings & { source: string }
+```
+
+### CaptionEntry
+
+A single caption entry with timing information.
+
+### CaptionsLayerProperties
+
+```ts
+CaptionsLayerProperties: TextualLayerProperties
+```
+
+### CaptionsLayerSettings
+
+```ts
+CaptionsLayerSettings: TextualLayerSettings & { captions: CaptionEntry[]; maxCharsPerLine?: number; maxLines?: number }
+```
+
+### Easing
+
+Easing functions supported by the animation system.
+
+- `step`      — hold the start value until the next keyframe (no interpolation)
+- `linear`    — constant rate of change
+- `easeIn`    — starts slow, accelerates
+- `easeOut`   — starts fast, decelerates
+- `easeInOut` — slow at both ends, fast in the middle
+
+```ts
+Easing: "step" | "linear" | "easeIn" | "easeOut" | "easeInOut"
+```
+
+### Id
+
+Unique identifier for a layer (UUID v4).
+
+```ts
+Id: string
+```
+
+### ImageLayerProperties
+
+```ts
+ImageLayerProperties: MediaLayerProperties
+```
+
+### ImageLayerSettings
+
+```ts
+ImageLayerSettings: MediaLayerSettings
+```
+
+### Keyframe
+
+An animation keyframe.
+
+The `time` field is always in *seconds*, expressed in **source media time**
+(i.e. an absolute position inside the source clip, measured from the start
+of the source). For non-media layers (text, captions, …) source time
+collapses to "elapsed seconds since the layer started" because there is no
+external source.
+
+### LayerEffectJSON
+
+A single effect entry on a layer. `effect` names a shader previously
+registered with `Renderer.registerEffect(name, glsl, paramsDefinitions)`.
+`params` holds the uniform values used when the shader runs.
+
+A layer may declare multiple effects; they run in array order, each pass
+reading the previous pass's output.
+
+`enabled` defaults to `true` when absent. Setting it to `false` keeps the
+entry in the JSON (so editors can preserve user configuration) but skips
+the pass entirely at render time — equivalent to removing the entry, but
+non-destructive.
+
+### LayerJSON
+
+A single layer as it appears in the compiled JSON model.
+
+`track` is optional editor metadata: it groups layers into rows in a timeline
+UI. When set, the renderer also uses it to z-order the layer (`z-index =
+track + 1`); layers without a `track` are stacked by document order with no
+explicit z-index. Editors are free to pack layers into tracks and write the
+assignment back here; non-editor consumers can ignore the field entirely.
+
+`transitionIn` / `transitionOut` attach registered transition presets to the
+layer's timeline edges; they modify the final (post-keyframe) properties
+during the transition window. `effects` attaches registered GLSL effects
+that run on the rasterized layer texture before it is composited.
+
+`children` is only populated when `type === 'group'`. A group layer has no
+source content of its own — it composites its children onto a private
+project-sized surface, then runs the group's own transform / opacity /
+filter / transition / effects pipeline on that surface, exactly as if the
+group were a single visual layer. Children's `settings.startTime` are
+**absolute timeline seconds** (resolved at compile time from their
+group-relative positions inside the flow), so the runtime can look up a
+child's state at any frame without knowing about the enclosing group.
+
+### LayerSettingsJSON
+
+Settings block for a layer inside the compiled JSON.
+
+VideoFlow distinguishes three time contexts:
+
+1. **Source media time** — absolute time inside the source clip
+   (`[0, mediaDuration]`). `sourceStart`, `sourceEnd`, `mediaDuration` and
+   keyframe `time` values all live here.
+2. **Source segment time** — time within the playable segment
+   (`[0, sourceDuration]`). Derived as `sourceTime − sourceStart`.
+3. **Timeline time** — wall-clock time on the project timeline
+   (`[0, projectDuration]`). `startTime`, `endTime` and the playback head
+   live here.
+
+`speed` stretches the segment in the timeline:
+`timelineDuration = sourceDuration / speed`. So `speed = 2` plays the
+segment twice as fast and occupies half as much timeline.
+
+Different layer types extend this with additional keys (e.g. `source` for
+media layers, `captions` for the captions layer).
+
+### LayerTransitionJSON
+
+A transition attached to the start or end of a layer's timeline footprint.
+
+`transition` names a function previously registered with
+`Renderer.registerTransition(name, fn)`. `duration` is in seconds and must
+fit inside the layer's own timeline duration — if `transitionIn.duration +
+transitionOut.duration` exceeds the layer duration, both are scaled down
+proportionally by the renderer.
+
+`params` is passed verbatim to the transition function as its third argument
+and is free-form per preset (e.g. `{ amount: 8 }` for a blur preset).
+
+### MediaEntry
+
+MediaCache — global, refcounted, time-evicted cache for media sources.
+
+One entry per source URL holds the fetched `Blob` plus a single object URL
+shared across every consumer (layers, audio render, compile-time probe).
+Consumers `acquire()` an entry to take a reference and `release()` when
+they no longer need it. When the refCount drops to zero the entry is
+scheduled for eviction after a short grace period (default 5 s) so that
+back-to-back loads — most importantly the compile → renderer handoff and
+`loadVideo()` reloads — reuse the bytes instead of re-fetching them.
+
+Usage:
+```ts
+import { loadedMedia } from '@videoflow/core';
+
+const entry = await loadedMedia.acquire(url);
+use(entry.objectUrl);
+loadedMedia.release(url);
+```
+
+### ProjectSettings
+
+Project-level settings provided when creating a VideoFlow instance.
+
+These control the canvas dimensions, frame rate, visual defaults, and
+logging behaviour.
+
+### PropertyDefinition
+
+Metadata describing a single property on a layer type.
+
+Used internally by the rendering system to know how to apply, interpolate,
+and map properties onto CSS.
+
+### RenderOptions
+
+Rendering options common to both browser and server renderers.
+
+### ShapeLayerProperties
+
+```ts
+ShapeLayerProperties: VisualLayerProperties & { cornerRadius?: number | string; fill?: string; height?: number | string; innerRadius?: number; sides?: number; strokeAlignment?: StrokeAlignment; strokeColor?: string; strokeDash?: number | string; strokeGap?: number | string; strokeLinejoin?: StrokeLinejoin; strokeWidth?: number | string; width?: number | string }
+```
+
+### ShapeLayerSettings
+
+```ts
+ShapeLayerSettings: VisualLayerSettings & { shapeType?: ShapeType }
+```
+
+### ShapeType
+
+```ts
+ShapeType: "rectangle" | "ellipse" | "polygon" | "star"
+```
+
+### TextLayerProperties
+
+```ts
+TextLayerProperties: TextualLayerProperties & { text?: string }
+```
+
+### TextLayerSettings
+
+```ts
+TextLayerSettings: TextualLayerSettings
+```
+
+### Time
+
+A flexible time value accepted by the VideoFlow API.
+
+Supported formats:
+- `number` — interpreted as seconds (e.g. `5` = 5 seconds)
+- `string` (no unit) — also seconds (e.g. `"5"` = 5 seconds)
+- `string` with unit:
+  - `"5s"`   → 5 seconds
+  - `"2m"`   → 2 minutes
+  - `"1h"`   → 1 hour
+  - `"120f"` → 120 frames
+  - `"500ms"` → 500 milliseconds
+  - `"01:30"` → 1 min 30 sec (mm:ss)
+  - `"01:02:30"` → 1 hr 2 min 30 sec (hh:mm:ss)
+  - `"01:02:30:15"` → hh:mm:ss:ff (frames at the end)
+
+```ts
+Time: string | number
+```
+
+### VideoJSON
+
+The top-level compiled video JSON model.
+
+This is the format accepted by both the browser and server renderers.
+
+`tracks` is optional editor metadata: it mirrors `LayerJSON.track` with
+per-row display state. Non-editor consumers should ignore it.
+
+### VideoLayerProperties
+
+```ts
+VideoLayerProperties: MediaLayerProperties & AuditoryLayerProperties
+```
+
+### VideoLayerSettings
+
+```ts
+VideoLayerSettings: MediaLayerSettings
+```
+
+
+---
+Source: https://videoflow.dev/docs/api/core
+
+
+<!-- api: renderer-browser -->
+# @videoflow/renderer-browser — API reference
+
+Encode VideoJSON to an MP4 Blob inside the browser via WebCodecs.
+
+## Classes
+
+### BrowserRenderer
+
+#### Properties
+
+- `currentFrame`: `number` — Frame being rendered right now (for dedup / cancellation).
+- `layers`: `RuntimeBaseLayer[]` — Runtime layer wrappers.
+- `loadedFonts`: `Record<string, string>` — Cache of loaded Google Fonts — maps font name → stylesheet URL.
+
+#### Methods
+
+- `constructor(videoJSON: VideoJSON): BrowserRenderer`
+- `captureFrame(frame: number): Promise<OffscreenCanvas>` — Capture a single frame onto the shared render canvas.
+
+1. Ensure all layer DOMs reflect this frame (via `renderFrame`).
+2. For each enabled, in-range layer, pick the cheapest path:
+   - **Fast path (tier-1 + no effects):** paint the layer's `$element`
+     directly onto the final canvas via `drawDirectInto` — skips the
+     per-layer surface copy entirely.
+   - **Normal path:** ask the `LayerRasterizer` for a project-sized
+     bitmap (cached when the layer's final props match the previous
+     render), pipe through the WebGL effect compositor if the layer
+     declares effects, then `drawImage` onto the final canvas.
+- `compositeLayerInto(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: RuntimeBaseLayer, frame?: number): Promise<void>` — Composite one layer onto `ctx` (the group's flatten canvas, or any
+other caller-owned target sized to the project).
+
+- **Fast path:** when the layer is tier-1 and has no effects, paints
+  the layer's `$element` straight onto `ctx` via `drawDirectInto` —
+  no per-layer surface, no extra blit.
+- **Normal path:** rasterizes the layer (cached when possible), runs
+  the WebGL effect compositor if effects are declared, then
+  `drawImage`s the result onto `ctx`.
+
+Used by `RuntimeGroupLayer.renderFrame` to flatten each child onto the
+group's canvas — the same path that `captureFrame` uses for top-level
+layers.
+- `destroy(): void` — Tear down the renderer: destroy every runtime layer (releases media
+elements, decoders, audio buffers), remove the hidden `<div data-renderer>`
+from the DOM, drop the shared render canvas, and dispose the rasterizer's
+per-layer surfaces and the WebGL effect compositor's GL context. Call this
+after the last `captureFrame` / `exportVideo` to avoid leaking GL contexts
+across repeated renders.
+- `exportVideo(options: RenderOptions): Promise<Blob>` — Export the full video as an MP4 blob using MediaBunny.
+
+When `options.worker` is not `false` (the default), SVG rasterisation and
+MediaBunny encoding are offloaded to a dedicated Web Worker so that the
+main thread stays responsive.  Set `worker: false` to encode entirely on
+the main thread (useful when Workers are unavailable).
+- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Look up the full property definitions for a layer type, or a single property.
+Used by runtime layers to determine CSS mapping and defaults.
+- `getVirtualLayerHost(): Node` — Where group layers should park their hidden child host. For the export
+renderer we use `document.body` directly so the children's CSS resolves
+against the page's layout context (the same context the main `$canvas`
+uses).
+- `loadFont(fontName: string): Promise<void>` — Load a Google Font by name.
+
+Constructs the exact CSS2 URL for the font using the bundled Google
+Fonts registry (axis ranges, italic support, weight variants) so the
+request always matches what the API expects — preventing 400 errors
+that arise from requesting unsupported axis combinations.
+- `renderAudio(): Promise<AudioBuffer | null>` — Render all audio layers into a single AudioBuffer using OfflineAudioContext.
+
+Each audio/video layer creates a buffer source node with volume and pan
+keyframe automation, connected to the context's destination.
+- `renderFrame(frame: number, force: boolean): Promise<void>` — Render a single frame to the DOM.
+
+Each enabled layer computes its interpolated properties at the given
+frame and applies them to its DOM element.
+- `registerEffect(name: string, glsl: string, params: Record<string, EffectParamDefinition>): void` — Register a GLSL effect. `glsl` is the fragment-shader body implementing
+`vec4 effect(sampler2D tex, vec2 uv, vec2 resolution)`; each entry in
+`params` becomes a `u_<name>` uniform. Like transitions, the registry is
+shared with `DomRenderer`.
+- `registerTransition(name: string, fn: TransitionFn): void` — Register a transition preset. The same registry backs both
+`BrowserRenderer` and `DomRenderer`, so a transition registered here is
+immediately usable in live preview too.
+- `render(videoJSON: VideoJSON, options: RenderOptions): Promise<Blob | ArrayBuffer>` — Render a VideoJSON to a video Blob or ArrayBuffer.
+
+This is the primary public API.  It creates a BrowserRenderer instance,
+initialises all layers, renders every frame, encodes the result via
+MediaBunny, and returns the output.
+
+## Functions
+
+### getEffect
+
+Retrieve a registered effect.
+
+```ts
+getEffect(name: string): EffectDefinition | undefined
+```
+
+**Parameters**
+
+- `name` — `string`
+
+**Returns** `EffectDefinition | undefined`
+
+### getTransition
+
+Look up a previously registered transition's function.
+
+```ts
+getTransition(name: string): TransitionFn | undefined
+```
+
+**Parameters**
+
+- `name` — `string`
+
+**Returns** `TransitionFn | undefined`
+
+### listEffects
+
+List registered effect names.
+
+```ts
+listEffects(): string[]
+```
+
+**Returns** `string[]`
+
+### listTransitions
+
+List registered transition names.
+
+```ts
+listTransitions(): string[]
+```
+
+**Returns** `string[]`
+
+### registerEffect
+
+Register an effect. Pass either:
+- a string `glsl` body for single-pass effects, or
+- an array of `EffectPass` for multi-pass effects.
+
+Last registration wins.
+
+```ts
+registerEffect(name: string, glslOrPasses: string | EffectPass[], params: Record<string, EffectParamDefinition>): void
+```
+
+**Parameters**
+
+- `name` — `string`
+- `glslOrPasses` — `string | EffectPass[]`
+- `params` — `Record<string, EffectParamDefinition>`
+
+### registerTransition
+
+Register a transition preset under `name`. Last registration wins.
+
+`options.defaultEasing` sets the easing applied to `p` when the layer's
+`transitionIn` / `transitionOut` spec does not specify one. Layers can
+always override it via the `easing` field of their transition spec.
+
+```ts
+registerTransition(name: string, fn: TransitionFn, options: RegisterTransitionOptions): void
+```
+
+**Parameters**
+
+- `name` — `string`
+- `fn` — `TransitionFn`
+- `options` — `RegisterTransitionOptions`
+
+## Type aliases
+
+### EffectDefinition
+
+A registered effect. Has either `glsl` (single-pass) or `passes`.
+
+### EffectParamDefinition
+
+Metadata describing a single effect parameter.
+
+`default` is used when the layer's JSON does not override it. For `color`,
+the value is a CSS colour string (`"#rrggbb"` / `"rgba(..)"`), converted to
+a `vec4` by the compositor at draw time. For `option`, the value is one of
+the keys of `fieldConfig.options`; the compositor resolves it to its index
+and binds it as an `int u_<name>` uniform.
+
+`fieldConfig` carries all editor UI hints — step, integer coercion, unit,
+option labels — and also drives runtime unit conversion (`unit: 'em'` →
+pixels). See EffectParamFieldConfig.
+
+### EffectParamType
+
+Supported GL uniform types for effect parameters.
+
+```ts
+EffectParamType: "float" | "int" | "bool" | "vec2" | "vec3" | "vec4" | "color" | "option"
+```
+
+### RegisterTransitionOptions
+
+Options accepted by registerTransition.
+
+### TransitionDefinition
+
+Full transition entry as stored in the registry.
+
+### TransitionFn
+
+A transition implementation.
+
+- `p`          — signed progress, `-1..+1` as described above (already eased).
+- `properties` — the layer's resolved, unit-ized properties at this frame.
+                 Mutate in place or return a new object; either works.
+- `params`     — free-form per-preset parameters from `LayerTransitionJSON.params`.
+- `context`    — per-call context (e.g. seed for deterministic randomness).
+
+```ts
+TransitionFn: (p: number, properties: Record<string, any>, params: Record<string, any>, context: TransitionContext) => Record<string, any>
+```
+
+
+---
+Source: https://videoflow.dev/docs/api/renderer-browser
+
+
+<!-- api: renderer-dom -->
+# @videoflow/renderer-dom — API reference
+
+Live, scrubbable player that paints VideoJSON into a DOM host.
+
+## Classes
+
+### DomRenderer
+
+#### Properties
+
+- `currentFrame`: `number` — Current frame rendered.
+- `layerById`: `Map<string, RuntimeBaseLayer>` — Fast id → runtime layer lookup, kept in sync with `layers`.
+- `layers`: `RuntimeBaseLayer[]` — Runtime layer instances.
+- `onFrame`: `(frame: number) => void | null` — Optional callback fired whenever a new frame is rendered. Set this
+externally to keep a UI (seek bar, time label, …) in sync with playback.
+- `playing`: `boolean` — Whether playback is active.
+- `currentTime`
+- `duration`
+- `fps`
+- `totalFrames`
+
+#### Methods
+
+- `constructor(host: HTMLElement): DomRenderer`
+- `addLayer(layerJSON: LayerJSON, index?: number): Promise<void>` — Insert a new layer into the video at the given index (defaults to end).
+
+The new layer is constructed, initialized, and mounted into the existing
+`$canvas` — other layers' DOM elements are left untouched.
+- `compositeLayerInto(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: RuntimeBaseLayer, frame?: number): Promise<void>` — Rasterize a single layer (cached when possible), pipe it through the
+WebGL effect compositor if it declares effects, and `drawImage` the
+result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
+each child onto the group's canvas.
+- `destroy(clearShadow: boolean): void` — Tear down the renderer: stop playback (also exits smooth-playback mode
+on every video layer), destroy every runtime layer (releases media
+elements, decoders, and `requestVideoFrameCallback` subscriptions),
+clear the per-layer effect canvases, dispose the rasterizer's per-layer
+surfaces and the WebGL effect compositor's GL context, and finally
+empty the shadow DOM. Pending queued mutations registered before
+destroy resolve to no-ops via the `destroyed` guard.
+- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Return the full propertiesDefinition for a layer type.
+- `getVirtualLayerHost(): Node` — Where group layers should park their hidden child host. We use the
+shadow root so renderer CSS (which is shadow-scoped) still applies to
+the group's children — without this, descendants would lose their
+`--vw` / `--project-*` context and render at the wrong scale.
+- `loadFont(fontName: string): Promise<void>` — Load a Google Font and make it available to the document (and shadow DOM).
+- `loadVideo(videoJSON: VideoJSON): Promise<void>` — Load a compiled VideoJSON into the renderer.
+
+Sets up the shadow DOM, creates runtime layers, initialises media, and
+renders frame 0.
+- `play(options: { fpsCallback?: (fps: number) => void }): Promise<void>` — Start real-time playback from the current frame with audio sync.
+
+Renders audio to WAV, creates an `Audio` element, and advances frames
+inside a `requestAnimationFrame` loop while nudging the audio
+`playbackRate` to keep video and audio in sync.
+
+Each layer is switched into its smooth-playback path via
+RuntimeBaseLayer.enterSmoothPlayback at the start of the loop
+— for video layers this trades the per-frame `currentTime` seek for a
+native `<video>.play()` plus drift correction, eliminating the seek
+cost that otherwise dominates live-preview frame budget. The path is
+reverted on `stop()` / `seek()` so scrubbing stays frame-accurate.
+- `removeLayer(id: string): Promise<void>` — Remove a layer from the video.
+
+Destroys the layer (releasing its media ref) and detaches its DOM
+element. Other layers are untouched.
+- `renderAudio(): Promise<AudioBuffer | null>` — Render the full audio track as an AudioBuffer.
+- `renderFrame(frame: number, force: boolean): Promise<void>` — Render a specific frame to the DOM.
+
+Skips if already at that frame (unless forced), queues if a render is
+already in progress.
+- `reorderLayers(orderedIds: string[]): Promise<void>` — Reorder layers to match the given id sequence.
+
+The runtime layers and the backing `videoJSON.layers` array are reordered,
+and the layers' `$element`s are re-appended to `$canvas` in the new order.
+For layers without a `track`, DOM order drives paint order. Layers with a
+`track` carry an explicit z-index (`track + 1`) written in
+`applyProperties`, so reordering them in the array without changing their
+`track` only changes DOM order, not visual stacking. No media is touched.
+- `seek(frame: number): Promise<void>` — Seek to a frame.
+
+If playback is active, stops it (which exits smooth mode), renders the
+target frame deterministically through the seek path, then restarts
+playback (re-entering smooth mode). When playback is not active, the
+frame is decoded by the seek path directly — pixel-deterministic, the
+same path used by export.
+- `stop(): void` — Stop playback.
+
+Bumps the play-token (so any loop suspended in `await renderAudio()` /
+`requestAnimationFrame` exits without running its cleanup), tears down
+the `Audio` element, and reverts every layer's smooth-playback hook so
+the next `renderFrame` (typically from `seek()` or `currentTime =`)
+decodes the exact requested timestamp instead of whatever the smooth
+decoder happened to be presenting.
+- `updateLayer(id: string, patch: { animations?: Animation[]; effects?: any[]; properties?: Record<string, any>; settings?: Partial<LayerSettingsJSON>; transitionIn?: any; transitionOut?: any }): Promise<void>` — Apply a property / settings / animations patch to a single layer.
+
+- `settings` is shallow-merged into `layer.json.settings`.
+- `properties` replaces `layer.json.properties` wholesale so keys removed
+  by the editor (e.g. via a reset-to-default) are actually cleared.
+  Callers should pass the full post-mutation properties object.
+- `animations` replaces the array wholesale (same rationale — callers
+  hold the diffing logic because per-keyframe reconciliation is cheap to
+  do in editor state).
+
+If `settings.source` changed, the layer's media is re-initialized via
+`layer.initialize()` — callers should debounce rapid source swaps.
+
+If a text layer's `fontFamily` is among the patched properties, the font
+is loaded into the shadow DOM before the frame is re-rendered.
+- `updateVideo(patch: { backgroundColor?: string; duration?: number; height?: number; name?: string; width?: number }): Promise<void>` — Patch top-level video properties (width, height, backgroundColor, name,
+duration).
+
+`fps` changes are not supported here — they invalidate frame numbers
+across the pipeline and require a full `loadVideo()`. `duration` is
+safe to update incrementally: it's only used as the loop bound in
+`play()` and the divisor in the `totalFrames` getter; layer frame
+numbers depend on `fps`, not `duration`. An in-flight `play()` call
+captures `durationSec` at start, so the new bound takes effect on the
+next `play()` invocation.
+- `registerEffect(name: string, glsl: string, params: Record<string, EffectParamDefinition>): void` — Register a GLSL effect. Shares its registry with `BrowserRenderer`.
+- `registerTransition(name: string, fn: TransitionFn): void` — Register a transition preset. The registry is shared with
+`BrowserRenderer` so a transition registered on either renderer is
+available in both live preview and export.
+
+## Type aliases
+
+### DomRendererCallback
+
+```ts
+DomRendererCallback: (event: string, data: any) => void
+```
+
+
+---
+Source: https://videoflow.dev/docs/api/renderer-dom
+
+
+<!-- api: renderer-server -->
+# @videoflow/renderer-server — API reference
+
+Render VideoJSON to an MP4 file or buffer from Node using Playwright + ffmpeg.
+
+## Classes
+
+### ServerRenderer
+
+#### Methods
+
+- `constructor(videoJSON: VideoJSON): ServerRenderer`
+- `cleanup(): Promise<void>` — Release all resources: browser context, temporary files, and shared browser.
+- `renderAudio(): Promise<Buffer<ArrayBufferLike> | null>` — Render the full audio track and return it as a WAV Buffer.
+
+Opens the headless page on first call, then renders all audio layers
+into a single WAV buffer via the in-page BrowserRenderer.
+- `renderFrame(frame: number): Promise<Buffer<ArrayBufferLike>>` — Render a single frame and return it as a JPEG screenshot Buffer.
+
+Opens the headless page on first call, then renders the requested frame
+via the in-page BrowserRenderer.
+- `render(videoJSON: VideoJSON, options: RenderOptions): Promise<string | Buffer<ArrayBufferLike>>` — Render a VideoJSON to a Buffer or file.
+
+## Functions
+
+### closeSharedBrowser
+
+Close the shared browser instance.  Call this when the server is shutting
+down to release resources.
+
+```ts
+closeSharedBrowser(): Promise<void>
+```
+
+**Returns** `Promise<void>`
+
+
+---
+Source: https://videoflow.dev/docs/api/renderer-server
+
+
+<!-- api: react-video-editor -->
+# @videoflow/react-video-editor — API reference
+
+Drop-in multi-track editor React component.
+
+## Functions
+
+### useEditor
+
+Subscribe to the entire editor state. Prefer the narrower hooks below.
+
+```ts
+useEditor(selector: (state: EditorState) => T): T
+```
+
+**Parameters**
+
+- `selector` — `(state: EditorState) => T`
+
+**Returns** `T`
+
+### useHistoryState
+
+Undo / redo availability.
+
+```ts
+useHistoryState(): { canRedo: boolean; canUndo: boolean }
+```
+
+**Returns** `{ canRedo: boolean; canUndo: boolean }`
+
+### usePlayhead
+
+Current timeline frame and playing flag.
+
+```ts
+usePlayhead(): { frame: number; playing: boolean }
+```
+
+**Returns** `{ frame: number; playing: boolean }`
+
+### useSelection
+
+The selected layer ids and their resolved `LayerJSON` objects.
+
+```ts
+useSelection(): { ids: string[]; layers: LayerJSON[] }
+```
+
+**Returns** `{ ids: string[]; layers: LayerJSON[] }`
+
+### useVideo
+
+The currently-loaded `VideoJSON`.
+
+```ts
+useVideo(): VideoJSON
+```
+
+**Returns** `VideoJSON`
+
+### useViewport
+
+Timeline viewport (zoom / scroll).
+
+```ts
+useViewport(): Viewport
+```
+
+**Returns** `Viewport`
+
+### VideoEditor
+
+Public entry point for @videoflow/react-video-editor.
+
+The package ships:
+  - `<VideoEditor>` — the top-level React component.
+  - Default panel components for host apps that want to compose them
+    directly (e.g. with a custom layout).
+  - `useEditor` / selectors for hooking into editor state.
+  - Command factories for scripted edits.
+  - `RendererBridge` for advanced cases that need raw access to the
+    renderer's incremental update API.
+
+The default stylesheet lives at `@videoflow/react-video-editor/style.css`
+and must be imported by the host app (it contains only CSS variables and
+nested selectors on custom elements — no class names are introduced).
+
+```ts
+VideoEditor(__namedParameters: VideoEditorProps): Element
+```
+
+**Parameters**
+
+- `__namedParameters` — `VideoEditorProps`
+
+**Returns** `Element`
+
+## Type aliases
+
+### EditorState
+
+### OnUploadCallback
+
+Signature for the user-supplied asset upload callback.
+
+The editor calls this whenever a user drops a file into the preview or
+timeline (or picks one via the inspector). The default implementation just
+wraps the file in `URL.createObjectURL` so imports work locally out of the
+box; host apps that want persistent storage should override it.
+
+```ts
+OnUploadCallback: (file: File) => Promise<string>
+```
+
+### Selection
+
+Editor-side selection state. Layer ids only — resolve to `LayerJSON`
+objects via `video.layers.find(...)` at the call site.
+
+### VideoEditorProps
+
+### Viewport
+
+Viewport state for the preview / timeline. Zoom and pan are editor-local
+(never persisted back into the VideoJSON).
+
+## Variables
+
+### useEditorStore
+
+```ts
+useEditorStore: UseBoundStore<StoreApi<EditorState>>
+```
+
+
+---
+Source: https://videoflow.dev/docs/api/react-video-editor
+

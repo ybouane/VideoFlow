@@ -1,0 +1,43 @@
+# VideoFlow documentation
+
+> Open-source TypeScript toolkit for composing videos from code. JSON-based scenes, three official renderers (browser via WebCodecs, server via headless Chromium, DOM for live preview), 27 transition presets, 42 GLSL effects, layer groups, frame-perfect keyframes. Apache-2.0.
+
+Every page below is available as Markdown by appending `.md` to the URL. The full concatenated docs are at `/docs/llms-full.txt`.
+
+## Guides
+
+- [Animate & keyframes](https://videoflow.dev/docs/guide/animation-and-keyframes.md): How .animate() and .set() push keyframes, and how multiple calls chain.
+- [Builder API](https://videoflow.dev/docs/guide/builder-api.md): The fluent, sequential builder — addText, addImage, animate, wait, parallel.
+- [Core concepts](https://videoflow.dev/docs/guide/core-concepts.md): The four ideas you need — VideoJSON, layers, time, and keyframes.
+- [Easing functions](https://videoflow.dev/docs/guide/easing.md): Linear, step, and the four cubic easings.
+- [Custom panels](https://videoflow.dev/docs/guide/editor-custom-panels.md): Swap any of Titlebar, Preview, Sidebar, or Timeline with your own.
+- [Hooks & commands](https://videoflow.dev/docs/guide/editor-hooks.md): Read editor state and dispatch history-aware edits from your own components.
+- [Editor quickstart](https://videoflow.dev/docs/guide/editor-quickstart.md): Drop the ready-made VideoEditor into any React app in ten lines.
+- [Keyboard shortcuts](https://videoflow.dev/docs/guide/editor-shortcuts.md): Every shortcut the editor ships with.
+- [Theming](https://videoflow.dev/docs/guide/editor-theming.md): Four built-in themes plus full CSS variable overrides.
+- [Uploads](https://videoflow.dev/docs/guide/editor-upload-handler.md): Wire the onUpload prop to your storage provider.
+- [Effects](https://videoflow.dev/docs/guide/effects.md): Pixelate, chromatic aberration, vignette — animated via dot-path.
+- [Installation](https://videoflow.dev/docs/guide/getting-started.md): Install VideoFlow packages and render your first video in five minutes.
+- [Audio layer](https://videoflow.dev/docs/guide/layer-audio.md): Background music, voice-over, SFX. Same trim model as video.
+- [Captions layer](https://videoflow.dev/docs/guide/layer-captions.md): Word-level animated subtitles from WhisperX, SRT, or VTT.
+- [Layer groups](https://videoflow.dev/docs/guide/layer-group.md): Composite a sub-tree as one — transform, transition, animate together.
+- [Image layer](https://videoflow.dev/docs/guide/layer-image.md): Drop a PNG / JPG / WebP / SVG into the timeline and animate it.
+- [Shape layer](https://videoflow.dev/docs/guide/layer-shape.md): Rectangles, ellipses, polygons, and stars — vector primitives with fills, strokes, and corner radii.
+- [Text layer](https://videoflow.dev/docs/guide/layer-text.md): Typography, alignment, background pills, and animatable props.
+- [Video layer](https://videoflow.dev/docs/guide/layer-video.md): Trim, offset, loop, and animate a source video clip.
+- [Parallel & wait](https://videoflow.dev/docs/guide/parallel-and-wait.md): How VideoFlow's timing primitives combine to build any timeline.
+- [DOM preview](https://videoflow.dev/docs/guide/preview-with-dom.md): Frame-accurate scrubbing and playback inside any DOM element.
+- [Quick start](https://videoflow.dev/docs/guide/quick-start.md): Five short, runnable examples that take you from a single layer to a full animated scene.
+- [Browser renderer](https://videoflow.dev/docs/guide/rendering-browser.md): Encode an MP4 from any modern browser tab — no server required.
+- [Server renderer](https://videoflow.dev/docs/guide/rendering-server.md): Produce an MP4 file or buffer on Node — by default with no ffmpeg dependency.
+- [Time formats](https://videoflow.dev/docs/guide/time-formats.md): Seconds, milliseconds, frames, and hh:mm:ss all parsed the same way.
+- [Transitions](https://videoflow.dev/docs/guide/transitions.md): Per-layer in/out motion — fade, slide, zoom, blur, rise.
+- [Your first video](https://videoflow.dev/docs/guide/your-first-video.md): A runnable, annotated "Hello world" with live preview.
+
+## API reference
+
+- [@videoflow/core](https://videoflow.dev/docs/api/core.md): The builder, layer classes, Time parser, and VideoJSON compiler.
+- [@videoflow/renderer-browser](https://videoflow.dev/docs/api/renderer-browser.md): Encode VideoJSON to an MP4 Blob inside the browser via WebCodecs.
+- [@videoflow/renderer-dom](https://videoflow.dev/docs/api/renderer-dom.md): Live, scrubbable player that paints VideoJSON into a DOM host.
+- [@videoflow/renderer-server](https://videoflow.dev/docs/api/renderer-server.md): Render VideoJSON to an MP4 file or buffer from Node using Playwright + ffmpeg.
+- [@videoflow/react-video-editor](https://videoflow.dev/docs/api/react-video-editor.md): Drop-in multi-track editor React component.
