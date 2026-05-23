@@ -421,6 +421,13 @@ export default class DomRenderer implements ILayerRenderer {
 		transitionIn?: any;
 		transitionOut?: any;
 		effects?: any[];
+		/**
+		 * New track index for the layer. Updates `layer.json.track` so the next
+		 * `renderFrame` writes the right `z-index` via `applyProperties` (and
+		 * so the effect overlay's z-index is realigned below). Pass `null` to
+		 * clear the assignment and fall back to DOM-order paint.
+		 */
+		track?: number | null;
 	}): Promise<void> {
 		return this.enqueueMutation(async () => {
 			const layer = this.layerById.get(id);
@@ -436,6 +443,23 @@ export default class DomRenderer implements ILayerRenderer {
 			}
 			if (patch.animations) {
 				layer.json.animations = patch.animations;
+			}
+			if ('track' in patch) {
+				// Stash the new track so `applyProperties` writes the right
+				// `z-index` on the next renderFrame at the bottom of this fn.
+				layer.json.track = patch.track ?? undefined;
+				// Effect overlays carry their own z-index (set at mount); keep
+				// it in lockstep with the layer so the composited output stays
+				// on top of the right neighbours.
+				const overlay = this.effectCanvases.get(id);
+				if (overlay) {
+					const t = layer.json.track;
+					if (typeof t === 'number') {
+						overlay.style.zIndex = String(t + 1);
+					} else {
+						overlay.style.removeProperty('z-index');
+					}
+				}
 			}
 			// `hasEffects` can flip when either transitionIn/transitionOut OR
 			// the effects list changes — `injectsEffects: true` transitions
