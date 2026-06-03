@@ -801,6 +801,17 @@ export default class DomRenderer implements ILayerRenderer {
 	 * inside a `requestAnimationFrame` loop while nudging the audio
 	 * `playbackRate` to keep video and audio in sync.
 	 *
+	 * Frame dropping
+	 * --------------
+	 * Targets are computed from wall-clock time (`Date.now() - startTime`)
+	 * and each `renderFrame` call is fired-and-forget — playback never waits
+	 * for a render to finish. If the renderer can't keep up (a single frame
+	 * takes longer than one tick), {@link renderFrame}'s internal
+	 * `pendingFrame` slot supersedes the in-flight target with the latest
+	 * one, so intermediates are skipped rather than serialized. Wall-clock
+	 * time and audio stay live; the picture catches up to the most recent
+	 * frame the renderer can produce.
+	 *
 	 * Each layer is switched into its smooth-playback path via
 	 * {@link RuntimeBaseLayer.enterSmoothPlayback} at the start of the loop
 	 * — for video layers this trades the per-frame `currentTime` seek for a
@@ -809,8 +820,10 @@ export default class DomRenderer implements ILayerRenderer {
 	 * reverted on `stop()` / `seek()` so scrubbing stays frame-accurate.
 	 *
 	 * @param options - Optional callbacks:
-	 *   - `fpsCallback(fps)` — fired every animation frame with the current
-	 *     measured render FPS, useful for a HUD/diagnostic display.
+	 *   - `fpsCallback(fps)` — fired on each successful render with the
+	 *     rolling 1-second count of actually-rendered frames. With frame
+	 *     dropping this can sit below the video's nominal fps; that's the
+	 *     meaningful signal (HUD / diagnostic display).
 	 *
 	 * To track frame changes, set the public {@link onFrame} property.
 	 */
@@ -861,33 +874,72 @@ export default class DomRenderer implements ILayerRenderer {
 
 			// Playback loop. Exits as soon as either `playing` flips to false
 			// (stop() called) or the token advances (another play() took over).
-			while (this.playing && myToken === this.playToken) {
-				const renderStart = performance.now();
-				const elapsed = (Date.now() - startTime) / 1000;
-				const currentTimeSec = (startTimeSec + elapsed) % durationSec;
-				const frame = Math.round(currentTimeSec * fps);
+			//
+			// Wall-clock driven, with frame-drop: each iteration computes the
+			// target frame from `Date.now() - startTime`, then *fires* a
+			// `renderFrame(target)` without awaiting it. When a render is
+			// already in progress, `renderFrame` just updates `pendingFrame`
+			// to the new target and returns immediately — only the most
+			// recently issued target ever actually composites. That keeps
+			// playback "live": if rendering a single frame takes longer than
+			// one tick, the loop keeps advancing wall-clock time, audio stays
+			// in sync, and the picture catches up to whichever frame the
+			// renderer can next produce (skipping the intermediates).
+			//
+			// `lastIssued` short-circuits redundant `renderFrame` calls for
+			// the same target — without it, the rAF loop would re-request
+			// the same frame multiple times per video frame on a fast monitor.
+			let lastIssued = -1;
+			// Sliding 1s window of render-completion timestamps drives the
+			// `fpsCallback` value: it now reflects rendered-frames-per-second
+			// rather than per-iteration render duration, which is the
+			// meaningful number once frame-dropping is in play.
+			const completionTimes: number[] = [];
+			const prevOnFrame = this.onFrame;
+			if (fpsCallback) {
+				this.onFrame = (frame: number) => {
+					const now = performance.now();
+					completionTimes.push(now);
+					while (completionTimes.length > 0 && completionTimes[0] < now - 1000) {
+						completionTimes.shift();
+					}
+					fpsCallback(completionTimes.length);
+					prevOnFrame?.(frame);
+				};
+			}
 
-				if (frame !== this.currentFrame) {
-					if (this.audio) {
-						const audioTime = this.audio.currentTime;
-						const syncDiff = currentTimeSec - audioTime;
-						if (Math.abs(syncDiff) > 15 / fps) {
-							this.audio.currentTime = currentTimeSec;
-						} else if (Math.abs(syncDiff) > 4 / fps) {
-							this.audio.playbackRate = (1 / (1 - syncDiff)) ** 2;
-						} else {
-							this.audio.playbackRate = 1;
+			try {
+				while (this.playing && myToken === this.playToken) {
+					const elapsed = (Date.now() - startTime) / 1000;
+					const currentTimeSec = (startTimeSec + elapsed) % durationSec;
+					const frame = Math.round(currentTimeSec * fps);
+
+					if (frame !== lastIssued) {
+						lastIssued = frame;
+
+						if (this.audio) {
+							const audioTime = this.audio.currentTime;
+							const syncDiff = currentTimeSec - audioTime;
+							if (Math.abs(syncDiff) > 15 / fps) {
+								this.audio.currentTime = currentTimeSec;
+							} else if (Math.abs(syncDiff) > 4 / fps) {
+								this.audio.playbackRate = (1 / (1 - syncDiff)) ** 2;
+							} else {
+								this.audio.playbackRate = 1;
+							}
 						}
+
+						// Fire-and-forget — `renderFrame`'s `pendingFrame`
+						// slot drops superseded targets when rendering can't
+						// keep up. Errors are swallowed; the loop survives a
+						// single bad frame and tries the next target.
+						this.renderFrame(frame, true).catch(() => {});
 					}
 
-					await this.renderFrame(frame, true);
-					if (myToken !== this.playToken) return;
+					await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
 				}
-
-				const frameFps = 1000 / (performance.now() - renderStart);
-				fpsCallback?.(frameFps);
-
-				await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+			} finally {
+				if (fpsCallback) this.onFrame = prevOnFrame;
 			}
 		} catch (e) {
 			if (myToken === this.playToken) this.playing = false;
