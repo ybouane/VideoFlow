@@ -966,6 +966,7 @@ $.addCaptions(
 | `fontSize` / `fontWeight` / `fontFamily` / `color` | | Same as text layer. |
 | `backgroundColor` / `padding` / `borderRadius` | | Per-line pill. |
 | `position` | `[0.5, 0.85]` | Bottom-centre by default. |
+| `wrap` | `boolean` / `true` | `true` (default) wraps long lines; `false` disables wrapping (explicit `\n` newlines still break lines either way). Measured at the layer's native `fontSize`, before `scale`. Not animatable. |
 | `maxCharsPerLine` *(setting)* | `40` | Line-break hint. |
 | `maxLines` *(setting)* | `2` | — |
 
@@ -1317,6 +1318,7 @@ return $;
 | `textTransform` | `none | capitalize | uppercase | lowercase` | Not animatable. |
 | `textDecoration` | `none | underline | overline | line-through` | Not animatable. |
 | `direction` | `ltr | rtl` / `ltr` | Bidirectional text. Not animatable. |
+| `wrap` | `boolean` / `true` | `true` (default) wraps long lines; `false` disables wrapping (explicit `\n` newlines still break lines either way). Wrap width is measured at the layer's native `fontSize`, before any `scale` transform — change `fontSize` to change where lines break, not `scale`. Not animatable. |
 | `backgroundColor` | `css colour` / `transparent` | Pill background; pairs well with `padding`. |
 | `padding` | `em` / `0` | Single value or `[t,r,b,l]`. |
 | `borderWidth` / `borderColor` / `borderStyle` | `em` / colour / enum | `borderStyle` ∈ `none | solid | dashed | dotted | double | groove | ridge | inset | outset`. |

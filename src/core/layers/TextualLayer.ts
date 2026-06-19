@@ -37,6 +37,7 @@ export type TextualLayerProperties = VisualLayerProperties & {
 	wordSpacing?: number;
 	direction?: string;
 	textIndent?: number;
+	wrap?: boolean;
 };
 
 export type TextualLayerSettings = VisualLayerSettings;
@@ -148,6 +149,9 @@ export default class TextualLayer extends VisualLayer {
 			'textIndent': { cssProperty: 'text-indent', units: ['em', 'px'], default: 0, animatable: true },
 			/** `'ltr'` or `'rtl'` — writing direction for bidirectional text. */
 			'direction': { cssProperty: 'direction', enum: ['ltr', 'rtl'], default: 'ltr', animatable: false },
+			/** Whether long lines wrap to fit the layer box. `\n` newlines break lines either way.
+			 *  Wrap width is measured at the native `fontSize`, before `scale` is applied. */
+			'wrap': { cssProperty: 'white-space', default: true, animatable: false },
 		};
 	}
 }

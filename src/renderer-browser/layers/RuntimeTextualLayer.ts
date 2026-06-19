@@ -73,6 +73,13 @@ export default class RuntimeTextualLayer extends RuntimeVisualLayer {
 		} else if (prop === 'font-family') {
 			await this.renderer.loadFont(value);
 			value = `"${value}", "Noto Sans", Roboto, Verdana, Helvetica, sans-serif`;
+		} else if (prop === 'white-space') {
+			// `wrap` is exposed as a boolean for ergonomic reasons. The
+			// stylesheet's `textual-layer { white-space: pre-wrap }` rule is
+			// the source of truth for the default — only the explicit
+			// `wrap: false` case needs to override it inline.
+			if (value !== false) return;
+			value = 'pre';
 		}
 
 		return super.applyCSSProperty(prop, value, definition);

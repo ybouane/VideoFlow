@@ -110,9 +110,11 @@ textual-layer {
 	display:flex;
 	align-items: center;
 	justify-content: center;
-	white-space: pre;
+	white-space: pre-wrap;
 	paint-order: stroke;
 	line-height: 1;
+	max-width: 100%;
+	width: max-content;
 }
 [data-element="shape"] {
 	/* Wrapper div is sized in JS to match the shape's display box; the
