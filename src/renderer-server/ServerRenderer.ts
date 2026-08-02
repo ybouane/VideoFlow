@@ -23,6 +23,25 @@
  *
  * The browser path is typically several times faster because it eliminates
  * the per-frame screenshot round-trip and the JPEG → H.264 re-encode.
+ *
+ * ## External layer types
+ *
+ * The page runs in a separate Chromium realm, so runtime layer classes can't
+ * be handed across — `page.evaluate` arguments and Playwright's structured
+ * serialization carry data, not functions. Instead you register an absolute
+ * *module path* and the module gets bundled into the page script:
+ *
+ * ```ts
+ * const renderer = new ServerRenderer(videoJSON);
+ * renderer.registerLayerType('custom', {
+ *   modulePath: '/absolute/path/to/custom-layer-type.js',
+ *   exportName: 'default',
+ * });
+ * await renderer.renderVideo(options);
+ * ```
+ *
+ * The module must be browser-compatible and export
+ * `{ runtime, propertiesDefinition }`.
  */
 
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
@@ -85,32 +104,174 @@ export async function closeSharedBrowser(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-//  Bundle cache — we only need to build the renderer page script once
+//  External layer types
 // ---------------------------------------------------------------------------
 
-let cachedBundle: string | null = null;
+/**
+ * How a {@link ServerRenderer} locates an external layer type.
+ *
+ * Runtime classes are functions and cannot cross the Playwright boundary, so
+ * the server records a module *path* and bundles that module into the page
+ * script instead of trying to serialize the class.
+ */
+export type ServerLayerTypeModuleDescriptor = {
+	/**
+	 * Absolute local filesystem path to a **browser-compatible** module that
+	 * exports a `{ runtime, propertiesDefinition }` descriptor.
+	 *
+	 * ```ts
+	 * // /abs/path/to/custom-layer-type.js
+	 * export default {
+	 *   runtime: RuntimeCustomLayer,
+	 *   propertiesDefinition: CustomLayer.propertiesDefinition,
+	 * };
+	 * ```
+	 */
+	modulePath: string;
+	/** Export to read the descriptor from. Defaults to `'default'`. */
+	exportName?: string;
+};
+
+/** A registration after defaulting and path normalisation. */
+type NormalizedLayerTypeEntry = {
+	type: string;
+	modulePath: string;
+	exportName: string;
+};
+
+/** {@link RenderOptions} plus the serializable external-layer-type list. */
+export type ServerRenderOptions = RenderOptions & {
+	/**
+	 * External layer types to register before rendering. Purely a convenience
+	 * wrapper over the instance API — {@link ServerRenderer.render} constructs
+	 * a renderer and calls `registerLayerType()` for each entry.
+	 */
+	layerTypes?: Array<{ type: string } & ServerLayerTypeModuleDescriptor>;
+};
+
+// ---------------------------------------------------------------------------
+//  Bundle cache
+//
+//  Keyed by the full external-layer-type registration set (names, absolute
+//  paths, export names) plus each module's mtime/size, so two ServerRenderer
+//  instances with different registrations never reuse each other's bundle and
+//  editing an external module during development invalidates it.
+// ---------------------------------------------------------------------------
+
+const bundleCache: Map<string, string> = new Map();
+/** Keep the cache bounded; distinct registration sets are usually few. */
+const BUNDLE_CACHE_LIMIT = 16;
+
+/** Resolve the page-script entry: `.ts` in the repo, `.js` once published. */
+async function resolveRendererEntryPoint(): Promise<string> {
+	const tsEntry = path.resolve(__dirname, 'renderer-page-script.ts');
+	try {
+		await fs.access(tsEntry);
+		return tsEntry;
+	} catch {
+		return tsEntry.replace(/\.ts$/, '.js');
+	}
+}
+
+/**
+ * A path as a JS string literal. Backslashes are flipped to forward slashes
+ * so Windows paths survive both the string literal and esbuild's resolver
+ * (`path.sep` is `/` on POSIX, making this a no-op there).
+ */
+function pathLiteral(p: string): string {
+	return JSON.stringify(p.split(path.sep).join('/'));
+}
+
+/** Hash the inputs that must invalidate a cached bundle. */
+async function computeBundleCacheKey(entryPoint: string, entries: NormalizedLayerTypeEntry[]): Promise<string> {
+	const hash = crypto.createHash('sha1');
+	hash.update(entryPoint);
+	for (const entry of entries) {
+		hash.update(`\0${entry.type}\0${entry.modulePath}\0${entry.exportName}`);
+		try {
+			const stat = await fs.stat(entry.modulePath);
+			hash.update(`\0${stat.mtimeMs}\0${stat.size}`);
+		} catch {
+			hash.update('\0missing');
+		}
+	}
+	return hash.digest('hex');
+}
+
+/**
+ * Generate the synthetic bundle entry: import the page bootstrap, import each
+ * external layer-type module, and hand the descriptors to
+ * `startRendererPage()`.
+ *
+ * Namespace imports (rather than named ones) keep arbitrary export names
+ * working without worrying about JS identifier syntax, and let us emit a
+ * precise error when a module doesn't export what was promised.
+ */
+function generateBundleEntry(entryPoint: string, entries: NormalizedLayerTypeEntry[]): string {
+	const lines: string[] = [
+		`import { startRendererPage } from ${pathLiteral(entryPoint)};`,
+	];
+
+	entries.forEach((entry, i) => {
+		lines.push(`import * as __mod${i} from ${pathLiteral(entry.modulePath)};`);
+	});
+
+	entries.forEach((entry, i) => {
+		const where = `layer type ${JSON.stringify(entry.type)} (${entry.modulePath})`;
+		lines.push(
+			`const __desc${i} = __mod${i}[${JSON.stringify(entry.exportName)}];`,
+			`if (!__desc${i} || typeof __desc${i}.runtime !== "function") {`,
+			`\tthrow new Error(${JSON.stringify(
+				`VideoFlow: ${where} must export a { runtime, propertiesDefinition } descriptor as ` +
+				`"${entry.exportName}".`,
+			)});`,
+			`}`,
+		);
+	});
+
+	const list = entries
+		.map((entry, i) => `{ type: ${JSON.stringify(entry.type)}, descriptor: __desc${i} }`)
+		.join(', ');
+	lines.push(`startRendererPage([${list}]);`);
+
+	return lines.join('\n');
+}
 
 /**
  * Build the renderer page script using esbuild.
  *
  * Bundles the page script with all its dependencies (BrowserRenderer,
- * @videoflow/core, mediabunny) into a single browser-compatible ES module.
+ * @videoflow/core, mediabunny) and every registered external layer-type module
+ * into a single browser-compatible ES module.
  */
-async function buildRendererBundle(): Promise<string> {
-	if (cachedBundle) return cachedBundle;
+async function buildRendererBundle(entries: NormalizedLayerTypeEntry[] = []): Promise<string> {
+	const entryPoint = await resolveRendererEntryPoint();
 
-	const entryPoint = path.resolve(__dirname, 'renderer-page-script.ts');
+	// Sort by type so registration order alone can't fragment the cache.
+	const sorted = [...entries].sort((a, b) => (a.type < b.type ? -1 : a.type > b.type ? 1 : 0));
 
-	// Check if the .ts source exists; if not, try .js (post-build)
-	let entry = entryPoint;
-	try {
-		await fs.access(entry);
-	} catch {
-		entry = entryPoint.replace('.ts', '.js');
+	const cacheKey = await computeBundleCacheKey(entryPoint, sorted);
+	const cached = bundleCache.get(cacheKey);
+	if (cached) return cached;
+
+	// Fail with a path-level message rather than an esbuild resolve error.
+	for (const entry of sorted) {
+		try {
+			await fs.access(entry.modulePath);
+		} catch {
+			throw new Error(
+				`ServerRenderer: layer type "${entry.type}" module not found: ${entry.modulePath}`,
+			);
+		}
 	}
 
 	const result = await esbuild.build({
-		entryPoints: [entry],
+		stdin: {
+			contents: generateBundleEntry(entryPoint, sorted),
+			resolveDir: __dirname,
+			sourcefile: 'videoflow-renderer-page-entry.js',
+			loader: 'js',
+		},
 		bundle: true,
 		write: false,
 		format: 'esm',
@@ -128,8 +289,14 @@ async function buildRendererBundle(): Promise<string> {
 		},
 	});
 
-	cachedBundle = result.outputFiles[0].text;
-	return cachedBundle;
+	const bundle = result.outputFiles[0].text;
+	if (bundleCache.size >= BUNDLE_CACHE_LIMIT) {
+		// Evict the oldest entry — Map preserves insertion order.
+		const oldest = bundleCache.keys().next();
+		if (!oldest.done) bundleCache.delete(oldest.value);
+	}
+	bundleCache.set(cacheKey, bundle);
+	return bundle;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,10 +341,79 @@ export default class ServerRenderer {
 	private uploadSlot: UploadSlot | null = null;
 	/** Forward progress reports from the page to the active render's callback. */
 	private exportProgressHandler: ((progress: number) => void) | null = null;
+	/**
+	 * External layer types registered on this instance, keyed by type name so
+	 * a duplicate registration replaces the earlier one. Bundled into the page
+	 * script when the Chromium page is opened.
+	 */
+	private layerTypeModules: Map<string, NormalizedLayerTypeEntry> = new Map();
 
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
 		this.renderId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Layer-type registry
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Register (or replace) an external layer type for this render.
+	 *
+	 * ```ts
+	 * const renderer = new ServerRenderer(videoJSON);
+	 * renderer.registerLayerType('custom', {
+	 *   modulePath: '/absolute/path/to/custom-layer-type.js',
+	 *   exportName: 'default',
+	 * });
+	 * await renderer.renderVideo(options);
+	 * ```
+	 *
+	 * `modulePath` must be an **absolute** local filesystem path to a
+	 * browser-compatible module exporting a
+	 * `{ runtime, propertiesDefinition }` descriptor. The module is bundled
+	 * into the renderer page script and registered on the in-page
+	 * `BrowserRenderer` before its first frame — runtime classes are functions
+	 * and cannot be passed through `page.evaluate` or Playwright's structured
+	 * serialization, so bundling is the only way across the realm boundary.
+	 *
+	 * Lifecycle: register after construction and **before** `renderVideo()` /
+	 * `renderFrame()` / `renderAudio()`, i.e. before the headless page is
+	 * opened. Registering afterwards throws.
+	 */
+	registerLayerType(type: string, descriptor: ServerLayerTypeModuleDescriptor): void {
+		if (this.page) {
+			throw new Error(
+				`ServerRenderer.registerLayerType("${type}"): layer types must be registered before the first ` +
+				`renderVideo() / renderFrame() / renderAudio() call — the headless page and its bundle are ` +
+				`already built.`,
+			);
+		}
+		if (typeof type !== 'string' || type.length === 0) {
+			throw new Error('ServerRenderer.registerLayerType: "type" must be a non-empty string.');
+		}
+		const modulePath = descriptor?.modulePath;
+		if (typeof modulePath !== 'string' || modulePath.length === 0) {
+			throw new Error(
+				`ServerRenderer.registerLayerType("${type}"): "modulePath" is required.`,
+			);
+		}
+		if (!path.isAbsolute(modulePath)) {
+			throw new Error(
+				`ServerRenderer.registerLayerType("${type}"): "modulePath" must be an absolute local ` +
+				`filesystem path, got "${modulePath}".`,
+			);
+		}
+		this.layerTypeModules.set(type, {
+			type,
+			modulePath: path.normalize(modulePath),
+			exportName: descriptor.exportName ?? 'default',
+		});
+	}
+
+	/** Every external layer type registered on this instance. */
+	listLayerTypes(): string[] {
+		return [...this.layerTypeModules.keys()];
 	}
 
 	/** Path for the temporary audio WAV file. */
@@ -245,13 +481,22 @@ export default class ServerRenderer {
 	/**
 	 * Render a {@link VideoJSON} to a Buffer or file.
 	 *
+	 * Convenience wrapper over the instance API. External layer types can be
+	 * passed as `options.layerTypes` (each entry is forwarded to
+	 * {@link registerLayerType}); for anything more involved, construct a
+	 * `ServerRenderer` and drive it directly.
+	 *
 	 * @param videoJSON - The compiled video JSON.
-	 * @param options   - Rendering options (outputType, output path, signal).
+	 * @param options   - Rendering options (outputType, output path, signal,
+	 *                    layerTypes).
 	 * @returns A Buffer containing the MP4 (when outputType is 'buffer') or
 	 *          the output file path (when outputType is 'file').
 	 */
-	static async render(videoJSON: VideoJSON, options: RenderOptions = {}): Promise<Buffer | string> {
+	static async render(videoJSON: VideoJSON, options: ServerRenderOptions = {}): Promise<Buffer | string> {
 		const renderer = new ServerRenderer(videoJSON);
+		for (const entry of options.layerTypes ?? []) {
+			renderer.registerLayerType(entry.type, entry);
+		}
 		try {
 			return await renderer.renderVideo(options);
 		} finally {
@@ -301,8 +546,9 @@ export default class ServerRenderer {
 		// Rewrite local file paths to servable URLs before passing to browser
 		await this.rewriteLocalSources();
 
-		// Build the renderer bundle
-		const bundle = await buildRendererBundle();
+		// Build the renderer bundle, statically importing every external
+		// layer-type module registered on this instance.
+		const bundle = await buildRendererBundle([...this.layerTypeModules.values()]);
 		const htmlContent = await this.getRendererHTML();
 
 		// Set up the project loading bridge
@@ -581,10 +827,23 @@ export default class ServerRenderer {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Top-level dispatcher. Picks the encoding pipeline based on
+	 * Render the loaded project. Picks the encoding pipeline based on
 	 * `options.ffmpeg`; defaults to the in-browser export path.
+	 *
+	 * This is the primary entry point when using external layer types —
+	 * register them on the instance first, then call this:
+	 *
+	 * ```ts
+	 * const renderer = new ServerRenderer(videoJSON);
+	 * renderer.registerLayerType('custom', { modulePath: '/abs/path/custom.js' });
+	 * const out = await renderer.renderVideo({ outputType: 'file', output: './out.mp4' });
+	 * await renderer.cleanup();
+	 * ```
+	 *
+	 * Callers own cleanup — call {@link cleanup} when done (the static
+	 * {@link render} helper does this for you).
 	 */
-	private async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
+	async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
 		if (options.ffmpeg) {
 			return this.renderVideoViaFFmpeg(options);
 		}

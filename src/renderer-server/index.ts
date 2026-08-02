@@ -15,3 +15,8 @@
 
 export { default } from './ServerRenderer.js';
 export { default as ServerRenderer, closeSharedBrowser } from './ServerRenderer.js';
+export type {
+	ServerLayerTypeModuleDescriptor,
+	ServerRenderOptions,
+} from './ServerRenderer.js';
+export type { ExternalLayerTypeEntry } from './renderer-page-script.js';

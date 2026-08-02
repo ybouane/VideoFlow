@@ -20,11 +20,31 @@
  * The browser-export path uses an `AbortController` parked on
  * `window.__exportAbort` so the server can cancel the in-flight render via
  * `page.evaluate(() => window.__exportAbort.abort())`.
+ *
+ * ## External layer types
+ *
+ * Runtime layer classes are functions and cannot cross the Playwright
+ * boundary — neither `page.evaluate` arguments nor Playwright's structured
+ * serialization can carry them. Instead, `ServerRenderer.registerLayerType()`
+ * records an absolute *module path*, and `ServerRenderer` generates a small
+ * synthetic esbuild entry that statically imports each module and passes the
+ * resulting descriptors to {@link startRendererPage}. The bundle is what
+ * carries the code into the page realm.
  */
 
 // These imports will be resolved by esbuild at bundle time
-import { BrowserRenderer } from '@videoflow/renderer-browser';
+import { BrowserRenderer, type LayerTypeDescriptor } from '@videoflow/renderer-browser';
 import { audioBufferToWav } from '@videoflow/core/utils';
+
+/**
+ * One external layer type, as handed to {@link startRendererPage} by the
+ * generated bundle entry. `descriptor` is a live object from the imported
+ * module — it never travels through Playwright serialization.
+ */
+export type ExternalLayerTypeEntry = {
+	type: string;
+	descriptor: LayerTypeDescriptor;
+};
 
 declare global {
 	interface Window {
@@ -41,8 +61,19 @@ declare global {
 	}
 }
 
-// Self-executing async bootstrap
-(async () => {
+/**
+ * Bootstrap the renderer page.
+ *
+ * Called by the entry module that `ServerRenderer` generates and bundles.
+ * Any external layer types are registered on the freshly constructed
+ * `BrowserRenderer` **before** the first `renderFrame()` call, which is what
+ * creates the runtime layers and closes the registration window.
+ *
+ * @param externalLayerTypes - Descriptors imported by the generated bundle
+ *                             entry, one per `ServerRenderer.registerLayerType()`
+ *                             call. Empty for an ordinary render.
+ */
+export async function startRendererPage(externalLayerTypes: ExternalLayerTypeEntry[] = []): Promise<void> {
 	if (!window.loadProject) return; // Not running in server mode
 
 	try {
@@ -54,6 +85,13 @@ declare global {
 
 		// Create the browser renderer with the video JSON
 		const renderer = new BrowserRenderer(videoJSON);
+
+		// Register external layer types while the window is still open — the
+		// renderer defers runtime-layer creation until the first render call
+		// below, so this must happen here and not later.
+		for (const entry of externalLayerTypes) {
+			renderer.registerLayerType(entry.type, entry.descriptor);
+		}
 
 		// Move the renderer canvas on-screen so Playwright screenshots capture it
 		const $canvas = document.querySelector('[data-renderer]') as HTMLElement;
@@ -157,4 +195,4 @@ declare global {
 		console.error('Error loading project:', e);
 		window.logError?.('Error loading project: ' + String(e));
 	}
-})();
+}
