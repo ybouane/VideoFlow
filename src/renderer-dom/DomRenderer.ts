@@ -20,17 +20,35 @@
  *
  * Audio sync during playback: render audio to WAV, play via an HTML Audio
  * element, and adjust playback rate to keep video and audio in sync.
+ *
+ * ## External layer types
+ *
+ * Each renderer instance owns a layer-type registry seeded with the built-in
+ * types (`text`, `captions`, `image`, `video`, `audio`, `shape`, `group`).
+ * Extend it between construction and the first `loadVideo()`:
+ *
+ * ```ts
+ * const renderer = new DomRenderer(host);
+ * renderer.registerLayerType('custom', {
+ *   runtime: RuntimeCustomLayer,
+ *   propertiesDefinition: CustomLayer.propertiesDefinition,
+ * });
+ * await renderer.loadVideo(videoJSON);
+ * ```
+ *
+ * Registrations belong to the instance and survive reloads; other renderers
+ * are unaffected.
  */
 
 import type { VideoJSON, LayerJSON, LayerSettingsJSON, Animation, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
 import {
-	createRuntimeLayer,
 	RuntimeBaseLayer,
 	RuntimeGroupLayer,
 	LayerRasterizer,
 	WebGLEffectCompositor,
 	FontEmbedder,
+	createBuiltinLayerTypeRegistry,
 	registerTransition as registerTransitionInRegistry,
 	registerEffect as registerEffectInRegistry,
 	buildFontUrl,
@@ -38,27 +56,12 @@ import {
 	sortByTrackRecursive,
 	blendModeToCompositeOp,
 	type ILayerRenderer,
+	type LayerTypeDescriptor,
+	type LayerTypeRegistry,
 	type TransitionFn,
 	type EffectParamDefinition,
 } from '@videoflow/renderer-browser';
-import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer, GroupLayer,
-} from '@videoflow/core';
 import RENDERER_CSS from './renderer.css.js';
-
-// ---------------------------------------------------------------------------
-//  Property definition registry (same as BrowserRenderer)
-// ---------------------------------------------------------------------------
-
-const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
-	text: TextLayer.propertiesDefinition,
-	captions: CaptionsLayer.propertiesDefinition,
-	image: ImageLayer.propertiesDefinition,
-	video: VideoLayer.propertiesDefinition,
-	audio: AudioLayer.propertiesDefinition,
-	shape: ShapeLayer.propertiesDefinition,
-	group: GroupLayer.propertiesDefinition,
-};
 
 // ---------------------------------------------------------------------------
 //  DomRenderer
@@ -140,6 +143,25 @@ export default class DomRenderer implements ILayerRenderer {
 	/** Font embedder — inlines @font-face as base64 data URIs for SVG rasterization. */
 	private fontEmbedder: FontEmbedder = new FontEmbedder(this.loadedFonts);
 
+	/**
+	 * This renderer's own layer-type registry, seeded with the built-in types
+	 * and extendable via {@link registerLayerType} until the first
+	 * {@link loadVideo}. The registrations stay attached to this instance and
+	 * are reused on every subsequent reload.
+	 */
+	private layerTypes: LayerTypeRegistry = createBuiltinLayerTypeRegistry('DomRenderer');
+	/** Flipped by the first `loadVideo()`; closes the registration window. */
+	private layerTypesLocked = false;
+	/**
+	 * Project fps / dimensions to build runtime layers against while
+	 * `loadVideo()` is mid-flight. `loadVideo` constructs the new layers before
+	 * it swaps `videoJSON` (the outgoing frame must stay on screen until the
+	 * new canvas is ready), so `createRuntimeLayer` — which groups call
+	 * re-entrantly for their children — has to read the incoming project
+	 * dimensions from here rather than from `this.videoJSON`.
+	 */
+	private layerFactoryContext: { fps: number; width: number; height: number } | null = null;
+
 	constructor(host: HTMLElement) {
 		this.host = host;
 
@@ -157,9 +179,87 @@ export default class DomRenderer implements ILayerRenderer {
 	//  ILayerRenderer implementation
 	// -----------------------------------------------------------------------
 
-	/** Return the full propertiesDefinition for a layer type. */
-	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined {
-		return PROPERTIES_BY_TYPE[layerType];
+	/**
+	 * Return the full propertiesDefinition for a layer type, or a single
+	 * property's definition. Resolved through this renderer's layer-type
+	 * registry, so an overridden type gets its overriding property definitions
+	 * too.
+	 */
+	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined;
+	getPropertyDefinition(layerType: string, prop: string): PropertyDefinition | undefined;
+	getPropertyDefinition(layerType: string, prop?: string): Record<string, PropertyDefinition> | PropertyDefinition | undefined {
+		if (prop !== undefined) {
+			return this.layerTypes.getPropertyDefinition(layerType, prop);
+		}
+		return this.layerTypes.getPropertyDefinition(layerType);
+	}
+
+	/**
+	 * Instantiate the runtime layer registered for `layerJSON.type`, wired to
+	 * this renderer and the active project's fps / dimensions. Used for
+	 * top-level layers and — via `ILayerRenderer` — by groups for their
+	 * descendants.
+	 *
+	 * Throws for a type that isn't registered on this renderer.
+	 */
+	createRuntimeLayer(layerJSON: LayerJSON): RuntimeBaseLayer {
+		const ctx = this.layerFactoryContext ?? (this.videoJSON && {
+			fps: this.videoJSON.fps,
+			width: this.videoJSON.width,
+			height: this.videoJSON.height,
+		});
+		if (!ctx) {
+			throw new Error('DomRenderer.createRuntimeLayer: no video loaded. Call loadVideo() first.');
+		}
+		return this.layerTypes.createRuntimeLayer(layerJSON, ctx.fps, ctx.width, ctx.height, this);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Layer-type registry
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Register (or replace) a layer type on **this** renderer.
+	 *
+	 * ```ts
+	 * const renderer = new DomRenderer(host);
+	 * renderer.registerLayerType('custom', {
+	 *   runtime: RuntimeCustomLayer,
+	 *   propertiesDefinition: CustomLayer.propertiesDefinition,
+	 * });
+	 * await renderer.loadVideo(videoJSON);
+	 * ```
+	 *
+	 * Lifecycle: register after construction and **before** the first
+	 * `loadVideo()`. Registrations stay attached to this instance, so every
+	 * later `loadVideo()` / `addLayer()` uses them without re-registering.
+	 * Registering after a video has been loaded throws rather than silently
+	 * rebuilding the live runtime layers (which would drop their loaded media
+	 * and mounted DOM) — construct a new DomRenderer instead.
+	 *
+	 * Registering a type that already exists (including a built-in) replaces
+	 * the previous descriptor rather than throwing. The registry belongs to
+	 * this instance: other renderers are unaffected.
+	 */
+	registerLayerType(type: string, descriptor: LayerTypeDescriptor): void {
+		if (this.layerTypesLocked) {
+			throw new Error(
+				`DomRenderer.registerLayerType("${type}"): layer types must be registered before the first ` +
+				`loadVideo() call. This renderer already has a video loaded — create a new DomRenderer to ` +
+				`change its layer types.`,
+			);
+		}
+		this.layerTypes.register(type, descriptor);
+	}
+
+	/** The descriptor registered for `type` on this renderer, if any. */
+	getLayerType(type: string): LayerTypeDescriptor | undefined {
+		return this.layerTypes.get(type);
+	}
+
+	/** Every layer type registered on this renderer, built-ins included. */
+	listLayerTypes(): string[] {
+		return this.layerTypes.list();
 	}
 
 	/** Load a Google Font and make it available to the document (and shadow DOM). */
@@ -205,9 +305,15 @@ export default class DomRenderer implements ILayerRenderer {
 	 * Sets up the shadow DOM, creates runtime layers, initialises media, and
 	 * renders frame 0.
 	 *
+	 * Closes the {@link registerLayerType} window — synchronously on entry, so
+	 * the cutoff doesn't depend on when the mutation queue gets around to the
+	 * actual load.
+	 *
 	 * @param videoJSON - Compiled VideoJSON from VideoFlow.compile().
 	 */
 	async loadVideo(videoJSON: VideoJSON): Promise<void> {
+		this.layerTypesLocked = true;
+
 		// Serialize through the mutation queue so concurrent loadVideo() calls,
 		// or a loadVideo() racing with an addLayer/updateLayer/... mutation,
 		// can't interleave and leave stale state (e.g., multiple [data-renderer]
@@ -236,10 +342,20 @@ export default class DomRenderer implements ILayerRenderer {
 			const oldLayers = this.layers;
 			const oldCanvas = this.$canvas;
 
-			// 1. Construct new runtime layers (no fetches yet).
-			const newLayers = videoJSON.layers.map(layerJSON =>
-				createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this)
-			);
+			// 1. Construct new runtime layers (no fetches yet). The factory
+			//    context carries the *incoming* project dimensions, since
+			//    `this.videoJSON` isn't swapped until step 6.
+			this.layerFactoryContext = {
+				fps: videoJSON.fps,
+				width: videoJSON.width,
+				height: videoJSON.height,
+			};
+			let newLayers: RuntimeBaseLayer[];
+			try {
+				newLayers = videoJSON.layers.map(layerJSON => this.createRuntimeLayer(layerJSON));
+			} finally {
+				this.layerFactoryContext = null;
+			}
 
 			// 2. Initialise them in parallel — this is where each layer acquires
 			//    its source from the global media cache. Sources shared with the
@@ -537,13 +653,7 @@ export default class DomRenderer implements ILayerRenderer {
 
 			const insertAt = index === undefined ? this.layers.length : Math.max(0, Math.min(index, this.layers.length));
 
-			const layer = createRuntimeLayer(
-				layerJSON,
-				this.videoJSON.fps,
-				this.videoJSON.width,
-				this.videoJSON.height,
-				this
-			);
+			const layer = this.createRuntimeLayer(layerJSON);
 			await layer.initialize();
 			layer.resolveMediaTimings();
 
