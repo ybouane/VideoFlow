@@ -32,6 +32,12 @@
  * surface when `props` match the last render. Video layers (non-cacheable)
  * rasterize fresh every frame but still re-use the same surface for memory
  * efficiency.
+ *
+ * Two aspects are delegated to the layer so external layer types can
+ * participate without this file knowing about them:
+ * `RuntimeBaseLayer.getRasterCacheKey(props)` decides cache validity, and
+ * `RuntimeBaseLayer.createRasterClone()` produces the DOM that goes into the
+ * tier-3 `<foreignObject>`.
  */
 
 import type { VideoJSON } from '@videoflow/core/types';
@@ -132,20 +138,6 @@ function fitDims(pw: number, ph: number, mw: number, mh: number, fit: string): [
 	return [Math.min(pw, ph * mw / mh), Math.min(ph, pw * mh / mw)];
 }
 
-/**
- * Remove CSS that only has meaning *during compositing* — `mix-blend-mode` and
- * `isolation`. These are honoured by the final `drawImage` call (via
- * `globalCompositeOperation`); applying them inside the rasterized
- * `<foreignObject>` would either blend the layer against the SVG's transparent
- * backdrop (producing implementation-defined pixels for separable blends like
- * `difference`) or be applied a second time on top of the canvas composite,
- * giving visibly different results from DomRenderer's native CSS path.
- */
-function stripCompositingCss(el: HTMLElement): void {
-	el.style.removeProperty('mix-blend-mode');
-	el.style.removeProperty('isolation');
-}
-
 export default class LayerRasterizer {
 	/** One OffscreenCanvas per layer, keyed by layer id. */
 	private surfaces: Map<string, OffscreenCanvas> = new Map();
@@ -239,16 +231,12 @@ export default class LayerRasterizer {
 		const surface = this.getSurface(id);
 
 		if (layer.cacheable) {
-			// Effect-param dot-paths and the transition-injected `__effects`
-			// sentinel are both consumed by the WebGL compositor downstream,
-			// not by CSS — so they don't affect the rasterized bitmap.
-			// Excluding them from the cache key lets the rasterizer reuse the
-			// same bitmap across the transition window when only the WebGL
-			// pipeline is changing (e.g. `noiseDissolve`, `wipeReveal`,
-			// `scanReveal` — pure-effect transitions that don't touch CSS).
-			const key = JSON.stringify(props, (k, v) =>
-				(k.startsWith('effects.') || k === '__effects') ? undefined : v
-			);
+			// The key comes from the layer itself (`getRasterCacheKey`) so a
+			// layer type whose content isn't fully described by `props` — e.g.
+			// an external layer driven by its own mutable document — can fold
+			// a content revision into it. See the hook's docs for what the
+			// default excludes and why.
+			const key = layer.getRasterCacheKey(props);
 			if (this.keys.get(id) === key) return surface;
 			this.keys.set(id, key);
 		}
@@ -353,10 +341,11 @@ export default class LayerRasterizer {
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
 		ctx.clearRect(0, 0, pw, ph);
 
-		const el = layer.$element;
-		if (!el) return;
-
-		const layerNode = await this.cloneWithInlineCanvases(el);
+		// Ask the layer for the DOM it wants rasterized. The default hook
+		// clones `$element` with inline canvases; external layer types can
+		// override it to materialize specialised DOM for the raster pass.
+		const layerNode = await layer.createRasterClone();
+		if (!layerNode) return;
 
 		// Build a renderer-root wrapper around this single layer so the
 		// CSS custom properties (`--vw`, `--project-width`, etc.) resolve
@@ -381,6 +370,23 @@ export default class LayerRasterizer {
 			</foreignObject>
 		</svg>`;
 
+		// A `data:` URL is load-bearing here — do NOT switch this to
+		// `URL.createObjectURL(new Blob([svg], …))`.
+		//
+		// Blob transport would avoid percent-encoding a string that runs to
+		// megabytes once a text layer's fonts are embedded, but in Chrome an
+		// SVG image loaded from a `blob:` URL **taints the canvas it is drawn
+		// into**, with or without `crossOrigin = 'anonymous'`. A `data:` URL
+		// does not. Verified directly in headless Chrome:
+		//
+		//   data + crossOrigin  → clean       blob + crossOrigin  → SecurityError
+		//   data, no crossOrigin→ clean       blob, no crossOrigin→ SecurityError
+		//
+		// A tainted surface breaks everything downstream of rasterization:
+		// `transferToImageBitmap()` (worker export), `getImageData`, and the
+		// WebGL effect compositor's texture upload all throw. The failure is
+		// not local to this function, so the cheaper transport is not
+		// available on the platform the renderer actually targets.
 		const img = new Image();
 		img.width = pw;
 		img.height = ph;
@@ -389,58 +395,5 @@ export default class LayerRasterizer {
 		await img.decode();
 
 		ctx.drawImage(img, 0, 0, pw, ph);
-	}
-
-	/**
-	 * Clone an element tree, replacing every `<canvas>` with an `<img>` whose
-	 * `src` is the canvas's data-URL. Without this, serialized canvases show
-	 * as empty boxes inside the foreignObject.
-	 *
-	 * The clone's root has `visibility` forced visible so callers (e.g.
-	 * DomRenderer's effect substitution) can keep the live element hidden
-	 * without producing a blank bitmap.
-	 */
-	private async cloneWithInlineCanvases(src: HTMLElement): Promise<HTMLElement> {
-		// If the root itself is a canvas, replace it outright.
-		if (src.tagName === 'CANVAS') {
-			const img = this.canvasToImg(src as HTMLCanvasElement);
-			img.style.visibility = 'visible';
-			stripCompositingCss(img);
-			return img;
-		}
-
-		const clone = src.cloneNode(true) as HTMLElement;
-		// The live element may be hidden via visibility:hidden (DomRenderer
-		// hides effect layers so only their effected canvas shows). The clone
-		// needs to be visible so rasterization produces actual pixels.
-		clone.style.visibility = 'visible';
-		stripCompositingCss(clone);
-		const srcElements = Array.from(src.querySelectorAll('*'));
-		const cloneElements = Array.from(clone.querySelectorAll('*'));
-
-		await Promise.all(srcElements.map(async (srcElem, i) => {
-			const cloneElem = cloneElements[i];
-			if (!cloneElem) return;
-			if ((srcElem as HTMLElement).style?.display === 'none') {
-				cloneElem.remove();
-				return;
-			}
-			if (cloneElem.tagName === 'CANVAS') {
-				const img = this.canvasToImg(srcElem as HTMLCanvasElement);
-				cloneElem.replaceWith(img);
-			}
-		}));
-
-		return clone;
-	}
-
-	private canvasToImg(src: HTMLCanvasElement): HTMLImageElement {
-		const img = document.createElement('img');
-		img.style.cssText = src.style.cssText;
-		img.src = src.toDataURL();
-		for (const attr of src.attributes) {
-			img.setAttribute(attr.name, attr.value);
-		}
-		return img;
 	}
 }

@@ -23,6 +23,7 @@
 
 import type { LayerJSON, LayerEffectJSON, PropertyDefinition } from '@videoflow/core/types';
 import { getTransitionDefinition } from '../transitions.js';
+import { cloneWithInlineCanvases } from '../domClone.js';
 
 /** Regex that matches an animated effect-param key (`effects.name.param` or `effects.name[idx].param`). */
 const EFFECT_PARAM_PATH_RE = /^effects\.([a-zA-Z_][\w-]*)(?:\[(\d+)\])?\.([a-zA-Z_]\w*)$/;
@@ -40,6 +41,17 @@ export interface ILayerRenderer {
 	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined;
 	/** Load a Google Font by name so it is available for rendering. */
 	loadFont(fontName: string): Promise<void>;
+	/**
+	 * Instantiate the runtime layer registered for `layerJSON.type` on **this**
+	 * renderer, using the renderer's own project fps / dimensions.
+	 *
+	 * Group layers build their descendants through this hook, which is what
+	 * makes an externally registered layer type work at any nesting depth
+	 * without the group needing to know about the registry.
+	 *
+	 * Throws for a type that isn't registered on this renderer.
+	 */
+	createRuntimeLayer(layerJSON: LayerJSON): RuntimeBaseLayer;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +112,59 @@ export default class RuntimeBaseLayer {
 		const tOut = this.json.transitionOut;
 		if (tOut && getTransitionDefinition(tOut.transition)?.injectsEffects) return true;
 		return false;
+	}
+
+	// -- Rasterization hooks ------------------------------------------------
+
+	/**
+	 * The cache key that decides whether {@link LayerRasterizer} can reuse this
+	 * layer's bitmap from the previous frame. Only consulted for
+	 * {@link cacheable} layers; identical key ⇒ the existing surface already
+	 * shows this state and is returned untouched.
+	 *
+	 * The default serialises the layer's resolved properties, minus the keys
+	 * that never reach the DOM: effect-param dot-paths (`effects.<name>.<param>`)
+	 * and the transition-injected `__effects` sentinel are both consumed by the
+	 * WebGL compositor *downstream* of rasterization, so including them would
+	 * needlessly re-rasterize every frame of a pure-effect transition
+	 * (`noiseDissolve`, `wipeReveal`, `scanReveal`, …) that doesn't touch CSS
+	 * at all.
+	 *
+	 * Override this when your layer renders content that isn't derivable from
+	 * `props` — e.g. an external layer type whose DOM is driven by an internal
+	 * document that mutates independently of the VideoJSON. Mixing a content
+	 * revision counter into the key lets the rasterizer keep caching correctly:
+	 *
+	 * ```ts
+	 * getRasterCacheKey(props: Record<string, any>): string {
+	 *   return `${this.contentRevision}:${super.getRasterCacheKey(props)}`;
+	 * }
+	 * ```
+	 */
+	getRasterCacheKey(props: Record<string, any>): string {
+		return JSON.stringify(props, (k, v) =>
+			(k.startsWith('effects.') || k === '__effects') ? undefined : v
+		);
+	}
+
+	/**
+	 * Produce the detached DOM subtree that gets serialised into the per-layer
+	 * SVG `<foreignObject>` during tier-3 rasterization.
+	 *
+	 * The default clones `$element`, forces the clone visible (the live node
+	 * may be hidden because an effect overlay is standing in for it), strips
+	 * compositing-only CSS that the final `drawImage` applies instead, and
+	 * swaps every `<canvas>` for an `<img>` of its pixels — canvases serialize
+	 * as empty boxes otherwise.
+	 *
+	 * Returning `null` skips rasterization for this frame. Override to
+	 * materialize specialised DOM for the raster pass without touching
+	 * {@link LayerRasterizer}.
+	 */
+	async createRasterClone(): Promise<HTMLElement | null> {
+		const el = this.$element;
+		if (!el) return null;
+		return cloneWithInlineCanvases(el);
 	}
 
 	// -- Timing helpers -----------------------------------------------------
