@@ -210,6 +210,52 @@ The same registry is used by `@videoflow/renderer-browser`, so effects you regis
 
 ---
 
+## External layer types
+
+Every `DomRenderer` instance owns its own layer-type registry, seeded with the seven built-ins (`text`, `captions`, `image`, `video`, `audio`, `shape`, `group`). Register your own type on an instance — no fork, no patch, no global state:
+
+```ts
+import DomRenderer, { RuntimeVisualLayer } from '@videoflow/renderer-dom';
+
+class RuntimeCustomLayer extends RuntimeVisualLayer {
+  async generateElement(): Promise<HTMLElement | null> {
+    if (this.$element) return this.$element;
+    const el = document.createElement('div');
+    el.setAttribute('data-element', 'custom');
+    el.setAttribute('data-id', this.json.id);
+    this.$element = el;
+    return el;
+  }
+}
+
+const renderer = new DomRenderer(host);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+await renderer.loadVideo(videoJSON);
+```
+
+Any layer with `type: 'custom'` now renders through `RuntimeCustomLayer`, including layers nested at any depth inside a `group`.
+
+**Lifecycle.** Register after construction and **before the first `loadVideo()`**. Registrations stay attached to the instance, so every later `loadVideo()` / `addLayer()` uses them without re-registering. Registering after a video is loaded throws — active runtime layers are never silently rebuilt (that would drop their loaded media and mounted DOM); construct a new `DomRenderer` instead.
+
+- **Duplicate registration replaces** the previous descriptor, including for built-in types.
+- **Registries belong to instances** — other renderers, including the `BrowserRenderer` you export with, are unaffected. Register the same type on both to preview and export identically.
+- **Unknown types throw** a descriptive error naming the type and the renderer.
+
+| Method | Description |
+| --- | --- |
+| `renderer.registerLayerType(type, descriptor)` | Register or replace a type on this renderer |
+| `renderer.getLayerType(type)` | The registered descriptor, or `undefined` |
+| `renderer.listLayerTypes()` | All registered type names, built-ins included |
+| `renderer.createRuntimeLayer(layerJSON)` | Instantiate the registered runtime class for a layer |
+| `renderer.getPropertyDefinition(type, prop?)` | Property definitions from the registered descriptor |
+
+For the descriptor shape, the exported runtime base classes and the `getRasterCacheKey` / `createRasterClone` hooks, see the [renderer-browser README → External layer types](https://github.com/ybouane/VideoFlow/tree/main/src/renderer-browser#external-layer-types). `@videoflow/renderer-dom` re-exports `RuntimeBaseLayer`, `RuntimeVisualLayer`, `RuntimeTextualLayer`, `RuntimeMediaLayer`, `LayerTypeRegistry`, `LayerTypeDescriptor` and `RuntimeLayerConstructor` so you can build a layer type against this package alone.
+
+---
+
 ## How it works
 
 1. **Shadow DOM mount.** Each layer becomes a real DOM element inside the host's Shadow Root. CSS handles the entire visual pipeline — transforms, blend modes, filters, shadows, font loading, fit modes — and `[data-renderer]` carries `isolation: isolate` so blend modes stay scoped to the project.

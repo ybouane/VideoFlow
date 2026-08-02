@@ -137,6 +137,95 @@ try {
 
 ---
 
+## External layer types
+
+Every renderer instance owns its own layer-type registry, seeded with the seven built-ins (`text`, `captions`, `image`, `video`, `audio`, `shape`, `group`). Register your own type on an instance — no fork, no patch, no global state:
+
+```ts
+import BrowserRenderer, {
+  RuntimeVisualLayer,
+  type LayerTypeDescriptor,
+} from '@videoflow/renderer-browser';
+
+class RuntimeCustomLayer extends RuntimeVisualLayer {
+  async generateElement(): Promise<HTMLElement | null> {
+    if (this.$element) return this.$element;
+    const el = document.createElement('div');
+    el.setAttribute('data-element', 'custom');
+    el.setAttribute('data-id', this.json.id);
+    this.$element = el;
+    return el;
+  }
+}
+
+const renderer = new BrowserRenderer(videoJSON);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+const blob = await renderer.exportVideo();
+```
+
+Any layer in the VideoJSON with `type: 'custom'` now renders through `RuntimeCustomLayer` — including layers nested at any depth inside a `group`, since groups build their descendants through the same registry.
+
+### Registration lifecycle
+
+| Renderer | Register after | Register before |
+| --- | --- | --- |
+| `BrowserRenderer` | construction | the first `renderFrame()` / `captureFrame()` / `renderAudio()` / `exportVideo()` |
+| `DomRenderer` | construction | the first `loadVideo()` |
+| `ServerRenderer` | construction | the first `renderVideo()` / `renderFrame()` / `renderAudio()` |
+
+`BrowserRenderer` defers creating its runtime layers until the first of those calls, which is exactly what keeps the registration window open. Registering afterwards throws rather than silently rebuilding live layers (which would discard their loaded media and mounted DOM).
+
+- **Duplicate registration replaces** the previous descriptor — including for built-in types, so you can override `text` on one renderer instance.
+- **Registries belong to instances.** Two renderers on the same page can map the same type name to different implementations without interfering.
+- **Unknown types throw** a descriptive error naming the type and the renderer, rather than silently rendering nothing.
+
+### Descriptor
+
+```ts
+type LayerTypeDescriptor = {
+  runtime: RuntimeLayerConstructor;                    // new (json, fps, width, height, renderer)
+  propertiesDefinition: Record<string, PropertyDefinition>;
+};
+```
+
+Both halves are registered together, so overriding a type replaces its runtime *and* its property definitions. Property lookups go through `renderer.getPropertyDefinition(layerType, prop?)`.
+
+### Registry API
+
+| Method | Description |
+| --- | --- |
+| `renderer.registerLayerType(type, descriptor)` | Register or replace a type on this renderer |
+| `renderer.getLayerType(type)` | The registered descriptor, or `undefined` |
+| `renderer.listLayerTypes()` | All registered type names, built-ins included |
+| `renderer.createRuntimeLayer(layerJSON)` | Instantiate the registered runtime class for a layer |
+
+Exported for building external types: `RuntimeBaseLayer`, `RuntimeVisualLayer`, `RuntimeTextualLayer`, `RuntimeMediaLayer`, `RuntimeLayerConstructor`, `LayerTypeDescriptor`, `LayerTypeRegistry`, `createBuiltinLayerTypeRegistry`.
+
+### Rasterization hooks
+
+`RuntimeBaseLayer` exposes two overridable hooks that `LayerRasterizer` calls, so a custom layer can control caching and the DOM it rasterizes without touching the rasterizer:
+
+```ts
+class RuntimeCustomLayer extends RuntimeVisualLayer {
+  // Fold your own content revision into the raster cache key when the layer's
+  // pixels aren't fully determined by its VideoJSON properties.
+  getRasterCacheKey(props: Record<string, any>): string {
+    return `${this.contentRevision}:${super.getRasterCacheKey(props)}`;
+  }
+
+  // Materialize specialised DOM for the `<foreignObject>` raster pass.
+  // Default: clones `$element`, inlining every `<canvas>` as an `<img>`.
+  async createRasterClone(): Promise<HTMLElement | null> {
+    return super.createRasterClone();
+  }
+}
+```
+
+---
+
 ## Transitions
 
 Built-in transition presets (the same library used by `@videoflow/renderer-dom`) auto-register on import. See the [core README → Transitions](https://github.com/ybouane/VideoFlow/tree/main/src/core#transitions) for the full categorised table and the signed-`p` contract.

@@ -159,9 +159,70 @@ try {
 
 | Method | Returns |
 | --- | --- |
+| `renderer.renderVideo(options)` | `Buffer` or the output path — same options as the static `render()` |
 | `renderer.renderFrame(frame)` | `Buffer` (JPEG) |
 | `renderer.renderAudio()` | `Buffer \| null` (WAV bytes, or `null` if the project has no audio) |
 | `renderer.cleanup()` | Tears down the Chromium page and any ffmpeg subprocess |
+
+---
+
+## External layer types
+
+`@videoflow/renderer-browser` and `@videoflow/renderer-dom` let you register a custom layer type by passing the runtime **class** directly. The server renderer can't do that: the `BrowserRenderer` lives in a separate headless Chromium realm, and neither `page.evaluate` arguments nor Playwright's structured serialization can carry functions across it.
+
+So instead you register a **module path**, and the module gets bundled into the renderer page script:
+
+```ts
+import { ServerRenderer } from '@videoflow/renderer-server';
+
+const renderer = new ServerRenderer(videoJSON);
+renderer.registerLayerType('custom', {
+  modulePath: '/absolute/path/to/custom-layer-type.js',
+  exportName: 'default',   // optional, defaults to 'default'
+});
+
+try {
+  await renderer.renderVideo({ outputType: 'file', output: './out.mp4' });
+} finally {
+  await renderer.cleanup();
+}
+```
+
+`modulePath` must be an **absolute local filesystem path** (relative paths throw). The module must be **browser-compatible** — it is bundled with esbuild for the page, not executed in Node — and must export a descriptor:
+
+```js
+// /absolute/path/to/custom-layer-type.js
+import { RuntimeVisualLayer } from '@videoflow/renderer-browser';
+
+class RuntimeCustomLayer extends RuntimeVisualLayer {
+  async generateElement() { /* … */ }
+}
+
+export default {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+};
+```
+
+The descriptors are registered on the in-page `BrowserRenderer` after construction and before its first frame, so external types work at any group nesting depth — exactly as they do in the browser.
+
+**Lifecycle.** Register after construction and **before** `renderVideo()` / `renderFrame()` / `renderAudio()` — those open the headless page and build the bundle. Registering afterwards throws. A duplicate registration replaces the earlier one for that type.
+
+**Bundle caching.** The renderer-page bundle is cached across renders and keyed on the registered type names, absolute module paths, export names and each module's mtime + size — so two `ServerRenderer` instances with different registrations never reuse each other's bundle, and editing an external module during development invalidates the cache.
+
+### Static shorthand
+
+`ServerRenderer.render()` accepts a serializable `layerTypes` array; internally it constructs an instance and calls `registerLayerType()` for each entry:
+
+```ts
+await VideoRenderer.render(videoJSON, {
+  outputType: 'file',
+  output: './out.mp4',
+  layerTypes: [
+    { type: 'custom', modulePath: '/absolute/path/to/custom-layer-type.js' },
+  ],
+});
+```
 
 ---
 
