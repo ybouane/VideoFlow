@@ -35,9 +35,28 @@
  * Layer-specific behaviour is delegated to the runtime layer hierarchy in
  * `./layers/`. Transition and effect registries are in `./transitions.ts` and
  * `./effects.ts`; built-in presets are auto-registered via side-effect imports.
+ *
+ * ## External layer types
+ *
+ * Each renderer instance owns a {@link LayerTypeRegistry} seeded with the
+ * built-in types (`text`, `captions`, `image`, `video`, `audio`, `shape`,
+ * `group`). Consumers extend it without forking this package:
+ *
+ * ```ts
+ * const renderer = new BrowserRenderer(videoJSON);
+ * renderer.registerLayerType('custom', {
+ *   runtime: RuntimeCustomLayer,
+ *   propertiesDefinition: CustomLayer.propertiesDefinition,
+ * });
+ * await renderer.exportVideo();
+ * ```
+ *
+ * Runtime layers are created lazily on the first initialisation/render call,
+ * which is what keeps that registration window open. Registering afterwards
+ * throws.
  */
 
-import type { VideoJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
+import type { VideoJSON, LayerJSON, RenderOptions, PropertyDefinition } from '@videoflow/core/types';
 import { audioBufferToWav } from '@videoflow/core/utils';
 import RENDERER_CSS from './renderer.css.js';
 export { RENDERER_CSS };
@@ -50,7 +69,13 @@ import {
 	QUALITY_HIGH,
 } from 'mediabunny';
 
-import { createRuntimeLayer, RuntimeBaseLayer, type ILayerRenderer } from './layers/index.js';
+import {
+	RuntimeBaseLayer,
+	createBuiltinLayerTypeRegistry,
+	type ILayerRenderer,
+	type LayerTypeDescriptor,
+	type LayerTypeRegistry,
+} from './layers/index.js';
 import RuntimeGroupLayer from './layers/RuntimeGroupLayer.js';
 import LayerRasterizer from './LayerRasterizer.js';
 import WebGLEffectCompositor from './WebGLEffectCompositor.js';
@@ -120,28 +145,6 @@ export async function pickSupportedAudioCodec(
 }
 
 // ---------------------------------------------------------------------------
-//  Property definition registry — built from core layer classes
-// ---------------------------------------------------------------------------
-
-import {
-	TextLayer, CaptionsLayer, ImageLayer, VideoLayer, AudioLayer, ShapeLayer, GroupLayer,
-} from '@videoflow/core';
-
-/**
- * Static registry mapping layer type → merged propertiesDefinition.
- * Avoids re-computing on every property lookup.
- */
-const PROPERTIES_BY_TYPE: Record<string, Record<string, PropertyDefinition>> = {
-	text: TextLayer.propertiesDefinition,
-	captions: CaptionsLayer.propertiesDefinition,
-	image: ImageLayer.propertiesDefinition,
-	video: VideoLayer.propertiesDefinition,
-	audio: AudioLayer.propertiesDefinition,
-	shape: ShapeLayer.propertiesDefinition,
-	group: GroupLayer.propertiesDefinition,
-};
-
-// ---------------------------------------------------------------------------
 //  BrowserRenderer
 // ---------------------------------------------------------------------------
 
@@ -175,6 +178,19 @@ export default class BrowserRenderer implements ILayerRenderer {
 	/** Overlay canvas per effect layer id, showing the post-effect bitmap. */
 	private effectCanvases: Map<string, HTMLCanvasElement> = new Map();
 
+	/**
+	 * This renderer's own layer-type registry, seeded with the built-in types
+	 * and extendable via {@link registerLayerType} until the runtime layers are
+	 * created.
+	 */
+	private layerTypes: LayerTypeRegistry = createBuiltinLayerTypeRegistry('BrowserRenderer');
+	/**
+	 * Flipped the moment runtime layers are instantiated. Registration is
+	 * closed from then on: rebuilding live layers underneath an in-flight
+	 * render would silently drop their loaded media and DOM state.
+	 */
+	private layersCreated = false;
+
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
 
@@ -207,12 +223,87 @@ export default class BrowserRenderer implements ILayerRenderer {
 		this.$canvas.style.overflow = 'hidden';
 		document.body.appendChild(this.$canvas);
 
-		// Create runtime layers via the type registry
-		for (const layerJSON of videoJSON.layers) {
-			this.layers.push(createRuntimeLayer(layerJSON, videoJSON.fps, videoJSON.width, videoJSON.height, this));
-		}
+		// NOTE: runtime layers are deliberately NOT created here — see
+		// `ensureRuntimeLayers()`. Deferring them leaves a window between
+		// construction and the first render in which callers can extend the
+		// layer-type registry.
 
 		this.fontEmbedder = new FontEmbedder(this.loadedFonts);
+	}
+
+	// -----------------------------------------------------------------------
+	//  Layer-type registry
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Register (or replace) a layer type on **this** renderer.
+	 *
+	 * ```ts
+	 * const renderer = new BrowserRenderer(videoJSON);
+	 * renderer.registerLayerType('custom', {
+	 *   runtime: RuntimeCustomLayer,
+	 *   propertiesDefinition: CustomLayer.propertiesDefinition,
+	 * });
+	 * await renderer.exportVideo();
+	 * ```
+	 *
+	 * Lifecycle: register after construction and **before** the first
+	 * `initLayers()` / `renderFrame()` / `captureFrame()` / `renderAudio()` /
+	 * `exportVideo()` call — those create the runtime layers and close the
+	 * registration window. Registering a type that already exists (including a
+	 * built-in) replaces the previous descriptor rather than throwing, which is
+	 * how you override a built-in type for one renderer instance.
+	 *
+	 * The registry belongs to this instance: other renderers are unaffected.
+	 */
+	registerLayerType(type: string, descriptor: LayerTypeDescriptor): void {
+		if (this.layersCreated) {
+			throw new Error(
+				`BrowserRenderer.registerLayerType("${type}"): layer types must be registered before the first ` +
+				`render or initialization operation (renderFrame / captureFrame / renderAudio / exportVideo / ` +
+				`initLayers). This renderer has already created its runtime layers.`,
+			);
+		}
+		this.layerTypes.register(type, descriptor);
+	}
+
+	/** The descriptor registered for `type` on this renderer, if any. */
+	getLayerType(type: string): LayerTypeDescriptor | undefined {
+		return this.layerTypes.get(type);
+	}
+
+	/** Every layer type registered on this renderer, built-ins included. */
+	listLayerTypes(): string[] {
+		return this.layerTypes.list();
+	}
+
+	/**
+	 * Instantiate the runtime layer registered for `layerJSON.type`, wired to
+	 * this renderer and this project's fps / dimensions. Used for top-level
+	 * layers and — via `ILayerRenderer` — by groups for their descendants.
+	 *
+	 * Throws for a type that isn't registered on this renderer.
+	 */
+	createRuntimeLayer(layerJSON: LayerJSON): RuntimeBaseLayer {
+		return this.layerTypes.createRuntimeLayer(
+			layerJSON,
+			this.videoJSON.fps,
+			this.videoJSON.width,
+			this.videoJSON.height,
+			this,
+		);
+	}
+
+	/**
+	 * Create the runtime layers if they don't exist yet, closing the
+	 * layer-type registration window. Idempotent.
+	 */
+	private ensureRuntimeLayers(): void {
+		if (this.layersCreated) return;
+		this.layersCreated = true;
+		for (const layerJSON of this.videoJSON.layers) {
+			this.layers.push(this.createRuntimeLayer(layerJSON));
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -220,16 +311,17 @@ export default class BrowserRenderer implements ILayerRenderer {
 	// -----------------------------------------------------------------------
 
 	/**
-	 * Look up the full property definitions for a layer type, or a single property.
-	 * Used by runtime layers to determine CSS mapping and defaults.
+	 * Look up the full property definitions for a layer type, or a single
+	 * property. Resolved through this renderer's layer-type registry, so an
+	 * overridden type gets its overriding property definitions too.
 	 */
 	getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined;
 	getPropertyDefinition(layerType: string, prop: string): PropertyDefinition | undefined;
 	getPropertyDefinition(layerType: string, prop?: string): Record<string, PropertyDefinition> | PropertyDefinition | undefined {
 		if (prop !== undefined) {
-			return PROPERTIES_BY_TYPE[layerType]?.[prop];
+			return this.layerTypes.getPropertyDefinition(layerType, prop);
 		}
-		return PROPERTIES_BY_TYPE[layerType];
+		return this.layerTypes.getPropertyDefinition(layerType);
 	}
 
 	// -----------------------------------------------------------------------
@@ -260,9 +352,16 @@ export default class BrowserRenderer implements ILayerRenderer {
 	//  Initialisation
 	// -----------------------------------------------------------------------
 
-	/** Initialise all layers — load media, create DOM elements. Idempotent. */
+	/**
+	 * Create the runtime layers (first call only), then initialise them —
+	 * load media, create DOM elements. Idempotent.
+	 *
+	 * This is the point at which the layer-type registration window closes;
+	 * every public entry point that needs live layers funnels through here.
+	 */
 	private async initLayers(): Promise<void> {
 		if (this.elementsSetup) return;
+		this.ensureRuntimeLayers();
 		// Load default font
 		const defaultFont = 'Noto Sans';
 		await this.loadFont(defaultFont);
@@ -732,6 +831,9 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 * platforms (notably headless Chrome on Linux).
 	 */
 	async renderAudio(): Promise<AudioBuffer | null> {
+		// Layers are created lazily, so a caller that goes straight to audio
+		// without rendering a frame first would otherwise mix an empty set.
+		await this.initLayers();
 		return renderMixedAudio(this.layers, this.videoJSON.duration, {
 			fps: this.videoJSON.fps,
 			sampleRate: 48000,
