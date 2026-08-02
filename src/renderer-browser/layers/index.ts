@@ -1,11 +1,14 @@
 /**
- * Runtime layer registry — maps layer type strings to their runtime classes.
+ * Runtime layer barrel.
  *
- * The renderer uses {@link createRuntimeLayer} to instantiate the correct
- * runtime class for each layer in the compiled VideoJSON.
+ * Layer types are resolved through a **per-renderer** {@link LayerTypeRegistry}
+ * rather than a module-level table, so consumers can register external layer
+ * types on one renderer instance without affecting any other. Use
+ * `renderer.createRuntimeLayer(layerJSON)` (or
+ * `registry.createRuntimeLayer(...)`) to instantiate a layer — there is no
+ * global factory.
  */
 
-import type { LayerJSON } from '@videoflow/core/types';
 import RuntimeBaseLayer, { type ILayerRenderer } from './RuntimeBaseLayer.js';
 import RuntimeVisualLayer from './RuntimeVisualLayer.js';
 import RuntimeTextualLayer from './RuntimeTextualLayer.js';
@@ -18,35 +21,18 @@ import RuntimeAudioLayer from './RuntimeAudioLayer.js';
 import RuntimeShapeLayer from './RuntimeShapeLayer.js';
 import RuntimeGroupLayer from './RuntimeGroupLayer.js';
 
-/** Registry mapping layer type strings to runtime classes. */
-const RUNTIME_LAYER_CLASSES: Record<string, typeof RuntimeBaseLayer> = {
-	text: RuntimeTextLayer,
-	captions: RuntimeCaptionsLayer,
-	image: RuntimeImageLayer,
-	video: RuntimeVideoLayer,
-	audio: RuntimeAudioLayer,
-	shape: RuntimeShapeLayer,
-	group: RuntimeGroupLayer,
-};
-
-/**
- * Create the appropriate runtime layer instance for a given LayerJSON.
- *
- * Falls back to the base class for unknown layer types.
- */
 export type { ILayerRenderer };
 
-export function createRuntimeLayer(
-	json: LayerJSON, fps: number, width: number, height: number, renderer: ILayerRenderer
-): RuntimeBaseLayer {
-	const Cls = RUNTIME_LAYER_CLASSES[json.type] ?? RuntimeBaseLayer;
-	return new Cls(json, fps, width, height, renderer);
-}
+export {
+	LayerTypeRegistry,
+	type LayerTypeDescriptor,
+	type RuntimeLayerConstructor,
+} from './registry.js';
 
-// Inject the factory into RuntimeGroupLayer so it can recursively build
-// children without importing the registry directly (which would create a
-// load-time cycle since the registry imports this class).
-RuntimeGroupLayer.setChildFactory(createRuntimeLayer);
+export {
+	BUILTIN_LAYER_TYPES,
+	createBuiltinLayerTypeRegistry,
+} from './builtins.js';
 
 export {
 	RuntimeBaseLayer,

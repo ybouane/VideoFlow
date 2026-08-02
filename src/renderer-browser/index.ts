@@ -10,7 +10,6 @@ export { default } from './BrowserRenderer.js';
 export { default as BrowserRenderer, RENDERER_CSS } from './BrowserRenderer.js';
 
 export {
-	createRuntimeLayer,
 	RuntimeBaseLayer,
 	RuntimeVisualLayer,
 	RuntimeTextualLayer,
@@ -24,6 +23,19 @@ export {
 	RuntimeGroupLayer,
 	type ILayerRenderer,
 } from './layers/index.js';
+
+// Layer-type registry — extend a renderer with external layer types without
+// forking this package. There is no global registry; each renderer instance
+// owns one (see `BrowserRenderer.registerLayerType`).
+export {
+	LayerTypeRegistry,
+	BUILTIN_LAYER_TYPES,
+	createBuiltinLayerTypeRegistry,
+	type LayerTypeDescriptor,
+	type RuntimeLayerConstructor,
+} from './layers/index.js';
+
+export { cloneWithInlineCanvases, stripCompositingCss } from './domClone.js';
 
 export {
 	registerTransition,

@@ -57,22 +57,6 @@ export interface IGroupAwareRenderer extends ILayerRenderer {
 	getVirtualLayerHost?(): Node;
 }
 
-/**
- * Factory used to recursively instantiate children. Set by
- * `layers/index.ts` after the registry is fully populated — this side-step
- * avoids a top-of-file `import { createRuntimeLayer } from './index.js'`
- * which would form a cycle (the registry has to import this class to
- * register it, so this class can't import the registry back at module
- * load).
- */
-type ChildFactory = (
-	json: LayerJSON,
-	fps: number,
-	width: number,
-	height: number,
-	renderer: ILayerRenderer,
-) => RuntimeBaseLayer;
-
 export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 	/** Child runtime layers, in the same order as `json.children`. */
 	children: RuntimeBaseLayer[] = [];
@@ -88,16 +72,6 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 	/** Whether `mountVirtualChildren` has appended children DOMs to virtualRoot. */
 	private childrenMounted = false;
 
-	private static childFactory: ChildFactory | null = null;
-
-	/**
-	 * Register the runtime-layer factory used to build children. Called once
-	 * by `layers/index.ts` after the registry is initialised.
-	 */
-	static setChildFactory(fn: ChildFactory): void {
-		RuntimeGroupLayer.childFactory = fn;
-	}
-
 	constructor(
 		json: LayerJSON,
 		fps: number,
@@ -112,15 +86,15 @@ export default class RuntimeGroupLayer extends RuntimeMediaLayer {
 		// project-relative coordinates, so no resampling.
 		this.dimensions = [width, height];
 
-		// Build child runtime layers recursively. A child can itself be a
-		// group, in which case the factory returns another
-		// `RuntimeGroupLayer` and the recursion continues through its own
-		// constructor.
+		// Build child runtime layers recursively through the owning renderer's
+		// layer-type registry, so externally registered types resolve at any
+		// nesting depth and two renderers can map the same type name to
+		// different implementations. A child can itself be a group, in which
+		// case the recursion continues through its own constructor.
 		const children = json.children;
-		const factory = RuntimeGroupLayer.childFactory;
-		if (factory && Array.isArray(children) && children.length > 0) {
+		if (Array.isArray(children) && children.length > 0) {
 			for (const childJson of children) {
-				this.children.push(factory(childJson, fps, width, height, renderer));
+				this.children.push(this.renderer.createRuntimeLayer(childJson));
 			}
 		}
 	}
