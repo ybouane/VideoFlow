@@ -589,7 +589,9 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	// Gate the additive glow by c.a so transparent regions don't pick up white
 	// edge contributions with alpha=0 (invalid premultiplied → visible blobs).
 	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * band * c.a;
-	return vec4(result, c.a * softReveal);
+	// Premultiplied alpha — see radialReveal: rgb must be scaled with alpha or
+	// the un-revealed region composites additively instead of hiding.
+	return vec4(result * softReveal, c.a * softReveal);
 }`, {
 	progress:       { type: 'float', default: 0.5,   min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	angle:          { type: 'float', default: 0,     min: 0, max: 360, animatable: true, fieldConfig: { step: 1, unit: 'deg' } },
@@ -621,7 +623,11 @@ vec4 effect(sampler2D tex, vec2 uv, vec2 resolution) {
 	// Gate the additive glow by c.a so transparent regions don't pick up white
 	// edge contributions with alpha=0 (invalid premultiplied → visible blobs).
 	vec3 result = c.rgb + vec3(1.0) * u_edgeGlow * edge * c.a;
-	return vec4(result, c.a * mask);
+	// PREMULTIPLIED alpha: rgb must be scaled by the same mask as alpha.
+	// Returning full-brightness rgb with alpha 0 makes the compositor ADD
+	// colour where the effect is meant to hide content — the masked region
+	// glows instead of disappearing. (wipeMask has always done this correctly.)
+	return vec4(result * mask, c.a * mask);
 }`, {
 	progress: { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
 	centerX:  { type: 'float', default: 0.5,  min: 0, max: 1, animatable: true, fieldConfig: { step: 0.01 } },
