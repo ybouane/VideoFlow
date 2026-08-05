@@ -79,7 +79,17 @@ async function getSharedBrowser(): Promise<Browser> {
 		channel: 'chrome',
 		args: [
 			'--no-sandbox',
-			'--single-process',
+			// NOT `--single-process`. In that mode the page renderer shares the
+			// browser process, so ONE V8 heap cap covers the page, the compositor
+			// and the accumulating encoded output — and a long export dies when it
+			// hits the cap, taking the whole browser with it. It surfaces as
+			// "Target page, context or browser has been closed", which reads
+			// exactly like host memory exhaustion and sends you hunting the wrong
+			// thing. Reproduced on a 25s 1080p / 751-frame export: it failed at the
+			// SAME 89% on every attempt with 4.7GB free on the box, while every
+			// individual frame rendered fine in isolation. Removing the flag and
+			// giving V8 real headroom renders it to completion.
+			'--js-flags=--max-old-space-size=4096',
 			'--no-zygote',
 			'--disable-gpu',
 			'--disable-dev-shm-usage',
