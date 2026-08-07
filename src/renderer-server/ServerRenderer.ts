@@ -463,25 +463,32 @@ export default class ServerRenderer {
 	private async rewriteLocalSources(): Promise<void> {
 		const audioTypes = new Set(['audio', 'video']);
 
-		for (const layer of this.videoJSON.layers) {
-			const source = layer.settings.source;
-			if (typeof source !== 'string') continue;
+		// RECURSE INTO CHILDREN. This walked only the top level, so an image or
+		// video inside a group kept its filesystem path, Chromium refused to
+		// fetch it, and the child was disabled with a single console line — the
+		// group rendered without its media and nothing threw. A composition
+		// built as `group(background, screenshot, captions)` came out as
+		// background plus captions, silently missing the product shot.
+		const walk = async (layers: VideoJSON['layers']): Promise<void> => {
+			for (const layer of layers ?? []) {
+				const source = layer.settings?.source;
+				if (typeof source === 'string' && this.isLocalFile(source)) {
+					const absPath = path.resolve(source);
+					try {
+						await fs.access(absPath);
+					} catch {
+						throw new Error(`Local file not found: ${absPath} (layer ${layer.id})`);
+					}
 
-			const isLocal = this.isLocalFile(source);
-
-			if (isLocal) {
-				const absPath = path.resolve(source);
-				try {
-					await fs.access(absPath);
-				} catch {
-					throw new Error(`Local file not found: ${absPath} (layer ${layer.id})`);
+					const uuid = crypto.randomUUID();
+					this.localFileMap.set(uuid, absPath);
+					layer.settings.source = `https://videoflow.local/file/${uuid}`;
 				}
-
-				const uuid = crypto.randomUUID();
-				this.localFileMap.set(uuid, absPath);
-				layer.settings.source = `https://videoflow.local/file/${uuid}`;
+				const children = (layer as { children?: VideoJSON['layers'] }).children;
+				if (children?.length) await walk(children);
 			}
-		}
+		};
+		await walk(this.videoJSON.layers);
 	}
 
 	// -----------------------------------------------------------------------
