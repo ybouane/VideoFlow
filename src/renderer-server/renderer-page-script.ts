@@ -46,6 +46,15 @@ export type ExternalLayerTypeEntry = {
 	descriptor: LayerTypeDescriptor;
 };
 
+/**
+ * The slice of `RenderOptions` that has to reach the in-page encoder. Kept to
+ * plain JSON so it survives `page.evaluate` serialization.
+ */
+export type PageEncodeOptions = {
+	videoQuality?: 'medium' | 'high' | 'veryHigh';
+	videoBitrate?: number;
+};
+
 declare global {
 	interface Window {
 		loadProject: () => Promise<any>;
@@ -56,7 +65,7 @@ declare global {
 		renderFrame: (frame: number) => Promise<void>;
 		captureFrame: (frame: number) => Promise<void>;
 		renderAudio: () => Promise<Uint8Array | null>;
-		exportVideo: (uploadUrl: string) => Promise<number>;
+		exportVideo: (uploadUrl: string, encodeOptions?: PageEncodeOptions) => Promise<number>;
 		__exportAbort?: AbortController;
 	}
 }
@@ -148,7 +157,7 @@ export async function startRendererPage(externalLayerTypes: ExternalLayerTypeEnt
 		// POST through Playwright's route handler so the bytes never touch the
 		// network — they go straight from the page's request body to a Buffer
 		// in Node, with no JSON serialisation step.
-		window.exportVideo = async (uploadUrl: string): Promise<number> => {
+		window.exportVideo = async (uploadUrl: string, encodeOptions: PageEncodeOptions = {}): Promise<number> => {
 			// Fresh AbortController per export so subsequent renders aren't
 			// poisoned by an earlier abort.
 			const abort = new AbortController();
@@ -157,6 +166,11 @@ export async function startRendererPage(externalLayerTypes: ExternalLayerTypeEnt
 			let blob: Blob;
 			try {
 				blob = await renderer.exportVideo({
+					// Encoding quality comes from the server's RenderOptions —
+					// see `resolveVideoBitrate` in renderer-browser for why the
+					// default is QUALITY_VERY_HIGH rather than QUALITY_HIGH.
+					videoQuality: encodeOptions.videoQuality,
+					videoBitrate: encodeOptions.videoBitrate,
 					signal: abort.signal,
 					onProgress: (progress: number) => {
 						// Bridge progress out to Node. Swallow callback errors so

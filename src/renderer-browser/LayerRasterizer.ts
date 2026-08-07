@@ -127,6 +127,24 @@ function isSimpleTransform(props: Record<string, any>): boolean {
  */
 const LATCH_WINDOW = 1.08;
 
+/**
+ * How far a tier-3 layer's POSITION may drift from its latched raster position
+ * before the DOM is rasterized again, as a fraction of the project's shorter
+ * side (3% = 32px at 1080p).
+ *
+ * Unlike the scale latch this is not about image quality — a residual translate
+ * resamples the raster once no matter how far it goes. It is the safety half of
+ * {@link LayerRasterizer.inkIsContained}: the latch is only taken when a band
+ * this wide around the frame edge is blank, so bounding the travel by the same
+ * number means the raster can never be asked for content it does not have.
+ *
+ * The bound costs nothing on the motion this fixes. A slow drift moves ~0.1px
+ * per frame, so it re-rasterizes roughly once every 300 frames; a move fast
+ * enough to hit the bound often is already far above the pixel grid, where a
+ * re-snap is invisible.
+ */
+const POSITION_LATCH_SPAN = 0.03;
+
 function outsideLatch(scale: number, base: number): boolean {
 	return scale > base * LATCH_WINDOW || scale * LATCH_WINDOW < base;
 }
@@ -155,14 +173,22 @@ function fitDims(pw: number, ph: number, mw: number, mh: number, fit: string): [
 	return [Math.min(pw, ph * mw / mh), Math.min(ph, pw * mh / mw)];
 }
 
-/** A tier-3 layer's latched raster scale and the residual applied on top. */
-type StableScale = {
+/**
+ * A tier-3 layer's latched raster geometry (the scale AND position the DOM is
+ * painted at) plus the residual transform the composite blit applies on top.
+ */
+type StableTransform = {
 	/** Scale the DOM is rasterized at (what goes into the raster cache key). */
 	base: [number, number];
-	/** Residual factors — `props.scale / base` — applied by the composite blit. */
+	/** Position the DOM is rasterized at, as project fractions. */
+	basePos: [number, number];
+	/** Residual scale factors — `props.scale / base`. */
 	kx: number;
 	ky: number;
-	/** Fixed point of the residual scale, in project pixels. */
+	/** The latched position in project pixels — where the raster's anchor sits. */
+	bpx: number;
+	bpy: number;
+	/** This frame's real position in project pixels — where it should sit. */
 	px: number;
 	py: number;
 };
@@ -178,6 +204,15 @@ export default class LayerRasterizer {
 	 */
 	private baseSurfaces: Map<string, OffscreenCanvas> = new Map();
 	private baseScales: Map<string, [number, number]> = new Map();
+	/** Latched raster position per layer, as project fractions. */
+	private basePositions: Map<string, [number, number]> = new Map();
+	/**
+	 * Whether the layer's last base raster kept its ink clear of the frame edge.
+	 * Only then may the position be latched: the raster is clipped to the
+	 * project rect (`[data-renderer]` is `overflow:hidden`) and a translated
+	 * raster cannot reveal what was cut off. See {@link inkIsContained}.
+	 */
+	private posLatchable: Map<string, boolean> = new Map();
 	/**
 	 * Resampling quality applied during the tier-1 `drawImage`. `'high'`
 	 * runs Lanczos / bicubic in Chrome (slow but pixel-accurate — used by
@@ -217,12 +252,16 @@ export default class LayerRasterizer {
 	invalidate(layerId: string): void {
 		this.keys.delete(layerId);
 		this.baseScales.delete(layerId);
+		this.basePositions.delete(layerId);
+		this.posLatchable.delete(layerId);
 	}
 
 	/** Forget all cached keys (surfaces remain for re-use). */
 	clearCache(): void {
 		this.keys.clear();
 		this.baseScales.clear();
+		this.basePositions.clear();
+		this.posLatchable.clear();
 	}
 
 	/** Release all per-layer surfaces and keys. */
@@ -230,7 +269,10 @@ export default class LayerRasterizer {
 		this.surfaces.clear();
 		this.keys.clear();
 		this.baseSurfaces.clear();
+		this.strips.clear();
 		this.baseScales.clear();
+		this.basePositions.clear();
+		this.posLatchable.clear();
 	}
 
 	/**
@@ -270,10 +312,13 @@ export default class LayerRasterizer {
 		const surface = this.getSurface(id);
 		const tier = this.pickRasterTier(layer, props);
 
-		// Tier 3 under a plain scale: rasterize the DOM at a STABLE scale and
-		// let a canvas transform carry the tween. See `stableScaleFor`.
-		const stable = tier === 3 ? this.stableScaleFor(id, props) : null;
-		const cacheProps = stable ? { ...props, scale: stable.base } : props;
+		// Tier 3 under a plain scale/translate: rasterize the DOM at a STABLE
+		// scale AND position, and let a canvas transform carry the tween. See
+		// `stableTransformFor`.
+		const stable = tier === 3 ? this.stableTransformFor(id, props) : null;
+		const cacheProps = stable
+			? { ...props, scale: stable.base, position: stable.basePos }
+			: props;
 
 		if (layer.cacheable) {
 			// The key comes from the layer itself (`getRasterCacheKey`) so a
@@ -292,7 +337,7 @@ export default class LayerRasterizer {
 			if (this.keys.get(id) === key && (!stable || this.baseSurfaces.has(id))) {
 				if (!stable) return surface;
 				// Base raster unchanged — only the residual transform moved.
-				this.drawStableScale(id, stable, surface);
+				this.drawStable(id, stable, surface);
 				return surface;
 			}
 			this.keys.set(id, key);
@@ -304,16 +349,22 @@ export default class LayerRasterizer {
 			ctx.clearRect(0, 0, this.videoJSON.width, this.videoJSON.height);
 			this.drawTier1(layer, props, ctx);
 		} else if (stable) {
-			// Paint the DOM with its scale pinned to the latched base, then put
-			// the frame's real scale back so nothing downstream sees the swap.
-			// Skipped entirely when the residual is identity (a static scale, or
-			// the frame the latch was taken on) — which is most layers, most
-			// frames, so the common case costs only the extra blit.
-			const swap = stable.kx !== 1 || stable.ky !== 1;
+			// Paint the DOM with its scale and position pinned to the latched
+			// base, then put the frame's real values back so nothing downstream
+			// sees the swap. Skipped entirely when the residual is identity (a
+			// static layer, or the frame the latch was taken on) — which is most
+			// layers, most frames, so the common case costs only the extra blit.
+			const swap = stable.kx !== 1 || stable.ky !== 1
+				|| stable.bpx !== stable.px || stable.bpy !== stable.py;
+			const base = this.getBaseSurface(id);
 			if (swap) await layer.applyProperties(cacheProps);
-			await this.rasterizeForeignObject(layer, this.getBaseSurface(id));
+			await this.rasterizeForeignObject(layer, base);
 			if (swap) await layer.applyProperties(props);
-			this.drawStableScale(id, stable, surface);
+			// Re-test containment on every fresh base raster: the layer's ink can
+			// grow (tracking expansion, a counting number widening) and reach the
+			// frame edge long after the latch was taken.
+			this.posLatchable.set(id, this.inkIsContained(base));
+			this.drawStable(id, stable, surface);
 		} else {
 			await this.rasterizeForeignObject(layer, surface);
 		}
@@ -321,35 +372,62 @@ export default class LayerRasterizer {
 	}
 
 	/**
-	 * Pick the scale a tier-3 layer's DOM is rasterized at this frame, plus the
-	 * residual factor the composite applies on top.
+	 * Pick the scale AND position a tier-3 layer's DOM is rasterized at this
+	 * frame, plus the residual transform the composite applies on top.
 	 *
 	 * WHY THIS EXISTS. A tier-3 layer is DOM, and DOM text is re-shaped every
 	 * time it is rasterized: Chrome snaps each glyph origin to the device pixel
 	 * grid — a quarter pixel horizontally, a WHOLE pixel vertically. Bake an
-	 * animated `scale` into that DOM and the glyphs can only move in grid
-	 * steps, so a tween slower than the grid stutters instead of gliding. This
-	 * is NOT the `fontSize`-vs-`scale` problem: animating `scale` alone hits it.
-	 * Measured on a 132px headline under `scale: 1 -> 1.03` over 3s (its edges
-	 * move ~0.15px/frame), as sub-pixel ink edges over 55 frames:
+	 * animated transform into that DOM and the glyphs can only move in grid
+	 * steps, so a tween slower than the grid stutters instead of gliding.
 	 *
-	 *                            edge jerk   frames with zero motion
-	 *   scale baked into the DOM   0.20px      22 / 54
-	 *   scale as a canvas affine   0.04px       0 / 54
+	 * This bites BOTH animated properties that move a layer:
 	 *
-	 * The second row is what an image layer already gets for free on tier 1,
-	 * because its bitmap is transformed rather than redrawn. This gives tier 3
-	 * the same deal: rasterize the DOM once at a latched scale, then let
-	 * `ctx.setTransform` carry the animation continuously.
+	 * - `scale`. Measured on a 132px headline under `scale: 1 -> 1.03` over 3s
+	 *   (its edges move ~0.15px/frame), as sub-pixel ink edges over 55 frames:
+	 *   0.20px edge jerk and 22/54 frames frozen when baked into the DOM,
+	 *   0.04px and 0/54 when applied as a canvas affine.
 	 *
-	 * The latch is deliberately sticky: it moves only once the residual leaves
-	 * ±{@link LATCH_WINDOW}. A life push therefore rasterizes ONCE for its whole
-	 * run, which is also a large speedup — no SVG encode/decode per frame.
+	 * - `position`. Exactly the same mechanism — a slow drift is a translate of
+	 *   a few tenths of a pixel per frame, and `translate3d` in the layer CSS
+	 *   re-snaps every glyph. The vertical axis is the ugly one, because the
+	 *   snap there is a WHOLE pixel: a drift of 0.09px/frame holds still for
+	 *   ~11 frames and then jumps a pixel.
+	 *
+	 * An image layer never sees any of this, because tier 1 transforms a bitmap
+	 * rather than redrawing it. This gives tier 3 the same deal: rasterize the
+	 * DOM once at latched geometry, then let `ctx.setTransform` carry the
+	 * animation continuously.
+	 *
+	 * ## The two latches behave differently, on purpose
+	 *
+	 * The SCALE latch is sticky but bounded: it moves once the residual leaves
+	 * ±{@link LATCH_WINDOW}, because a residual scale resamples the raster and
+	 * a large one would visibly soften it.
+	 *
+	 * The POSITION latch is bounded by CONTAINMENT rather than by quality — a
+	 * residual translate costs nothing extra as it grows, but the raster is
+	 * clipped to the project rect (`[data-renderer]` is `overflow:hidden`), so
+	 * translating it is only faithful while the raster holds all the ink that
+	 * needs to appear. {@link inkIsContained} requires a blank band of
+	 * {@link POSITION_LATCH_SPAN} around the frame edge on every fresh base
+	 * raster, and the latch is remade once the residual travels that same
+	 * distance. When containment fails — a full-bleed shape, a headline sliding
+	 * in from off-screen — the position latch is dropped for that layer and it
+	 * goes back to being rasterized at its live position every frame, which is
+	 * the pre-existing behaviour: correct, just grid-snapped. Slides like that
+	 * move far faster than the grid anyway, so there is nothing to fix.
+	 *
+	 * Note that a latch does NOT mean "rasterize once". A layer whose content or
+	 * opacity changes still re-rasterizes every frame — but now it does so at
+	 * FIXED geometry, so the glyph snapping is constant frame to frame and the
+	 * motion is carried entirely by the blit. That is the property that removes
+	 * the judder; skipping rasterization is a bonus, not the mechanism.
 	 *
 	 * Returns null — keep the previous behaviour — when the transform is not a
-	 * plain scale about the layer's position.
+	 * plain scale/translate about the layer's position.
 	 */
-	private stableScaleFor(id: string, props: Record<string, any>): StableScale | null {
+	private stableTransformFor(id: string, props: Record<string, any>): StableTransform | null {
 		if (!isDefaultNumberOrArray(props.rotation, 0)) return null;
 		const pos = props.position;
 		if (Array.isArray(pos) && pos.length > 2 && !isDefaultNumber(pos[2], 0)) return null;
@@ -357,31 +435,62 @@ export default class LayerRasterizer {
 		const [sx, sy] = normalizeScale(props.scale);
 		if (!(sx > 0) || !(sy > 0)) return null;
 
+		const posArr = Array.isArray(pos) ? pos : [0.5, 0.5];
+		const fx = extractNumber(posArr[0]) ?? 0.5;
+		const fy = extractNumber(posArr[1]) ?? 0.5;
+
+		const pw = this.videoJSON.width;
+		const ph = this.videoJSON.height;
+		const span = this.borderMargin();
+
 		let base = this.baseScales.get(id);
-		if (!base || outsideLatch(sx, base[0]) || outsideLatch(sy, base[1])) {
+		let basePos = this.basePositions.get(id);
+		const travelled = !!basePos
+			&& (Math.abs((fx - basePos[0]) * pw) > span || Math.abs((fy - basePos[1]) * ph) > span);
+		if (!base || !basePos || travelled || outsideLatch(sx, base[0]) || outsideLatch(sy, base[1])) {
+			// Re-latching the scale re-latches the position too: the raster is
+			// being remade anyway, so this is the free moment to re-anchor it and
+			// re-test containment.
 			base = [sx, sy];
+			basePos = [fx, fy];
 			this.baseScales.set(id, base);
+			this.basePositions.set(id, basePos);
+			this.posLatchable.delete(id);
 		}
 
-		const posArr = Array.isArray(pos) ? pos : [0.5, 0.5];
+		// Ink within the frame-edge band may have been clipped, so a translated
+		// raster could show a cut edge. Pin the raster to the live position
+		// instead — residual translate zero, i.e. exactly the old per-frame path.
+		if (this.posLatchable.get(id) === false && (basePos[0] !== fx || basePos[1] !== fy)) {
+			basePos = [fx, fy];
+			this.basePositions.set(id, basePos);
+		}
+
 		return {
 			base,
+			basePos,
 			kx: sx / base[0],
 			ky: sy / base[1],
-			px: (extractNumber(posArr[0]) ?? 0.5) * this.videoJSON.width,
-			py: (extractNumber(posArr[1]) ?? 0.5) * this.videoJSON.height,
+			bpx: basePos[0] * pw,
+			bpy: basePos[1] * ph,
+			px: fx * pw,
+			py: fy * ph,
 		};
 	}
 
 	/**
-	 * Blit a layer's base raster onto its surface with the residual scale.
+	 * Blit a layer's base raster onto its surface with the residual transform.
 	 *
-	 * The fixed point is the layer's `position` in project pixels: the renderer
-	 * CSS translates the element so its anchor lands there and then scales about
-	 * that anchor, so scaling the raster about the same point reproduces the CSS
-	 * transform exactly — the identity `drawTier1` already relies on.
+	 * The raster was painted with the layer's anchor at `(bpx, bpy)` and scaled
+	 * by `base`; this frame wants the anchor at `(px, py)` scaled by
+	 * `base * k`. Since the renderer CSS translates the element so its anchor
+	 * lands on `position` and scales about that same anchor, a raster pixel at
+	 * `r` corresponds to an anchor-relative offset of `(r - b) / base`, and the
+	 * wanted output is `p + k * (r - b)`. That is a scale of `k` with a
+	 * translation of `p - k*b` — which collapses to the previous
+	 * scale-only form `p * (1 - k)` whenever `b === p`.
 	 */
-	private drawStableScale(id: string, s: StableScale, surface: OffscreenCanvas): void {
+	private drawStable(id: string, s: StableTransform, surface: OffscreenCanvas): void {
 		const ctx = surface.getContext('2d')!;
 		ctx.setTransform(1, 0, 0, 1, 0, 0);
 		ctx.clearRect(0, 0, this.videoJSON.width, this.videoJSON.height);
@@ -390,9 +499,82 @@ export default class LayerRasterizer {
 		ctx.save();
 		ctx.imageSmoothingEnabled = true;
 		ctx.imageSmoothingQuality = this.quality;
-		ctx.setTransform(s.kx, 0, 0, s.ky, s.px * (1 - s.kx), s.py * (1 - s.ky));
+		ctx.setTransform(s.kx, 0, 0, s.ky, s.px - s.kx * s.bpx, s.py - s.ky * s.bpy);
 		ctx.drawImage(base, 0, 0);
 		ctx.restore();
+	}
+
+	/**
+	 * Is the base raster clear of the frame edge — i.e. can it be translated
+	 * without dragging a clipped edge into view?
+	 *
+	 * The raster is clipped to the project rect (`[data-renderer]` is
+	 * `overflow:hidden`), so a translated raster is only faithful if the layer's
+	 * ink stops short of the border. This checks a BAND of
+	 * {@link borderMargin} pixels on each side rather than the outermost row of
+	 * pixels: a one-pixel ring is not enough, because a headline running off the
+	 * left edge can happen to be cut in the gap BETWEEN two glyphs, leaving that
+	 * ring empty while the layer is very much being clipped. Measured — a
+	 * 77px-tall headline anchored at x=0 read as "contained" on the third frame
+	 * of its drift, and the raster then slid its cut edge 17px into frame.
+	 *
+	 * Pairing the band with {@link POSITION_LATCH_SPAN}, which caps how far the
+	 * residual translate may travel before the raster is remade, is what makes
+	 * this safe: content can only be missing from a strip the raster was already
+	 * known to be blank across.
+	 *
+	 * The alpha floor ignores the near-invisible tail of an antialiasing ramp,
+	 * which would otherwise disable the latch for layers well inside the frame.
+	 */
+	private inkIsContained(base: OffscreenCanvas): boolean {
+		const w = this.videoJSON.width;
+		const h = this.videoJSON.height;
+		const m = this.borderMargin();
+		// Read the bands through small scratch canvases rather than calling
+		// getImageData on the base surface: a canvas that is read back directly
+		// gets pulled onto the CPU by Chrome, and the base surface is one we want
+		// to stay a fast blit target.
+		const rows = this.scratch('h', w, 2 * m);
+		const cols = this.scratch('v', 2 * m, h);
+		const rc = rows.getContext('2d', { willReadFrequently: true })!;
+		const cc = cols.getContext('2d', { willReadFrequently: true })!;
+		rc.clearRect(0, 0, w, 2 * m);
+		cc.clearRect(0, 0, 2 * m, h);
+		rc.drawImage(base, 0, 0, w, m, 0, 0, w, m);
+		rc.drawImage(base, 0, h - m, w, m, 0, m, w, m);
+		cc.drawImage(base, 0, 0, m, h, 0, 0, m, h);
+		cc.drawImage(base, w - m, 0, m, h, m, 0, m, h);
+
+		const ALPHA_FLOOR = 6;
+		const anyInk = (data: Uint8ClampedArray) => {
+			for (let i = 3; i < data.length; i += 4) if (data[i] >= ALPHA_FLOOR) return true;
+			return false;
+		};
+		try {
+			if (anyInk(rc.getImageData(0, 0, w, 2 * m).data)) return false;
+			if (anyInk(cc.getImageData(0, 0, 2 * m, h).data)) return false;
+		} catch {
+			// A tainted or zero-sized surface — be conservative.
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * Width of the edge band {@link inkIsContained} requires to be blank, and
+	 * the distance the residual translate may cover — the two are the same
+	 * number on purpose (see {@link POSITION_LATCH_SPAN}).
+	 */
+	private borderMargin(): number {
+		return Math.max(16, Math.round(Math.min(this.videoJSON.width, this.videoJSON.height) * POSITION_LATCH_SPAN));
+	}
+
+	/** Lazily-created scratch canvases for {@link inkIsContained}'s band reads. */
+	private strips: Map<string, OffscreenCanvas> = new Map();
+	private scratch(key: string, w: number, h: number): OffscreenCanvas {
+		let c = this.strips.get(key);
+		if (!c || c.width !== w || c.height !== h) { c = new OffscreenCanvas(w, h); this.strips.set(key, c); }
+		return c;
 	}
 
 	private getBaseSurface(id: string): OffscreenCanvas {

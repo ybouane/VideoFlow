@@ -66,8 +66,9 @@ import {
 	BufferTarget,
 	CanvasSource,
 	AudioBufferSource,
-	QUALITY_HIGH,
 } from 'mediabunny';
+import { resolveVideoBitrate } from './videoQuality.js';
+export { resolveVideoBitrate };
 
 import {
 	RuntimeBaseLayer,
@@ -895,7 +896,7 @@ export default class BrowserRenderer implements ILayerRenderer {
 
 		const videoSource = new CanvasSource(this.renderCanvas, {
 			codec: 'avc',
-			bitrate: QUALITY_HIGH,
+			bitrate: resolveVideoBitrate(options),
 		});
 		output.addVideoTrack(videoSource, { frameRate: fps });
 
@@ -1025,7 +1026,13 @@ export default class BrowserRenderer implements ILayerRenderer {
 
 		try {
 			// 1. Init worker
-			worker.postMessage({ type: 'init', width, height, fps });
+			worker.postMessage({
+				type: 'init', width, height, fps,
+				// `Quality` is a class instance and cannot be structured-cloned,
+				// so the worker resolves the bitrate itself from the raw options.
+				videoQuality: options.videoQuality,
+				videoBitrate: options.videoBitrate,
+			});
 			await readyPromise;
 
 			// Set up the render canvas (used by captureFrame)

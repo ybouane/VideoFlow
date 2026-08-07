@@ -953,8 +953,14 @@ export default class ServerRenderer {
 			// stall, route handler failure) tears the whole thing down.
 			const [size, buf] = await Promise.all([
 				this.page!.evaluate(
-					(url: string) => window.exportVideo(url),
-					uploadUrl,
+					({ url, encodeOptions }: { url: string; encodeOptions: any }) => window.exportVideo(url, encodeOptions),
+					{
+						url: uploadUrl,
+						encodeOptions: {
+							videoQuality: options.videoQuality,
+							videoBitrate: options.videoBitrate,
+						},
+					},
 				),
 				uploadPromise,
 			]);

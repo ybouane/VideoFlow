@@ -350,6 +350,36 @@ export type RenderOptions = {
 	 *   to be installed on the server.
 	 */
 	ffmpeg?: boolean;
+	/**
+	 * Subjective target quality for the encoded video track. Maps onto
+	 * MediaBunny's `Quality` levels, which resolve to a bitrate from the frame
+	 * size and codec — at 1080p / H.264 that is 3 Mbps for `'medium'`, 6 Mbps
+	 * for `'high'` and 12 Mbps for `'veryHigh'`.
+	 *
+	 * **Defaults to `'veryHigh'`.** The default is deliberately high because
+	 * VideoFlow output is motion GRAPHICS: large flat fields, long smooth
+	 * gradients and moving type. That is the pathological case for H.264 —
+	 * there is no camera grain to hide quantisation behind, so a gradient that
+	 * looks clean at 5 Mbps of live action bands visibly, and slow type smears.
+	 * Camera-footage guidance (YouTube suggests ~8 Mbps for 1080p30) is a floor
+	 * here, not a target.
+	 *
+	 * Ignored when {@link videoBitrate} is set, and by the legacy `ffmpeg: true`
+	 * pipeline, which encodes with `libx264 -crf 17` and is already
+	 * quality-targeted (its ceiling is the JPEG frame round-trip, not the
+	 * encoder).
+	 */
+	videoQuality?: 'medium' | 'high' | 'veryHigh';
+	/**
+	 * Explicit target bitrate for the video track, in bits per second (e.g.
+	 * `16_000_000`). Overrides {@link videoQuality}.
+	 *
+	 * Worth reaching for on the flat-synthetic-gradient case: the subjective
+	 * levels are calibrated for photographic content. The encoder runs in
+	 * variable-bitrate mode, so this is a budget it spends only as needed — a
+	 * simple scene lands well under it.
+	 */
+	videoBitrate?: number;
 };
 
 /**

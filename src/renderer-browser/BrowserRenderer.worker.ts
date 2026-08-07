@@ -7,8 +7,8 @@ import {
 	CanvasSource,
 	AudioSampleSource,
 	AudioSample,
-	QUALITY_HIGH,
 } from 'mediabunny';
+import { resolveVideoBitrate } from './videoQuality.js';
 
 // Typed reference to the worker global scope.  The project tsconfig includes
 // the DOM lib rather than WebWorker, so we cast once to avoid type conflicts.
@@ -26,6 +26,14 @@ type InitMsg = {
 	width: number;
 	height: number;
 	fps: number;
+	/**
+	 * Encoding quality, forwarded from `RenderOptions`. A MediaBunny `Quality`
+	 * is a class instance and cannot cross the structured-clone boundary, so
+	 * the raw options travel instead and the worker resolves them itself via
+	 * the shared `resolveVideoBitrate`.
+	 */
+	videoQuality?: 'medium' | 'high' | 'veryHigh';
+	videoBitrate?: number;
 };
 
 type FrameMsg = {
@@ -85,7 +93,10 @@ async function pickSupportedAudioCodec(
 //  State
 // ---------------------------------------------------------------------------
 
-let initParams: { width: number; height: number; fps: number } | null = null;
+let initParams: {
+	width: number; height: number; fps: number;
+	videoQuality?: 'medium' | 'high' | 'veryHigh'; videoBitrate?: number;
+} | null = null;
 let canvas: OffscreenCanvas;
 let ctx: OffscreenCanvasRenderingContext2D;
 let output: Output;
@@ -146,7 +157,7 @@ async function setupOutput(audioChannels: number, audioSampleRate: number) {
 
 	videoSource = new CanvasSource(canvas, {
 		codec: 'avc',
-		bitrate: QUALITY_HIGH,
+		bitrate: resolveVideoBitrate(initParams),
 	});
 	output.addVideoTrack(videoSource, { frameRate: initParams.fps });
 
@@ -180,7 +191,10 @@ async function setupOutput(audioChannels: number, audioSampleRate: number) {
 async function handle(msg: InMsg) {
 	switch (msg.type) {
 		case 'init': {
-			initParams = { width: msg.width, height: msg.height, fps: msg.fps };
+			initParams = {
+				width: msg.width, height: msg.height, fps: msg.fps,
+				videoQuality: msg.videoQuality, videoBitrate: msg.videoBitrate,
+			};
 			// Reply ready immediately — the main thread will follow up with
 			// the audio message, at which point we'll actually configure
 			// MediaBunny.
