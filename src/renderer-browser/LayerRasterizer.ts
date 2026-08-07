@@ -114,6 +114,23 @@ function isSimpleTransform(props: Record<string, any>): boolean {
 	return true;
 }
 
+/**
+ * How far a tier-3 layer's scale may drift from its latched raster scale before
+ * the DOM is rasterized again (see `LayerRasterizer.stableScaleFor`).
+ *
+ * The window is a trade: too wide and the residual blurs the raster (an 8%
+ * upscale of 132px type is invisible; 25% is not), too narrow and every frame
+ * re-encodes an SVG and the raster's own glyph snapping leaks back into the
+ * tween. 8% covers every "life push" (1 → 1.03, 0.94 → 0.98) with a SINGLE
+ * raster for the whole run, and lets fast pops re-latch a handful of times —
+ * which is harmless, because fast motion is far above the pixel grid anyway.
+ */
+const LATCH_WINDOW = 1.08;
+
+function outsideLatch(scale: number, base: number): boolean {
+	return scale > base * LATCH_WINDOW || scale * LATCH_WINDOW < base;
+}
+
 function normalizeScale(v: any): [number, number] {
 	if (Array.isArray(v)) {
 		return [Number(v[0] ?? 1), Number(v[1] ?? v[0] ?? 1)];
@@ -138,11 +155,29 @@ function fitDims(pw: number, ph: number, mw: number, mh: number, fit: string): [
 	return [Math.min(pw, ph * mw / mh), Math.min(ph, pw * mh / mw)];
 }
 
+/** A tier-3 layer's latched raster scale and the residual applied on top. */
+type StableScale = {
+	/** Scale the DOM is rasterized at (what goes into the raster cache key). */
+	base: [number, number];
+	/** Residual factors — `props.scale / base` — applied by the composite blit. */
+	kx: number;
+	ky: number;
+	/** Fixed point of the residual scale, in project pixels. */
+	px: number;
+	py: number;
+};
+
 export default class LayerRasterizer {
 	/** One OffscreenCanvas per layer, keyed by layer id. */
 	private surfaces: Map<string, OffscreenCanvas> = new Map();
 	/** Last cache-key per layer — identical key = surface already shows that props state. */
 	private keys: Map<string, string> = new Map();
+	/**
+	 * Tier-3 stable-scale state (see {@link stableScaleFor}): the DOM raster at
+	 * the latched scale, and the latched scale itself, per layer.
+	 */
+	private baseSurfaces: Map<string, OffscreenCanvas> = new Map();
+	private baseScales: Map<string, [number, number]> = new Map();
 	/**
 	 * Resampling quality applied during the tier-1 `drawImage`. `'high'`
 	 * runs Lanczos / bicubic in Chrome (slow but pixel-accurate — used by
@@ -181,17 +216,21 @@ export default class LayerRasterizer {
 	/** Forget the cache key for one layer so the next `rasterize` re-renders it. */
 	invalidate(layerId: string): void {
 		this.keys.delete(layerId);
+		this.baseScales.delete(layerId);
 	}
 
 	/** Forget all cached keys (surfaces remain for re-use). */
 	clearCache(): void {
 		this.keys.clear();
+		this.baseScales.clear();
 	}
 
 	/** Release all per-layer surfaces and keys. */
 	destroy(): void {
 		this.surfaces.clear();
 		this.keys.clear();
+		this.baseSurfaces.clear();
+		this.baseScales.clear();
 	}
 
 	/**
@@ -229,6 +268,12 @@ export default class LayerRasterizer {
 	async rasterize(layer: RuntimeBaseLayer, props: Record<string, any>): Promise<OffscreenCanvas> {
 		const id = layer.json.id;
 		const surface = this.getSurface(id);
+		const tier = this.pickRasterTier(layer, props);
+
+		// Tier 3 under a plain scale: rasterize the DOM at a STABLE scale and
+		// let a canvas transform carry the tween. See `stableScaleFor`.
+		const stable = tier === 3 ? this.stableScaleFor(id, props) : null;
+		const cacheProps = stable ? { ...props, scale: stable.base } : props;
 
 		if (layer.cacheable) {
 			// The key comes from the layer itself (`getRasterCacheKey`) so a
@@ -236,21 +281,127 @@ export default class LayerRasterizer {
 			// an external layer driven by its own mutable document — can fold
 			// a content revision into it. See the hook's docs for what the
 			// default excludes and why.
-			const key = layer.getRasterCacheKey(props);
-			if (this.keys.get(id) === key) return surface;
+			//
+			// Under stable-scale the key describes the BASE raster rather than
+			// this frame's scale, which is what lets a slow push reuse one
+			// raster for its whole run instead of re-encoding an SVG per frame.
+			const key = layer.getRasterCacheKey(cacheProps);
+			// The base surface can be missing on a key hit if the previous frame
+			// took a different path for this layer (tier 1, or a scale of 0 that
+			// stable-scale declines) — re-rasterize rather than blit nothing.
+			if (this.keys.get(id) === key && (!stable || this.baseSurfaces.has(id))) {
+				if (!stable) return surface;
+				// Base raster unchanged — only the residual transform moved.
+				this.drawStableScale(id, stable, surface);
+				return surface;
+			}
 			this.keys.set(id, key);
 		}
 
-		const tier = this.pickRasterTier(layer, props);
 		if (tier === 1) {
 			const ctx = surface.getContext('2d')!;
 			ctx.setTransform(1, 0, 0, 1, 0, 0);
 			ctx.clearRect(0, 0, this.videoJSON.width, this.videoJSON.height);
 			this.drawTier1(layer, props, ctx);
+		} else if (stable) {
+			// Paint the DOM with its scale pinned to the latched base, then put
+			// the frame's real scale back so nothing downstream sees the swap.
+			// Skipped entirely when the residual is identity (a static scale, or
+			// the frame the latch was taken on) — which is most layers, most
+			// frames, so the common case costs only the extra blit.
+			const swap = stable.kx !== 1 || stable.ky !== 1;
+			if (swap) await layer.applyProperties(cacheProps);
+			await this.rasterizeForeignObject(layer, this.getBaseSurface(id));
+			if (swap) await layer.applyProperties(props);
+			this.drawStableScale(id, stable, surface);
 		} else {
 			await this.rasterizeForeignObject(layer, surface);
 		}
 		return surface;
+	}
+
+	/**
+	 * Pick the scale a tier-3 layer's DOM is rasterized at this frame, plus the
+	 * residual factor the composite applies on top.
+	 *
+	 * WHY THIS EXISTS. A tier-3 layer is DOM, and DOM text is re-shaped every
+	 * time it is rasterized: Chrome snaps each glyph origin to the device pixel
+	 * grid — a quarter pixel horizontally, a WHOLE pixel vertically. Bake an
+	 * animated `scale` into that DOM and the glyphs can only move in grid
+	 * steps, so a tween slower than the grid stutters instead of gliding. This
+	 * is NOT the `fontSize`-vs-`scale` problem: animating `scale` alone hits it.
+	 * Measured on a 132px headline under `scale: 1 -> 1.03` over 3s (its edges
+	 * move ~0.15px/frame), as sub-pixel ink edges over 55 frames:
+	 *
+	 *                            edge jerk   frames with zero motion
+	 *   scale baked into the DOM   0.20px      22 / 54
+	 *   scale as a canvas affine   0.04px       0 / 54
+	 *
+	 * The second row is what an image layer already gets for free on tier 1,
+	 * because its bitmap is transformed rather than redrawn. This gives tier 3
+	 * the same deal: rasterize the DOM once at a latched scale, then let
+	 * `ctx.setTransform` carry the animation continuously.
+	 *
+	 * The latch is deliberately sticky: it moves only once the residual leaves
+	 * ±{@link LATCH_WINDOW}. A life push therefore rasterizes ONCE for its whole
+	 * run, which is also a large speedup — no SVG encode/decode per frame.
+	 *
+	 * Returns null — keep the previous behaviour — when the transform is not a
+	 * plain scale about the layer's position.
+	 */
+	private stableScaleFor(id: string, props: Record<string, any>): StableScale | null {
+		if (!isDefaultNumberOrArray(props.rotation, 0)) return null;
+		const pos = props.position;
+		if (Array.isArray(pos) && pos.length > 2 && !isDefaultNumber(pos[2], 0)) return null;
+
+		const [sx, sy] = normalizeScale(props.scale);
+		if (!(sx > 0) || !(sy > 0)) return null;
+
+		let base = this.baseScales.get(id);
+		if (!base || outsideLatch(sx, base[0]) || outsideLatch(sy, base[1])) {
+			base = [sx, sy];
+			this.baseScales.set(id, base);
+		}
+
+		const posArr = Array.isArray(pos) ? pos : [0.5, 0.5];
+		return {
+			base,
+			kx: sx / base[0],
+			ky: sy / base[1],
+			px: (extractNumber(posArr[0]) ?? 0.5) * this.videoJSON.width,
+			py: (extractNumber(posArr[1]) ?? 0.5) * this.videoJSON.height,
+		};
+	}
+
+	/**
+	 * Blit a layer's base raster onto its surface with the residual scale.
+	 *
+	 * The fixed point is the layer's `position` in project pixels: the renderer
+	 * CSS translates the element so its anchor lands there and then scales about
+	 * that anchor, so scaling the raster about the same point reproduces the CSS
+	 * transform exactly — the identity `drawTier1` already relies on.
+	 */
+	private drawStableScale(id: string, s: StableScale, surface: OffscreenCanvas): void {
+		const ctx = surface.getContext('2d')!;
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.clearRect(0, 0, this.videoJSON.width, this.videoJSON.height);
+		const base = this.baseSurfaces.get(id);
+		if (!base) return;
+		ctx.save();
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = this.quality;
+		ctx.setTransform(s.kx, 0, 0, s.ky, s.px * (1 - s.kx), s.py * (1 - s.ky));
+		ctx.drawImage(base, 0, 0);
+		ctx.restore();
+	}
+
+	private getBaseSurface(id: string): OffscreenCanvas {
+		let s = this.baseSurfaces.get(id);
+		if (!s) {
+			s = new OffscreenCanvas(this.videoJSON.width, this.videoJSON.height);
+			this.baseSurfaces.set(id, s);
+		}
+		return s;
 	}
 
 	/**
