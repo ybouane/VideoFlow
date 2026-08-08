@@ -66,6 +66,9 @@ declare global {
 		captureFrame: (frame: number) => Promise<void>;
 		renderAudio: () => Promise<Uint8Array | null>;
 		exportVideo: (uploadUrl: string, encodeOptions?: PageEncodeOptions) => Promise<number>;
+		enableElementCapture: (scale?: number, mode?: 'auto' | 'force') => Promise<boolean>;
+		elementCaptureScale: () => number;
+		elementCaptureDeclinedReason: () => string | null;
 		__exportAbort?: AbortController;
 	}
 }
@@ -134,6 +137,28 @@ export async function startRendererPage(externalLayerTypes: ExternalLayerTypeEnt
 				window.logError?.('Error capturing frame [' + frame + ']: ' + String(e));
 			}
 		};
+
+		// Switch compositing to a single `drawElementImage()` per frame. Only
+		// the browser-export pipeline calls this: the legacy `ffmpeg: true`
+		// path screenshots the live DOM, and element capture re-parents the
+		// project container into a `<canvas layoutsubtree>` whose children are
+		// laid out for drawing rather than painted to the page.
+		//
+		// Resolves `false` when the build lacks the flag, in which case the
+		// renderer transparently stays on the rasterizer.
+		window.enableElementCapture = async (scale?: number, mode?: 'auto' | 'force') => {
+			try {
+				return await renderer.enableElementCapture(scale, mode);
+			} catch (e) {
+				console.warn('VideoFlow: element capture unavailable:', e);
+				return false;
+			}
+		};
+
+		// Reported in the verbose log so a render's smoothness characteristics
+		// are visible without reading the options back.
+		window.elementCaptureScale = () => renderer.elementCaptureSupersample;
+		window.elementCaptureDeclinedReason = () => renderer.elementCaptureDeclinedReason;
 
 		window.renderAudio = async () => {
 			try {

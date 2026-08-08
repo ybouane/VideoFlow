@@ -166,6 +166,112 @@ try {
 
 ---
 
+## Rendering performance
+
+Two things dominate a server export, and both are handled automatically.
+
+### Element capture (HTML in canvas)
+
+When the Chromium being driven implements `drawElementImage`, the browser-export
+pipeline composites each frame with **one call** instead of rasterizing every
+layer through an SVG `<foreignObject>`. Measured end-to-end on real examples
+(wall clock for the whole render, encoding included):
+
+| example | per-layer rasterizer | element capture | |
+| --- | --- | --- | --- |
+| `01-basic-text` | 113.3 ms/frame | **27.1 ms/frame** | 4.2× |
+| `10-groups` | 262.2 ms/frame | **173.3 ms/frame** | 1.5× |
+| `09-effects` | 865.6 ms/frame | **472.1 ms/frame** | 1.8× |
+
+Output is visually identical — frame diffs against the rasterizer path show
+**0.000%** of pixels differing by more than 1/16, the remainder being H.264
+re-encode noise.
+
+### The tradeoff, and why you no longer have to make it
+
+Element capture paints the live DOM, so it bypasses `LayerRasterizer`'s
+scale/position latch — the mechanism that stops Chrome snapping glyph origins
+to the pixel grid during a slow scale ramp. The snap is a quarter of a device
+pixel horizontally and a WHOLE one vertically, so a tween slower than that
+freezes for several frames and then jumps. Measured on `scale: 1 → 1.03` over
+4 s, mean frame-to-frame jerk of the sub-pixel side ink edges:
+
+| path | text layer | html component |
+| --- | --- | --- |
+| latched rasterizer | 0.013 px (5/119 frozen) | 0.017 px (5/119) |
+| element capture, 1x | 0.197 px (72/119) | 0.199 px (71/119) |
+| element capture, 2x | 0.050 px (23/119) | 0.051 px (24/119) |
+
+TEXT and HTML regress by the same amount — this is a property of the paint
+path, not of any layer type — and no CSS property avoids it (`will-change`,
+`contain: paint`, `opacity: .999`, `filter`,
+`text-rendering: geometricPrecision` and `<svg><text>` all measure 0.22 px).
+
+Two mechanisms cover it, both on by default:
+
+- **Supersampling.** The container is captured at `elementCaptureScale` device
+  pixels per project pixel (default 2, max 4) and downsampled, which divides the
+  quantum by that factor: 1x → 0.208 px jerk, 2x → 0.050, 3x → 0.026,
+  4x → 0.004. Cost is quadratic, and it only halves the vertical snap, so it is
+  a mitigation rather than a cure.
+- **Automatic path selection.** Leaving `elementCapture` unset makes the page
+  scan the project and decline element capture when a DOM layer's animated
+  `scale` / `position` moves slower than the paint grid — a "life push"
+  (`1 → 1.03` over ~3 s) is ~0.2 px/frame. Those projects keep the latch and
+  land back at the top row of the table; everything else keeps the speed.
+  Verbose renders name the layer responsible:
+
+  ```
+  VideoFlow: Element capture declined — layer "Html" animates scale at 0.24 px/frame
+  (below the 0.50 px paint grid); using the per-layer rasterizer so the latch keeps that motion smooth.
+  ```
+
+Force either way when you know better — `elementCapture: true` takes the speed
+and accepts the grid (right for drafts), `false` turns it off entirely:
+
+```ts
+await renderer.renderVideo({ output: './out.mp4', outputType: 'file', elementCapture: false });
+```
+
+This is entirely automatic: the launch flags are always passed, the page
+feature-detects, and anything without the API silently keeps using the
+rasterizer. It applies to the default browser-export pipeline only — the legacy
+`ffmpeg: true` path screenshots the live DOM, which element capture would leave
+blank, so it is deliberately left alone.
+
+**Requires Chrome 149+.** The renderer drives your system Chrome
+(`channel: 'chrome'`), so keeping Chrome current is all it takes — verbose
+renders report which path was taken, and name the version when it's too old:
+
+```
+VideoFlow: Compositing via element capture (drawElementImage).
+VideoFlow: Element capture unavailable — Chrome 135 is too old, 149+ is required; using the per-layer rasterizer.
+```
+
+To drive a specific binary instead:
+
+```bash
+VIDEOFLOW_CHROME_PATH=/path/to/chrome node render.js
+```
+
+Codec availability differs between builds, so check before switching. On Linux
+neither Chrome nor Chromium ships an AAC *encoder* (licensing), so audio is
+encoded as Opus either way — but a build with no H.264 encoder would fail
+exports outright.
+
+### Video decoding
+
+Video layers decode through WebCodecs, adapting to the access pattern rather
+than issuing a seek per frame. A seek re-decodes from the preceding keyframe, so
+the old path cost `O(frames × GOP)` — on a 1080p clip with a stock 250-frame
+GOP that was 207.7 ms per frame; sequential decoding of the same frames is
+15.6 ms. A 10 s 1080p video export went from ~100 s to **21 s**.
+
+Sources whose codec has no WebCodecs decoder on the platform fall back to the
+previous `<video>` element path automatically.
+
+---
+
 ## External layer types
 
 `@videoflow/renderer-browser` and `@videoflow/renderer-dom` let you register a custom layer type by passing the runtime **class** directly. The server renderer can't do that: the `BrowserRenderer` lives in a separate headless Chromium realm, and neither `page.evaluate` arguments nor Playwright's structured serialization can carry functions across it.

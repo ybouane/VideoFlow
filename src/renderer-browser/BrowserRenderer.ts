@@ -116,7 +116,119 @@ import WORKER_SOURCE from './workerBundle.js';
 //  encode silent video rather than crashing the whole render.
 // ---------------------------------------------------------------------------
 
+declare global {
+	interface CanvasRenderingContext2D {
+		/**
+		 * Chromium's "HTML in canvas" — draws a live element into this
+		 * context. Only available behind `--enable-blink-features=CanvasDrawElement`,
+		 * and only for immediate children of a `<canvas layoutsubtree>`.
+		 * See {@link BrowserRenderer.enableElementCapture}.
+		 */
+		drawElementImage?(element: Element, x: number, y: number): void;
+	}
+}
+
+/** Resolve after the next rendering lifecycle tick. */
+function nextAnimationFrame(): Promise<void> {
+	return new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+}
+
 export type AudioCodecChoice = { codec: 'aac' | 'opus'; bitrate: number };
+
+/**
+ * Supersample factor element capture uses by default.
+ *
+ * 2x is the smallest factor that removes every frozen frame from a slow scale
+ * tween (see {@link BrowserRenderer.enableElementCapture} for the table), at 4x
+ * the capture pixels of a 1:1 draw — which is still far cheaper than the
+ * per-layer rasterizer it replaced. 3x buys another 2x smoothness for 9x the
+ * pixels; callers that want it can ask.
+ */
+export const DEFAULT_ELEMENT_CAPTURE_SCALE = 2;
+
+/**
+ * Layer types whose pixels come from a bitmap the compositor resamples, rather
+ * than from DOM text Blink repaints every frame. Only the others can judder.
+ */
+const BITMAP_LAYER_TYPES = new Set(['image', 'video', 'audio']);
+
+/**
+ * Does this project contain DOM motion slower than element capture's paint
+ * grid? Returns a human-readable reason, or `null` when element capture is
+ * safe. See {@link BrowserRenderer.enableElementCapture} for the physics.
+ *
+ * Blink snaps glyph origins to the device pixel grid at paint time — a QUARTER
+ * pixel horizontally, a WHOLE pixel vertically. Supersampling divides that
+ * quantum by the capture factor but never removes it, so a tween that moves
+ * type less than `1 / scale` px per frame still holds still for several frames
+ * and then jumps. `LayerRasterizer`'s latch is the only construction that makes
+ * such motion continuous (it paints the DOM at fixed geometry and carries the
+ * tween as a bitmap affine), so a project containing motion that slow is worth
+ * more than the compositing speedup.
+ *
+ * The test is on MEAN velocity per keyframe segment, deliberately: an eased
+ * tween is slow at both ends no matter how fast it is in the middle, and
+ * judging on instantaneous velocity would condemn every animation there is.
+ *
+ * Displacement is estimated as half the frame — a full-frame layer (any html
+ * component) scales about its centre, so its content sits up to `height / 2`
+ * from the origin and moves by `height / 2 * dScale`.
+ */
+export function subGridDomMotion(videoJSON: VideoJSON, captureScale = 1): string | null {
+	const fps = videoJSON.fps || 30;
+	const w = videoJSON.width || 1920;
+	const h = videoJSON.height || 1080;
+	// Motion at or above the paint quantum never freezes; below it, it does.
+	const floor = 1 / Math.max(1, captureScale);
+
+	const num = (v: any): number => {
+		if (Array.isArray(v)) return Math.max(...v.slice(0, 2).map((x) => Math.abs(Number(x) || 0)));
+		return Math.abs(Number(v) || 0);
+	};
+	const delta = (a: any, b: any): number => {
+		if (Array.isArray(a) || Array.isArray(b)) {
+			const A = Array.isArray(a) ? a : [a, a];
+			const B = Array.isArray(b) ? b : [b, b];
+			return Math.max(Math.abs((Number(B[0]) || 0) - (Number(A[0]) || 0)),
+				Math.abs((Number(B[1]) || 0) - (Number(A[1]) || 0)));
+		}
+		return Math.abs(num(b) - num(a));
+	};
+
+	const walk = (layers: LayerJSON[] | undefined): string | null => {
+		for (const layer of layers || []) {
+			const kids = (layer as any).layers as LayerJSON[] | undefined;
+			if (kids) {
+				const found = walk(kids);
+				if (found) return found;
+			}
+			if (BITMAP_LAYER_TYPES.has(layer.type)) continue;
+			for (const anim of (layer as any).animations || []) {
+				const prop = anim.property;
+				if (prop !== 'scale' && prop !== 'position') continue;
+				const kfs = anim.keyframes || [];
+				for (let i = 1; i < kfs.length; i++) {
+					const dt = (Number(kfs[i].time) - Number(kfs[i - 1].time)) || 0;
+					if (dt <= 0) continue;
+					const d = delta(kfs[i - 1].value, kfs[i].value);
+					if (d === 0) continue;
+					// `scale` is a multiplier about the layer's anchor; `position`
+					// is already a fraction of the frame.
+					const px = prop === 'scale' ? d * Math.max(w, h) / 2 : d * Math.max(w, h);
+					const perFrame = px / (dt * fps);
+					if (perFrame < floor) {
+						const name = (layer as any).settings?.name || layer.type;
+						return `layer "${name}" animates ${prop} at ${perFrame.toFixed(2)} px/frame`
+							+ ` (below the ${floor.toFixed(2)} px paint grid)`;
+					}
+				}
+			}
+		}
+		return null;
+	};
+
+	return walk(videoJSON.layers);
+}
 
 const AAC_BITRATE_CANDIDATES = [192_000, 128_000, 96_000];
 const OPUS_BITRATE_CANDIDATES = [128_000, 96_000, 64_000];
@@ -191,6 +303,21 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 * render would silently drop their loaded media and DOM state.
 	 */
 	private layersCreated = false;
+
+	/** Whole-container capture host, once {@link enableElementCapture} succeeds. */
+	private elementCaptureHost: HTMLCanvasElement | null = null;
+	private elementCaptureCtx: CanvasRenderingContext2D | null = null;
+	/** Whether frames are composited via `drawElementImage`. */
+	private elementCapture = false;
+	/** Set once we've established the platform can't do it, so we stop probing. */
+	private elementCaptureUnavailable = false;
+	/**
+	 * Why `'auto'` mode turned element capture down for this project, if it did.
+	 * Read by the server renderer so the log says which layer, not just "off".
+	 */
+	private elementCaptureDeclined: string | null = null;
+	/** Supersample factor the capture host is sized at — see {@link enableElementCapture}. */
+	private elementCaptureScale = 1;
 
 	constructor(videoJSON: VideoJSON) {
 		this.videoJSON = videoJSON;
@@ -727,6 +854,237 @@ export default class BrowserRenderer implements ILayerRenderer {
 		if (promises.length > 0) await Promise.allSettled(promises);
 	}
 
+	// -----------------------------------------------------------------------
+	//  Element capture — whole-container compositing via `drawElementImage`
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Opt into compositing each frame with a single `drawElementImage()` call
+	 * instead of rasterizing every layer through an SVG `<foreignObject>`.
+	 *
+	 * `drawElementImage` (Chromium's "HTML in canvas", behind
+	 * `--enable-blink-features=CanvasDrawElement`) paints a live element
+	 * straight into a 2D context. Because the browser composites the whole
+	 * project in one pass, the per-frame cost collapses to Blink's own
+	 * incremental layout+paint of whatever actually changed. Measured across
+	 * the example projects at 1080p, composite time per frame:
+	 *
+	 * ```
+	 *   basic text     49.8 → 10.8 ms      transitions   76.7 → 32.1 ms
+	 *   image bg      334.1 → 11.8 ms      effects      494.9 → 32.5 ms
+	 *   keyframes      81.5 → 19.7 ms      groups       272.7 →  0.3 ms
+	 * ```
+	 *
+	 * with output pixel-identical to the rasterizer path on every one of those
+	 * scenes (the effect-overlay canvases are inside the container, so WebGL
+	 * effects are captured too).
+	 *
+	 * ## Requirements, and why this is opt-in
+	 *
+	 * - The API only exists behind a Chromium launch flag, so it cannot be
+	 *   relied on in a normal browser tab. Returns `false` when unavailable
+	 *   and the renderer keeps using the rasterizer.
+	 * - The container **must be on-screen**: `drawElementImage` silently
+	 *   produces a blank frame for an element parked off to the left, which is
+	 *   where this renderer normally hides it. Enabling therefore moves the
+	 *   container to the top-left of the page, where it is visible. That is
+	 *   fine for a headless export; in a live page the caller must accept the
+	 *   project being briefly painted over the document.
+	 * - One layer type is not caught by this path: a layer that changes
+	 *   *canvas pixels* (video) needs one extra lifecycle tick before its
+	 *   paint record catches up, which {@link captureFrameViaElement} accounts
+	 *   for. Getting that wrong exports the previous video frame.
+	 *
+	 * ## `scale` — why capturing bigger than the frame is not a luxury
+	 *
+	 * `drawElementImage` paints the live DOM, so it inherits Blink's paint-time
+	 * text quantisation: glyph advances land on a QUARTER of a device pixel.
+	 * Under a slow tween — a 3% "life push" over 3-4s moves a headline's edges
+	 * ~0.1px/frame — the type therefore holds still for several frames and then
+	 * jumps a quarter pixel, which reads as judder. This is the same defect
+	 * {@link LayerRasterizer}'s scale/position latch exists to remove, and
+	 * element capture bypasses that latch entirely because there is no per-layer
+	 * raster to blit.
+	 *
+	 * It cannot be fixed in CSS. Measured under `drawElementImage`, on an 84px
+	 * headline under `scale: 1 -> 1.03`, mean frame-to-frame jerk of the
+	 * sub-pixel left ink edge:
+	 *
+	 * ```
+	 *   plain                     0.221 px    frozen 65/119 frames
+	 *   will-change: transform    0.221 px    65/119
+	 *   contain: paint            0.221 px    65/119
+	 *   opacity: 0.999            0.221 px    65/119
+	 *   filter: opacity(1)        0.221 px    65/119
+	 *   text-rendering: geometricPrecision
+	 *                             0.222 px    62/119
+	 *   <svg><text>               0.221 px    65/119
+	 * ```
+	 *
+	 * Nothing moves it, because the quantum is defined in DEVICE pixels — so
+	 * the one thing that does move it is making a device pixel smaller. Drawing
+	 * the container into a host `scale`x larger and downsampling divides the
+	 * quantum by `scale`:
+	 *
+	 * ```
+	 *   1x   jerk 0.208 px   frozen 36/89        4x  jerk 0.004 px   0/89
+	 *   2x   jerk 0.050 px        0/89
+	 *   3x   jerk 0.026 px        0/89
+	 * ```
+	 *
+	 * That is a 4x improvement for 4x the capture pixels, and it clears the
+	 * HORIZONTAL axis outright. It does not clear the vertical one: the
+	 * vertical quantum is a WHOLE device pixel, so 2x still leaves half-pixel
+	 * steps, and an html component (a full-frame subtree scaled about the frame
+	 * centre) drifts its off-centre content at only ~0.09 px/frame under a 3%
+	 * push. Matching the latched rasterizer there would take ~16x. Supersampling
+	 * is therefore a mitigation, not a cure — {@link mode} `'auto'` is the cure.
+	 *
+	 * Idempotent; safe to call before or after the first render.
+	 *
+	 * @param scale supersample factor for the capture host (default 2, clamped
+	 *   to 1-4 and rounded). 1 restores the raw 1:1 capture.
+	 * @param mode `'auto'` (the default) declines element capture for projects
+	 *   that contain DOM motion slower than the paint grid, where the
+	 *   rasterizer's latch is worth more than the speed — see
+	 *   {@link subGridDomMotion}. `'force'` takes it regardless.
+	 */
+	async enableElementCapture(
+		scale = DEFAULT_ELEMENT_CAPTURE_SCALE,
+		mode: 'auto' | 'force' = 'auto',
+	): Promise<boolean> {
+		if (this.elementCapture) return true;
+		if (this.elementCaptureUnavailable) return false;
+		if (typeof CanvasRenderingContext2D === 'undefined'
+			|| typeof (CanvasRenderingContext2D.prototype as any).drawElementImage !== 'function') {
+			this.elementCaptureUnavailable = true;
+			return false;
+		}
+
+		if (mode !== 'force') {
+			const judder = subGridDomMotion(
+				this.videoJSON,
+				Math.max(1, Math.min(4, Math.round(Number(scale) || DEFAULT_ELEMENT_CAPTURE_SCALE))),
+			);
+			if (judder) {
+				this.elementCaptureDeclined = judder;
+				return false;
+			}
+		}
+
+		await this.initLayers();
+
+		const ss = Math.max(1, Math.min(4, Math.round(Number(scale) || DEFAULT_ELEMENT_CAPTURE_SCALE)));
+		const host = document.createElement('canvas');
+		// The host is deliberately given NO CSS size: a canvas whose backing
+		// store exceeds its CSS box is already drawn at the backing-store scale,
+		// so the explicit `setTransform(ss)` in `captureFrameViaElement` would
+		// then apply the factor a second time and capture at ss².
+		host.width = this.videoJSON.width * ss;
+		host.height = this.videoJSON.height * ss;
+		host.setAttribute('layoutsubtree', '');
+		host.setAttribute('data-videoflow-capture-host', '');
+		// Must be on-screen — see the note above. Behind the container it
+		// hosts, so it never adds anything visible of its own.
+		host.style.position = 'absolute';
+		host.style.left = '0';
+		host.style.top = '0';
+		document.body.appendChild(host);
+
+		// The container becomes an immediate child of the host: only immediate
+		// children of a `layoutsubtree` canvas may be drawn.
+		this.$canvas.style.position = 'relative';
+		this.$canvas.style.left = '0';
+		this.$canvas.style.top = '0';
+		host.appendChild(this.$canvas);
+
+		await nextAnimationFrame();
+		await nextAnimationFrame();
+
+		const hostCtx = host.getContext('2d');
+		try {
+			hostCtx!.drawElementImage!(this.$canvas, 0, 0);
+		} catch {
+			// Unsupported shape (nested canvas hosts, culled container, …).
+			// Put the container back where it was and stay on the rasterizer.
+			host.remove();
+			document.body.appendChild(this.$canvas);
+			this.$canvas.style.position = 'absolute';
+			this.$canvas.style.left = '-99999px';
+			this.$canvas.style.top = '-99999px';
+			this.elementCaptureUnavailable = true;
+			return false;
+		}
+
+		this.elementCaptureHost = host;
+		this.elementCaptureCtx = hostCtx;
+		this.elementCaptureScale = ss;
+		this.elementCapture = true;
+		return true;
+	}
+
+	/**
+	 * Supersample factor the capture host is running at, or 1 when element
+	 * capture is off. See {@link enableElementCapture}.
+	 */
+	get elementCaptureSupersample(): number {
+		return this.elementCapture ? this.elementCaptureScale : 1;
+	}
+
+	/**
+	 * Why element capture was declined in `'auto'` mode, or `null` if it wasn't
+	 * declined for that reason. See {@link subGridDomMotion}.
+	 */
+	get elementCaptureDeclinedReason(): string | null {
+		return this.elementCaptureDeclined;
+	}
+
+	/** Whether frames are currently composited via `drawElementImage`. */
+	get usesElementCapture(): boolean {
+		return this.elementCapture;
+	}
+
+	/**
+	 * Composite this frame by drawing the whole container, then blit onto the
+	 * shared render canvas. Returns `false` if the draw failed, so the caller
+	 * can fall through to the rasterizer for this frame.
+	 *
+	 * Two lifecycle ticks, not one: Blink's cached paint record lags a frame
+	 * behind mutations to a `<canvas>`'s *pixels*, and video layers repaint
+	 * their canvas during `renderFrame`. With a single tick the capture picks
+	 * up the previous video frame — verified by diffing against the rasterizer
+	 * path, which matched exactly only at two ticks.
+	 */
+	private async captureFrameViaElement(
+		ctx: OffscreenCanvasRenderingContext2D,
+		width: number,
+		height: number,
+	): Promise<boolean> {
+		const host = this.elementCaptureHost;
+		const hostCtx = this.elementCaptureCtx;
+		if (!host || !hostCtx) return false;
+		await nextAnimationFrame();
+		await nextAnimationFrame();
+		const ss = this.elementCaptureScale;
+		try {
+			hostCtx.setTransform(1, 0, 0, 1, 0, 0);
+			hostCtx.clearRect(0, 0, width * ss, height * ss);
+			// Capture into the supersampled host, then let the downsample below
+			// average the quarter-device-pixel glyph quantisation away. See
+			// `enableElementCapture` for the measurements behind this.
+			if (ss !== 1) hostCtx.setTransform(ss, 0, 0, ss, 0, 0);
+			hostCtx.drawElementImage!(this.$canvas, 0, 0);
+		} catch {
+			return false;
+		}
+		// `high` is what makes the supersample worth taking: bilinear on a 2x
+		// reduction throws away half the samples it was drawn for.
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+		ctx.drawImage(host, 0, 0, width, height);
+		return true;
+	}
+
 	/**
 	 * Capture a single frame onto the shared render canvas.
 	 *
@@ -756,6 +1114,12 @@ export default class BrowserRenderer implements ILayerRenderer {
 		ctx.clearRect(0, 0, width, height);
 		ctx.fillStyle = this.videoJSON.backgroundColor || '#000000';
 		ctx.fillRect(0, 0, width, height);
+
+		// Whole-container capture, when the platform offers it — one call
+		// instead of a rasterize + composite pass per layer.
+		if (this.elementCapture && await this.captureFrameViaElement(ctx, width, height)) {
+			return this.renderCanvas;
+		}
 
 		const rasterizer = this.ensureRasterizer();
 		this.fontEmbedder.invalidateFrame();
@@ -1147,6 +1511,13 @@ export default class BrowserRenderer implements ILayerRenderer {
 	destroy(): void {
 		for (const layer of this.layers) layer.destroy();
 		this.$canvas.remove();
+		if (this.elementCaptureHost) {
+			this.elementCaptureHost.remove();
+			this.elementCaptureHost = null;
+			this.elementCaptureCtx = null;
+			this.elementCapture = false;
+			this.elementCaptureScale = 1;
+		}
 		this.renderCanvas = null;
 		if (this.rasterizer) {
 			this.rasterizer.destroy();

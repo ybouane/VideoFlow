@@ -137,6 +137,78 @@ try {
 
 ---
 
+## Performance notes
+
+### Video decoding
+
+Video layers decode through WebCodecs via an internal `VideoFrameSource` that
+adapts to the access pattern instead of seeking per frame. A `currentTime` seek
+re-decodes from the preceding keyframe, so the old path cost
+`O(frames × GOP)` — 207.7 ms/frame on a 1080p clip with a stock 250-frame GOP,
+versus 15.6 ms/frame decoding the same frames sequentially. Forward playback
+(every export) decodes each packet at most once; reverse playback (`speed < 0`)
+decodes forward windows and serves them backwards.
+
+Nothing to configure. Sources whose codec has no WebCodecs decoder on the
+current platform fall back to the previous `<video>` element path, including
+its smooth-playback mode.
+
+### `renderer.enableElementCapture(scale?, mode?)`
+
+Opts into compositing each frame with a single `drawElementImage()` call —
+Chromium's "HTML in canvas" — instead of rasterizing every layer through an
+SVG `<foreignObject>`. Per-frame composite time at 1080p:
+
+| scene | rasterizer | element capture |
+| --- | --- | --- |
+| basic text | 49.8 ms | 10.8 ms |
+| image background | 334.1 ms | 11.8 ms |
+| transitions (10 layers) | 76.7 ms | 32.1 ms |
+| groups | 272.7 ms | 0.3 ms |
+
+Output is pixel-identical, WebGL effects included. Resolves `false` — and
+changes nothing — when the API is unavailable, which is the normal case in a
+browser tab: it needs `--enable-blink-features=CanvasDrawElement` at launch.
+`@videoflow/renderer-server` passes that flag and enables this automatically
+(`elementCapture: false` forces it off, `true` forces `'force'` mode, and
+`elementCaptureScale` sets the supersample factor).
+
+One caveat, and it is the reason for both parameters: painting the live DOM
+bypasses the rasterizer's scale/position latch, so Chrome's glyph grid-snapping
+comes back — a quarter of a device pixel across, a WHOLE one down. A tween
+slower than that quantum freezes for several frames and then jumps. Measured on
+`scale: 1 → 1.03` over 4s, mean frame-to-frame jerk of the sub-pixel side ink
+edges:
+
+| path | text layer | html component |
+| --- | --- | --- |
+| latched rasterizer | 0.013 px (5/119 frozen) | 0.017 px (5/119) |
+| element capture, 1x | 0.197 px (72/119) | 0.199 px (71/119) |
+| element capture, 2x | 0.050 px (23/119) | 0.051 px (24/119) |
+
+No CSS property changes this — `will-change`, `contain: paint`,
+`opacity: .999`, `filter`, `text-rendering: geometricPrecision` and
+`<svg><text>` all measure the same 0.22 px. The quantum is defined in DEVICE
+pixels, so the only lever is making a device pixel smaller:
+
+- **`scale`** (default 2, max 4) supersamples the capture and downsamples to the
+  frame, dividing the quantum by the factor: 1x → 0.208 px jerk, 2x → 0.050,
+  3x → 0.026, 4x → 0.004, for `scale²` capture pixels. It clears the horizontal
+  axis outright but only halves the vertical one, so it is a mitigation.
+- **`mode`** is the cure. `'auto'` (the default) scans the project and declines
+  element capture when some DOM layer's animated `scale` / `position` moves
+  slower than `1 / scale` px per frame — a "life push" is ~0.2 px/frame — so
+  those projects keep the latch. `'force'` takes the speed regardless. Only
+  projects with sub-grid DOM motion pay; everything else still gets the table
+  above.
+
+Note that enabling it **moves the renderer container on-screen**, because
+`drawElementImage` silently yields a blank frame for an element parked
+off-screen. That is free in a headless export; in a live page the project will
+be painted over the document for the duration.
+
+---
+
 ## External layer types
 
 Every renderer instance owns its own layer-type registry, seeded with the seven built-ins (`text`, `captions`, `image`, `video`, `audio`, `shape`, `group`). Register your own type on an instance — no fork, no patch, no global state:

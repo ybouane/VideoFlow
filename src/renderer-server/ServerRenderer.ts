@@ -69,14 +69,40 @@ const TMP_DIR = process.env.TMPDIR || process.env.TEMP || '/tmp';
 let sharedBrowser: Browser | null = null;
 
 /**
+ * First Chrome major that implements `drawElementImage`, which the
+ * element-capture compositing path needs. Used only to turn "element capture
+ * unavailable" into an actionable message — the page still feature-detects, so
+ * a build that ships it earlier or later is handled correctly either way.
+ */
+const MIN_ELEMENT_CAPTURE_CHROME = 149;
+
+/** Chrome major version behind a connected browser, or `null` if unreadable. */
+function chromeMajor(browser: Browser): number | null {
+	const m = /\/(\d+)\./.exec(browser.version());
+	return m ? Number(m[1]) : null;
+}
+
+/**
  * Get or create the shared headless Chromium browser instance.
  * Reusing a single browser across renders avoids the startup cost.
+ *
+ * Uses the system Chrome (`channel: 'chrome'`) so the renderer picks up
+ * whatever version is installed — including, on a current Chrome, the
+ * `drawElementImage` support that makes element capture engage automatically
+ * (see {@link MIN_ELEMENT_CAPTURE_CHROME}).
+ *
+ * Set `VIDEOFLOW_CHROME_PATH` to run a specific binary instead. Worth knowing
+ * before you do: codec availability differs between builds, and the encoder
+ * path is tuned against Chrome's. On Linux neither Chrome nor Chromium ships
+ * an AAC *encoder* (licensing), so audio falls back to Opus either way — but a
+ * build without an H.264 encoder would break exports outright.
  */
 async function getSharedBrowser(): Promise<Browser> {
 	if (sharedBrowser && sharedBrowser.isConnected()) return sharedBrowser;
+	const executablePath = process.env.VIDEOFLOW_CHROME_PATH || undefined;
 	sharedBrowser = await chromium.launch({
 		headless: true,
-		channel: 'chrome',
+		...(executablePath ? { executablePath } : { channel: 'chrome' }),
 		args: [
 			'--no-sandbox',
 			// NOT `--single-process`. In that mode the page renderer shares the
@@ -90,6 +116,17 @@ async function getSharedBrowser(): Promise<Browser> {
 			// individual frame rendered fine in isolation. Removing the flag and
 			// giving V8 real headroom renders it to completion.
 			'--js-flags=--max-old-space-size=4096',
+			// "HTML in canvas": lets the page composite each frame with a single
+			// `drawElementImage()` instead of rasterizing every layer through an
+			// SVG <foreignObject>. Measured 2.4x–909x faster per frame at 1080p,
+			// pixel-identical. Harmless on builds that don't implement it — the
+			// page feature-detects and falls back to the rasterizer.
+			'--enable-blink-features=CanvasDrawElement',
+			// Without these, the lifecycle tick that `drawElementImage` needs is
+			// pinned to vsync and each frame costs a 16.7ms wait no matter how
+			// little changed (measured 16.66ms/frame vs 0.31ms with them).
+			'--disable-frame-rate-limit',
+			'--disable-gpu-vsync',
 			'--no-zygote',
 			'--disable-gpu',
 			'--disable-dev-shm-usage',
@@ -149,8 +186,59 @@ type NormalizedLayerTypeEntry = {
 	exportName: string;
 };
 
-/** {@link RenderOptions} plus the serializable external-layer-type list. */
+/** {@link RenderOptions} plus server-only render controls. */
 export type ServerRenderOptions = RenderOptions & {
+	/**
+	 * Composite each frame with a single `drawElementImage()` call instead of
+	 * rasterizing every layer through an SVG `<foreignObject>`. Silently does
+	 * nothing on a browser without the API.
+	 *
+	 * Three states, and the default is the middle one:
+	 *
+	 * - **unset (default)** — take element capture UNLESS the project contains
+	 *   DOM motion slower than the paint grid, in which case the renderer keeps
+	 *   the rasterizer so `LayerRasterizer`'s latch can carry that motion. The
+	 *   decision is logged under `verbose`, naming the layer that caused it.
+	 * - **`true`** — force it on and accept the paint grid. Right for drafts and
+	 *   for projects whose motion is all well above a pixel per frame.
+	 * - **`false`** — force it off.
+	 *
+	 * Element capture paints the live DOM, so it bypasses `LayerRasterizer`'s
+	 * scale/position latch — the mechanism that stops Chrome snapping glyph
+	 * origins to the pixel grid during a slow scale ramp. That regression is
+	 * paid off by {@link elementCaptureScale}, which supersamples the capture
+	 * instead, so turning capture off is now a debugging escape hatch rather
+	 * than a quality lever. Measured on a text layer and an html component both
+	 * scaling 1 → 1.03 over 4s, mean frame-to-frame jerk of the sub-pixel side
+	 * ink edges:
+	 *
+	 * ```
+	 *                          text       html component
+	 *   latched rasterizer     0.013 px   0.017 px
+	 *   element capture 1x     0.197 px   0.199 px
+	 *   element capture 2x     see elementCaptureScale
+	 * ```
+	 */
+	elementCapture?: boolean;
+	/**
+	 * Supersample factor for element capture — how many device pixels per
+	 * project pixel the container is drawn into before it is downsampled to the
+	 * frame. Defaults to 2; 1 disables supersampling, 4 is the ceiling.
+	 *
+	 * This exists because Blink quantises glyph advances to a QUARTER of a
+	 * device pixel at paint time, and element capture paints the live DOM. A
+	 * tween slower than that quantum therefore moves type in steps instead of
+	 * gliding. No CSS property changes it — `will-change`, `contain: paint`,
+	 * `opacity: .999`, `filter`, `text-rendering: geometricPrecision` and
+	 * `<svg><text>` all measured at the same 0.22px jerk — so the only lever is
+	 * making the device pixel smaller. See
+	 * `BrowserRenderer.enableElementCapture` for the full tables.
+	 *
+	 * Cost is quadratic: at 2x a 1080p frame is captured at 3840×2160. Raise it
+	 * for deliverables where very slow type motion is the whole point; drop it
+	 * to 1 on a memory-starved host.
+	 */
+	elementCaptureScale?: number;
 	/**
 	 * External layer types to register before rendering. Purely a convenience
 	 * wrapper over the instance API — {@link ServerRenderer.render} constructs
@@ -424,6 +512,16 @@ export default class ServerRenderer {
 	/** Every external layer type registered on this instance. */
 	listLayerTypes(): string[] {
 		return [...this.layerTypeModules.keys()];
+	}
+
+	/** Chrome major version driving this render, or `null` if unreadable. */
+	private async browserMajorVersion(): Promise<number | null> {
+		try {
+			const browser = this.context?.browser();
+			return browser ? chromeMajor(browser) : null;
+		} catch {
+			return null;
+		}
 	}
 
 	/** Path for the temporary audio WAV file. */
@@ -860,7 +958,7 @@ export default class ServerRenderer {
 	 * Callers own cleanup — call {@link cleanup} when done (the static
 	 * {@link render} helper does this for you).
 	 */
-	async renderVideo(options: RenderOptions = {}): Promise<Buffer | string> {
+	async renderVideo(options: ServerRenderOptions = {}): Promise<Buffer | string> {
 		if (options.ffmpeg) {
 			return this.renderVideoViaFFmpeg(options);
 		}
@@ -885,7 +983,7 @@ export default class ServerRenderer {
 	 * calling `window.__exportAbort.abort()` via `page.evaluate`. Stalls are
 	 * detected by tracking the time since the last `onExportProgress` tick.
 	 */
-	private async renderVideoViaBrowser(options: RenderOptions = {}): Promise<Buffer | string> {
+	private async renderVideoViaBrowser(options: ServerRenderOptions = {}): Promise<Buffer | string> {
 		const signal = options.signal;
 		const verbose = options.verbose ?? false;
 		const onProgress = options.onProgress;
@@ -894,6 +992,50 @@ export default class ServerRenderer {
 
 		await this.ensurePage();
 		if (signal?.aborted) throw new DOMException('Render aborted', 'AbortError');
+
+		// Composite each frame with one `drawElementImage()` instead of
+		// rasterizing every layer through an SVG <foreignObject>. Only this
+		// pipeline opts in — the ffmpeg path below screenshots the live DOM,
+		// which element capture would leave blank. Silently declines on a
+		// Chromium without the flag, so this is never a hard requirement.
+		const wantElementCapture = options.elementCapture !== false;
+		const captureScale = options.elementCaptureScale;
+		// `true` means "I want the speed, and I accept the paint grid";
+		// leaving it unset lets the page decline for projects whose DOM motion
+		// is slower than that grid. See `elementCapture` in the options type.
+		const mode = options.elementCapture === true ? 'force' : 'auto';
+		let elementCapture = false;
+		if (wantElementCapture) {
+			try {
+				elementCapture = await this.page!.evaluate(
+					({ scale, mode }) => window.enableElementCapture(scale, mode),
+					{ scale: captureScale, mode } as { scale?: number; mode: 'auto' | 'force' },
+				);
+			} catch { /* stay on the rasterizer */ }
+		}
+		if (verbose) {
+			const declined = wantElementCapture && !elementCapture
+				? await this.page!.evaluate(() => window.elementCaptureDeclinedReason?.() ?? null).catch(() => null)
+				: null;
+			if (elementCapture) {
+				const ss = await this.page!.evaluate(() => window.elementCaptureScale?.() ?? 1);
+				console.log(`VideoFlow: Compositing via element capture (drawElementImage), ${ss}x supersampled.`);
+			} else if (declined) {
+				console.log(`VideoFlow: Element capture declined — ${declined};`
+					+ ' using the per-layer rasterizer so the latch keeps that motion smooth.');
+			} else if (!wantElementCapture) {
+				console.log('VideoFlow: Element capture disabled by options; using the per-layer rasterizer.');
+			} else {
+				// Point at the fix rather than just reporting the symptom: an
+				// out-of-date browser is by far the most common cause, and
+				// nothing else in the log would reveal it.
+				const major = await this.browserMajorVersion();
+				const why = major !== null && major < MIN_ELEMENT_CAPTURE_CHROME
+					? ` — Chrome ${major} is too old, ${MIN_ELEMENT_CAPTURE_CHROME}+ is required`
+					: '';
+				console.log(`VideoFlow: Element capture unavailable${why}; using the per-layer rasterizer.`);
+			}
+		}
 
 		if (verbose) {
 			const nFrames = Math.round(this.videoJSON.duration * this.videoJSON.fps);
