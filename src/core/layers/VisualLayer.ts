@@ -121,8 +121,23 @@ export default class VisualLayer extends BaseLayer {
 			 */
 			'scale': { cssProperty: '--scale', default: 1, animatable: true },
 			/**
-			 * Rotation in degrees. Number = rotate around Z axis, or
-			 * `[rx, ry, rz]` for per-axis rotation (X tilt / Y turn / Z roll).
+			 * Rotation in degrees. Number = rotate around Z axis, or an array
+			 * for per-axis rotation.
+			 *
+			 * THE ARRAY IS `[z, x, y]`, NOT `[x, y, z]`. Index 0 is the Z roll —
+			 * the same axis the scalar form uses, which is why it comes first —
+			 * then index 1 is the X tilt and index 2 is the Y turn. The compositor
+			 * emits `rotateX(--rotation-1) rotateY(--rotation-2)
+			 * rotateZ(--rotation-0)` (see renderer.css.ts).
+			 *
+			 * This was previously documented as `[rx, ry, rz]`, which is wrong and
+			 * silently gives you the wrong axis: `[0, 30, 0]` written for a "Y
+			 * turn" is applied as a 30° X TILT. Anything that looks like a
+			 * turntable but reads as a nod is this.
+			 *
+			 * `[z, x, y]` is the implementation and the docs were corrected to
+			 * match, rather than the reverse — reordering the axes would silently
+			 * re-orient every existing project.
 			 */
 			'rotation': { cssProperty: '--rotation', units: ['deg'], default: 0, animatable: true },
 			/**
