@@ -155,9 +155,37 @@ its smooth-playback mode.
 
 ### `renderer.enableElementCapture(scale?, mode?)`
 
-Opts into compositing each frame with a single `drawElementImage()` call —
-Chromium's "HTML in canvas" — instead of rasterizing every layer through an
-SVG `<foreignObject>`. Per-frame composite time at 1080p:
+Switches the renderer to Chromium's "HTML in canvas" (`drawElementImage`) as its
+**single rasterization primitive**. There is no mixing: with the API available
+`<foreignObject>` leaves the pipeline entirely; without it, everything runs
+through `<foreignObject>` exactly as before. It is a polyfill relationship, not
+a per-layer choice.
+
+What that removes, per frame:
+
+| `<foreignObject>` has to | element capture |
+| --- | --- |
+| re-fetch `@font-face` rules and base64 them into the SVG | fonts already loaded |
+| `toDataURL()` every nested `<canvas>` — a PNG encode per frame | bitmaps already there |
+| inline the whole renderer stylesheet | CSS already applies |
+| clone the subtree, `XMLSerializer`, percent-encode, `img.decode()` | one draw call |
+
+The font embedder is not merely bypassed — it is never invoked, so no font is
+fetched or encoded for rasterization at all.
+
+**Tier 1 is untouched.** An image or video layer under a plain translate/scale
+with no filters, borders, shadows or radii is still blitted straight onto the
+target and never rasterized by either primitive. Element capture only replaces
+tier 3.
+
+Measured end-to-end on real server exports (wall clock, encoding included):
+
+| scene | `<foreignObject>` | element capture | |
+| --- | --- | --- | --- |
+| `09-effects` | 970.0 ms/frame | **480.3 ms/frame** | 2.0× |
+| `10-groups` | 218.3 ms/frame | **140.4 ms/frame** | 1.55× |
+
+Per-frame composite time at 1080p:
 
 | scene | rasterizer | element capture |
 | --- | --- | --- |
@@ -191,16 +219,19 @@ No CSS property changes this — `will-change`, `contain: paint`,
 `<svg><text>` all measure the same 0.22 px. The quantum is defined in DEVICE
 pixels, so the only lever is making a device pixel smaller:
 
-- **`scale`** (default 2, max 4) supersamples the capture and downsamples to the
-  frame, dividing the quantum by the factor: 1x → 0.208 px jerk, 2x → 0.050,
-  3x → 0.026, 4x → 0.004, for `scale²` capture pixels. It clears the horizontal
-  axis outright but only halves the vertical one, so it is a mitigation.
-- **`mode`** is the cure. `'auto'` (the default) scans the project and declines
-  element capture when some DOM layer's animated `scale` / `position` moves
-  slower than `1 / scale` px per frame — a "life push" is ~0.2 px/frame — so
-  those projects keep the latch. `'force'` takes the speed regardless. Only
-  projects with sub-grid DOM motion pay; everything else still gets the table
-  above.
+- **`mode`** is the cure, and the only mitigation on by default. `'auto'` scans
+  the project and declines element capture when some DOM layer's animated
+  `scale` / `position` moves slower than `1 / scale` px per frame — a "life
+  push" is ~0.2 px/frame — so those projects keep the latch. `'force'` takes the
+  speed regardless. Only projects with sub-grid DOM motion pay; everything else
+  still gets the table above.
+- **`scale`** (default **1** — off; max 4) supersamples the capture and
+  downsamples to the frame, dividing the quantum by the factor: 1x → 0.208 px
+  jerk, 2x → 0.050, 3x → 0.026, 4x → 0.004, for `scale²` capture pixels. It is
+  off because the cost is quadratic and at 2x it more than consumed the speedup
+  (113.8 ms/frame vs 95.9 for the rasterizer, against 50.2 at 1x), while only
+  halving the vertical snap. Raise it when very slow type motion is the point
+  and you would rather pay pixels than fall back.
 
 Note that enabling it **moves the renderer container on-screen**, because
 `drawElementImage` silently yields a blank frame for an element parked

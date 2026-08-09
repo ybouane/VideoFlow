@@ -668,7 +668,15 @@ export default class BrowserRenderer implements ILayerRenderer {
 		if (document.querySelector('style[data-videoflow-effect-hider]')) return;
 		const style = document.createElement('style');
 		style.setAttribute('data-videoflow-effect-hider', '');
-		style.textContent = '[data-renderer] [data-effect-layer] { visibility: hidden !important; }';
+		// The second rule is not optional. A capture host wraps its layer in its
+		// own `[data-renderer]` root (needed so the layer's custom properties
+		// still resolve), which makes the hosted layer match the hider above and
+		// capture as BLANK — the effect silently renders nothing at all. Inside
+		// a capture host the layer is the subject of the draw, not a stand-in
+		// for an overlay, so it must stay visible.
+		style.textContent =
+			'[data-renderer] [data-effect-layer] { visibility: hidden !important; }\n'
+			+ '[data-videoflow-capture] [data-effect-layer] { visibility: visible !important; }';
 		document.head.appendChild(style);
 	}
 
@@ -725,7 +733,15 @@ export default class BrowserRenderer implements ILayerRenderer {
 		const height = this.videoJSON.height;
 		const time = frame >= 0 ? frame / this.videoJSON.fps : 0;
 
-		this.fontEmbedder.invalidateFrame();
+		// Font embedding exists ONLY to get `@font-face` rules inside an SVG
+		// that cannot see the document. Element capture draws the live DOM,
+		// where the fonts are already applied — so skip the whole pass rather
+		// than rebuild a base64 stylesheet nothing will read.
+		if (!rasterizer.usesElementCapture) this.fontEmbedder.invalidateFrame();
+		// The layer pass just rewrote every layer's DOM, so the tick taken
+		// during it (if any) is stale. One fresh tick from here serves every
+		// effect-layer capture that follows.
+		rasterizer.markDomDirty();
 
 		for (const layer of this.layers) {
 			if (!layer.hasEffects) continue;
@@ -775,6 +791,11 @@ export default class BrowserRenderer implements ILayerRenderer {
 		try {
 			this.rendering = true;
 			if (!this.elementsSetup) await this.initLayers();
+
+			// Frame start. Layer styles are about to be rewritten, so any paint
+			// record a capture host holds is now stale — and idle hosts get
+			// evicted here so the on-screen canvas set stays bounded.
+			this.rasterizer?.invalidateFrame();
 
 			await Promise.all(
 				this.layers.map(async layer => {
@@ -1048,6 +1069,12 @@ export default class BrowserRenderer implements ILayerRenderer {
 		this.elementCaptureCtx = hostCtx;
 		this.elementCaptureScale = ss;
 		this.elementCapture = true;
+		// One primitive for the whole renderer: with the API available, tier-3
+		// layers draw their live DOM too, so `<foreignObject>` — and the font
+		// embedding, canvas re-encoding and XML serialization that go with it —
+		// leaves the pipeline entirely. Tier 1 is untouched and still blits
+		// straight onto the target. See `LayerRasterizer.enableElementCapture`.
+		this.ensureRasterizer().enableElementCapture();
 		return true;
 	}
 
@@ -1150,7 +1177,10 @@ export default class BrowserRenderer implements ILayerRenderer {
 		}
 
 		const rasterizer = this.ensureRasterizer();
-		this.fontEmbedder.invalidateFrame();
+		// Only the foreignObject path reads embedded fonts — see
+		// `processEffectLayers` for why element capture needs none of it.
+		if (!rasterizer.usesElementCapture) this.fontEmbedder.invalidateFrame();
+		rasterizer.markDomDirty();
 
 		for (const layer of this.layers) {
 			if (!this.isLayerEnabled(layer)) continue;

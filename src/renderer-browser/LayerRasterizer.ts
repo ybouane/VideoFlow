@@ -193,6 +193,38 @@ type StableTransform = {
 	py: number;
 };
 
+/**
+ * A layer's capture host: a `<canvas layoutsubtree>` living outside the main
+ * tree, holding a `[data-renderer]` wrapper, holding the layer's live element.
+ */
+type CaptureHost = {
+	host: HTMLCanvasElement;
+	/** The renderer-root wrapper — this is what gets drawn, not the layer. */
+	wrapper: HTMLDivElement;
+	/** The layer element currently parked in the wrapper. */
+	element: HTMLElement | null;
+	/** Where the element came from, so it can be put back on release. */
+	home: Node | null;
+	/** Frame this host was last drawn on, for idle eviction. */
+	lastUsedFrame: number;
+};
+
+/**
+ * Frames a capture host may go unused before teardown.
+ *
+ * Each host is a project-sized canvas kept on-screen, so a timeline whose
+ * effect layers appear in sequence would otherwise accumulate one per layer for
+ * the whole render. Six concurrent 1080p hosts was enough to crash the page in
+ * testing; evicting idle ones keeps the working set to what is actually on
+ * screen.
+ */
+const HOST_IDLE_FRAMES = 30;
+
+/** Resolve after the next rendering lifecycle tick. */
+function nextAnimationFrame(): Promise<void> {
+	return new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+}
+
 export default class LayerRasterizer {
 	/** One OffscreenCanvas per layer, keyed by layer id. */
 	private surfaces: Map<string, OffscreenCanvas> = new Map();
@@ -221,6 +253,20 @@ export default class LayerRasterizer {
 	 * imperceptible against the moving image).
 	 */
 	private quality: ImageSmoothingQuality;
+
+	// -- Element capture -----------------------------------------------------
+
+	/** Per-layer capture hosts. See {@link enableElementCapture}. */
+	private captureHosts: Map<string, CaptureHost> = new Map();
+	/** Whether tier-3 rasterization draws the live DOM instead of serializing it. */
+	private elementCaptureEnabled = false;
+	/**
+	 * Whether a lifecycle tick has happened since the last DOM mutation this
+	 * frame. ONE tick refreshes every host's paint record at once.
+	 */
+	private frameTicked = false;
+	/** Monotonic frame counter, for idle host eviction. */
+	private frameSeq = 0;
 
 	/**
 	 * @param videoJSON       - The compiled VideoJSON whose `width` / `height`
@@ -264,7 +310,7 @@ export default class LayerRasterizer {
 		this.posLatchable.clear();
 	}
 
-	/** Release all per-layer surfaces and keys. */
+	/** Release all per-layer surfaces, keys and capture hosts. */
 	destroy(): void {
 		this.surfaces.clear();
 		this.keys.clear();
@@ -273,6 +319,276 @@ export default class LayerRasterizer {
 		this.baseScales.clear();
 		this.basePositions.clear();
 		this.posLatchable.clear();
+		for (const entry of this.captureHosts.values()) this.releaseHost(entry);
+		this.captureHosts.clear();
+	}
+
+	// -----------------------------------------------------------------------
+	//  Element capture — draw the live DOM instead of serializing it
+	// -----------------------------------------------------------------------
+
+	/**
+	 * Draw tier-3 layers with `drawElementImage()` on a per-layer capture host
+	 * instead of serializing them into an SVG `<foreignObject>`.
+	 *
+	 * The renderer runs ONE of these two paths, never a mix: element capture
+	 * when the platform has the API, `<foreignObject>` when it does not. Tier 1
+	 * is unaffected either way — a plain image or video layer is still blitted
+	 * straight onto the target with {@link drawDirectInto} and is never
+	 * rasterized at all.
+	 *
+	 * ## What it stops doing
+	 *
+	 * A `<foreignObject>` rasterizes as an *image*, and an image cannot see the
+	 * document that produced it, so everything the layer needs must be copied
+	 * in first. Drawing the live element needs none of it:
+	 *
+	 * | foreignObject does | element capture |
+	 * | --- | --- |
+	 * | re-fetch `@font-face` rules, base64 them into the SVG | fonts already loaded |
+	 * | `toDataURL()` every nested `<canvas>` — a PNG encode per frame | bitmaps already there |
+	 * | inline the whole renderer stylesheet | CSS already applies |
+	 * | clone the subtree, `XMLSerializer`, percent-encode, `img.decode()` | one draw call |
+	 *
+	 * {@link FontCssForLayerFn} and {@link RuntimeBaseLayer.createRasterClone}
+	 * are simply never invoked on this path.
+	 *
+	 * ## The shape
+	 *
+	 * A GLSL effect needs a texture of ONE layer in isolation, and a
+	 * `<canvas layoutsubtree>` can only draw its own immediate children — so
+	 * the layer moves into a capture canvas. Nesting that canvas inside the
+	 * project container is rejected by Blink (`NotSupportedError: Nested
+	 * canvases are not supported`), so the host is a **sibling** of the
+	 * container, outside the main tree:
+	 *
+	 * ```
+	 *   OUTSIDE the tree                    INSIDE the tree
+	 *   <canvas layoutsubtree>              <div data-renderer>   ← captured whole
+	 *     <div data-renderer>                 <layer A>
+	 *       <layer B>                         <canvas>  ← plain, holds B's result
+	 *     </div>                              <layer C>
+	 *   </canvas>                           </div>
+	 * ```
+	 *
+	 * The effected result re-enters through the layer's existing overlay canvas
+	 * — a plain `<canvas>`, which nests freely.
+	 *
+	 * ## The `[data-renderer]` wrapper is load-bearing
+	 *
+	 * A layer's transform is built from custom properties that only exist on
+	 * `[data-renderer]` (`--project-width`, `--vw`, `--position-*`). Move a
+	 * layer out of the container without re-establishing that root and they
+	 * stop inheriting, so `translate3d(…) perspective(…) scale3d(…)` resolves
+	 * against undefined values — which **crashes the Chrome renderer process**
+	 * on the next layout tick, not on the draw.
+	 *
+	 * ## Cost model, measured
+	 *
+	 * The draw itself is ~0.1 ms. What costs is that it needs a compositor
+	 * lifecycle tick, and one tick pays for the whole document. So the economics
+	 * are ticks-per-layer: the whole-container capture spends one tick for ALL
+	 * layers (494.9 → 32.5 ms on `09-effects`), while a per-layer host spends
+	 * one tick for one layer. With a single effect layer on screen that is a net
+	 * loss versus serializing it (measured 514 → 617 ms on `renderFrame`); the
+	 * tick amortizes and wins once several effect layers share it
+	 * (23.3 → 3.26 ms per layer at eight). Uniformity is worth more than that
+	 * delta, so both paths use one primitive rather than switching per layer.
+	 *
+	 * @returns whether the platform supports it.
+	 */
+	enableElementCapture(): boolean {
+		if (typeof CanvasRenderingContext2D === 'undefined'
+			|| typeof (CanvasRenderingContext2D.prototype as any).drawElementImage !== 'function') {
+			return false;
+		}
+		this.elementCaptureEnabled = true;
+		return true;
+	}
+
+	/** Return tier-3 rasterization to `<foreignObject>`, releasing every host. */
+	disableElementCapture(): void {
+		this.elementCaptureEnabled = false;
+		for (const [id, entry] of this.captureHosts) {
+			this.releaseHost(entry);
+			this.captureHosts.delete(id);
+		}
+	}
+
+	/** Whether tier-3 layers draw the live DOM rather than serializing it. */
+	get usesElementCapture(): boolean {
+		return this.elementCaptureEnabled;
+	}
+
+	/** Live capture hosts — the on-screen canvas working set. */
+	get captureHostCount(): number {
+		return this.captureHosts.size;
+	}
+
+	/**
+	 * Mark the layer DOM as changed since the last lifecycle tick, so the next
+	 * capture waits for a fresh one.
+	 *
+	 * Must be called at every point where layer styles are rewritten — frame
+	 * start, and again after the layer pass but before effect layers are
+	 * captured. Miss one and a host draws the PREVIOUS frame's DOM: a
+	 * `numberCountUp` group rendered 84 where it should have read 87, at the
+	 * same frame index, because its children were composited before the tick
+	 * that would have published their new text.
+	 */
+	markDomDirty(): void {
+		this.frameTicked = false;
+	}
+
+	/**
+	 * Mark the start of a frame: the next capture waits for a fresh lifecycle
+	 * tick, and hosts idle for {@link HOST_IDLE_FRAMES} are torn down. Call once
+	 * per frame, BEFORE any layer renders.
+	 */
+	invalidateFrame(): void {
+		this.frameTicked = false;
+		this.frameSeq++;
+		if (this.captureHosts.size === 0) return;
+		for (const [id, entry] of this.captureHosts) {
+			if (this.frameSeq - entry.lastUsedFrame > HOST_IDLE_FRAMES) {
+				this.releaseHost(entry);
+				this.captureHosts.delete(id);
+			}
+		}
+	}
+
+	/**
+	 * Wait until every host's paint record reflects the current DOM.
+	 *
+	 * Two ticks, not one: Blink's paint record lags a frame behind mutations to
+	 * a `<canvas>`'s *pixels*, and layers repaint their canvases during
+	 * `renderFrame`. One tick captures the previous frame's content.
+	 */
+	private async ensureFreshPaint(): Promise<void> {
+		if (this.frameTicked) return;
+		await nextAnimationFrame();
+		await nextAnimationFrame();
+		this.frameTicked = true;
+	}
+
+	/** The capture host for a layer, creating it on first use. */
+	private ensureCaptureHost(layer: RuntimeBaseLayer): CaptureHost | null {
+		const id = layer.json.id;
+		const existing = this.captureHosts.get(id);
+		if (existing) {
+			// A reload can hand us a new element for the same layer id.
+			if (existing.element !== layer.$element && layer.$element) {
+				existing.wrapper.replaceChildren(layer.$element);
+				existing.element = layer.$element;
+				this.frameTicked = false;
+			}
+			existing.lastUsedFrame = this.frameSeq;
+			return existing;
+		}
+		const el = layer.$element;
+		if (!el) return null;
+
+		const pw = this.videoJSON.width;
+		const ph = this.videoJSON.height;
+
+		const host = document.createElement('canvas');
+		host.width = pw;
+		host.height = ph;
+		host.setAttribute('layoutsubtree', '');
+		host.setAttribute('data-videoflow-capture', id);
+		// Must be on-screen: `drawElementImage` yields a blank bitmap for an
+		// element parked off to the left, with no error to explain it. Sits
+		// behind the project container, which paints over it.
+		host.style.position = 'absolute';
+		host.style.left = '0';
+		host.style.top = '0';
+		host.style.zIndex = '-1';
+		document.body.appendChild(host);
+
+		const wrapper = document.createElement('div');
+		wrapper.toggleAttribute('data-renderer', true);
+		wrapper.style.setProperty('--project-width', String(pw));
+		wrapper.style.setProperty('--project-height', String(ph));
+		const mainFontFamily = this.$canvas.style.getPropertyValue('font-family');
+		if (mainFontFamily) wrapper.style.setProperty('font-family', mainFontFamily);
+		host.appendChild(wrapper);
+
+		const entry: CaptureHost = {
+			host, wrapper, element: el, home: el.parentNode, lastUsedFrame: this.frameSeq,
+		};
+		wrapper.appendChild(el);
+		this.captureHosts.set(id, entry);
+		// The element just moved; its paint record is stale until the
+		// compositor runs again.
+		this.frameTicked = false;
+		return entry;
+	}
+
+	/** Detach a host, returning its layer element to where it came from. */
+	private releaseHost(entry: CaptureHost): void {
+		try {
+			if (entry.element && entry.home && entry.element.parentNode === entry.wrapper) {
+				entry.home.appendChild(entry.element);
+			}
+		} catch { /* home may be gone; removing the host still cleans up */ }
+		entry.host.remove();
+	}
+
+	/** Stop hosting one layer (on removal, or when it loses its effects). */
+	releaseCaptureHost(layerId: string): void {
+		const entry = this.captureHosts.get(layerId);
+		if (!entry) return;
+		this.releaseHost(entry);
+		this.captureHosts.delete(layerId);
+	}
+
+	/**
+	 * Paint the layer's DOM into `surface` using whichever primitive this
+	 * renderer runs on.
+	 *
+	 * @param domMutated - whether the caller just rewrote the layer's styles
+	 *   (the stable-transform latch swaps them), invalidating this frame's tick.
+	 */
+	private async paintDom(
+		layer: RuntimeBaseLayer,
+		surface: OffscreenCanvas,
+		domMutated: boolean,
+	): Promise<void> {
+		if (this.elementCaptureEnabled) {
+			if (domMutated) this.frameTicked = false;
+			if (await this.rasterizeViaHost(layer, surface)) return;
+		}
+		await this.rasterizeForeignObject(layer, surface);
+	}
+
+	/**
+	 * Draw the live layer into its host, then blit the host onto `surface`.
+	 * Returns `false` if the host could not be used, so the caller falls back
+	 * without losing the frame.
+	 */
+	private async rasterizeViaHost(layer: RuntimeBaseLayer, surface: OffscreenCanvas): Promise<boolean> {
+		const entry = this.ensureCaptureHost(layer);
+		if (!entry) return false;
+		const pw = this.videoJSON.width;
+		const ph = this.videoJSON.height;
+		await this.ensureFreshPaint();
+		const hostCtx = entry.host.getContext('2d');
+		if (!hostCtx) return false;
+		try {
+			hostCtx.setTransform(1, 0, 0, 1, 0, 0);
+			hostCtx.clearRect(0, 0, pw, ph);
+			(hostCtx as any).drawElementImage(entry.wrapper, 0, 0);
+		} catch {
+			// Unsupported shape for this layer — drop it back into the tree and
+			// let foreignObject handle it from here on.
+			this.releaseCaptureHost(layer.json.id);
+			return false;
+		}
+		const ctx = surface.getContext('2d')!;
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+		ctx.clearRect(0, 0, pw, ph);
+		ctx.drawImage(entry.host, 0, 0, pw, ph);
+		return true;
 	}
 
 	/**
@@ -358,7 +674,10 @@ export default class LayerRasterizer {
 				|| stable.bpx !== stable.px || stable.bpy !== stable.py;
 			const base = this.getBaseSurface(id);
 			if (swap) await layer.applyProperties(cacheProps);
-			await this.rasterizeForeignObject(layer, base);
+			// The latch works on either primitive: it pins the LIVE element's
+			// styles to the latched geometry, which is exactly what a capture
+			// host draws — so the anti-judder blit survives element capture.
+			await this.paintDom(layer, base, swap);
 			if (swap) await layer.applyProperties(props);
 			// Re-test containment on every fresh base raster: the layer's ink can
 			// grow (tracking expansion, a counting number widening) and reach the
@@ -366,7 +685,7 @@ export default class LayerRasterizer {
 			this.posLatchable.set(id, this.inkIsContained(base));
 			this.drawStable(id, stable, surface);
 		} else {
-			await this.rasterizeForeignObject(layer, surface);
+			await this.paintDom(layer, surface, false);
 		}
 		return surface;
 	}
