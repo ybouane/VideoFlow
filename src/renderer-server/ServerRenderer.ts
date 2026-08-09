@@ -223,7 +223,17 @@ export type ServerRenderOptions = RenderOptions & {
 	/**
 	 * Supersample factor for element capture — how many device pixels per
 	 * project pixel the container is drawn into before it is downsampled to the
-	 * frame. Defaults to 2; 1 disables supersampling, 4 is the ceiling.
+	 * frame. **Defaults to 1 (off)**; 4 is the ceiling.
+	 *
+	 * Off by default because the cost is quadratic and at 2x it more than
+	 * consumed the speedup element capture exists to provide — 113.8 ms/frame
+	 * versus 95.9 for the rasterizer it replaces, against 50.2 at 1x. The
+	 * judder it mitigates is handled instead by `elementCapture: undefined`
+	 * (auto), which declines capture for exactly the projects that suffer.
+	 *
+	 * Note this also moves the auto-decline threshold, which is `1 / scale` px
+	 * per frame: at 1 the renderer falls back for anything slower than a device
+	 * pixel per frame, at 2 only below half a pixel.
 	 *
 	 * This exists because Blink quantises glyph advances to a QUARTER of a
 	 * device pixel at paint time, and element capture paints the live DOM. A

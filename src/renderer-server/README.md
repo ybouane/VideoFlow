@@ -187,7 +187,7 @@ Output is visually identical — frame diffs against the rasterizer path show
 **0.000%** of pixels differing by more than 1/16, the remainder being H.264
 re-encode noise.
 
-### The tradeoff, and why you no longer have to make it
+### The tradeoff, and how it is handled
 
 Element capture paints the live DOM, so it bypasses `LayerRasterizer`'s
 scale/position latch — the mechanism that stops Chrome snapping glyph origins
@@ -207,24 +207,35 @@ path, not of any layer type — and no CSS property avoids it (`will-change`,
 `contain: paint`, `opacity: .999`, `filter`,
 `text-rendering: geometricPrecision` and `<svg><text>` all measure 0.22 px).
 
-Two mechanisms cover it, both on by default:
+**Automatic path selection covers it, and it is the only mechanism on by
+default.** Leaving `elementCapture` unset makes the page scan the project and
+decline element capture when a DOM layer's animated `scale` / `position` moves
+slower than the paint grid — a "life push" (`1 → 1.03` over ~3 s) is
+~0.2 px/frame. Those projects keep the latch and land back at the top row of the
+table; everything else keeps the speed. Verbose renders name the layer
+responsible:
 
-- **Supersampling.** The container is captured at `elementCaptureScale` device
-  pixels per project pixel (default 2, max 4) and downsampled, which divides the
-  quantum by that factor: 1x → 0.208 px jerk, 2x → 0.050, 3x → 0.026,
-  4x → 0.004. Cost is quadratic, and it only halves the vertical snap, so it is
-  a mitigation rather than a cure.
-- **Automatic path selection.** Leaving `elementCapture` unset makes the page
-  scan the project and decline element capture when a DOM layer's animated
-  `scale` / `position` moves slower than the paint grid — a "life push"
-  (`1 → 1.03` over ~3 s) is ~0.2 px/frame. Those projects keep the latch and
-  land back at the top row of the table; everything else keeps the speed.
-  Verbose renders name the layer responsible:
+```
+VideoFlow: Element capture declined — layer "Html" animates scale at 0.24 px/frame
+(below the 1.00 px paint grid); using the per-layer rasterizer so the latch keeps that motion smooth.
+```
 
-  ```
-  VideoFlow: Element capture declined — layer "Html" animates scale at 0.24 px/frame
-  (below the 0.50 px paint grid); using the per-layer rasterizer so the latch keeps that motion smooth.
-  ```
+**Supersampling is available but off.** Capturing at `elementCaptureScale`
+device pixels per project pixel and downsampling divides the quantum by that
+factor (1x → 0.208 px jerk, 2x → 0.050, 3x → 0.026, 4x → 0.004), but the cost is
+quadratic and at 2x it more than consumed the speedup it was protecting:
+
+| | per frame |
+| --- | --- |
+| per-layer rasterizer | 95.9 ms |
+| element capture 1x | **50.2 ms** |
+| element capture 2x | 113.8 ms |
+| element capture 3x | 178.7 ms |
+
+It also only halves the vertical snap, so it never was a cure — automatic path
+selection is. Raise it per-render when a deliverable's whole point is very slow
+type motion and you would rather pay the pixels than fall back. Note it also
+moves the decline threshold, which is `1 / scale` px per frame.
 
 Force either way when you know better — `elementCapture: true` takes the speed
 and accepts the grid (right for drafts), `false` turns it off entirely:

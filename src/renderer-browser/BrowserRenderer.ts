@@ -136,15 +136,36 @@ function nextAnimationFrame(): Promise<void> {
 export type AudioCodecChoice = { codec: 'aac' | 'opus'; bitrate: number };
 
 /**
- * Supersample factor element capture uses by default.
+ * Supersample factor element capture uses by default: none.
  *
- * 2x is the smallest factor that removes every frozen frame from a slow scale
- * tween (see {@link BrowserRenderer.enableElementCapture} for the table), at 4x
- * the capture pixels of a 1:1 draw — which is still far cheaper than the
- * per-layer rasterizer it replaced. 3x buys another 2x smoothness for 9x the
- * pixels; callers that want it can ask.
+ * Supersampling costs quadratically, and at 2x it consumed the entire reason
+ * element capture exists. Measured end-to-end on the same browser and scene
+ * (`01-basic-text`, 1080p, wall clock including encode):
+ *
+ * ```
+ *   per-layer rasterizer    95.9 ms/frame
+ *   element capture 1x      50.2 ms/frame     1.9x faster
+ *   element capture 2x     113.8 ms/frame     SLOWER than the rasterizer
+ *   element capture 3x     178.7 ms/frame
+ * ```
+ *
+ * The judder it was buying off is better handled by not taking element capture
+ * at all for the projects that suffer from it — which `'auto'` mode already
+ * does, and which costs nothing. The two mitigations overlap: everything auto
+ * accepts moves faster than the paint grid, so there is little left for
+ * supersampling to smooth.
+ *
+ * They stay coupled rather than independent. {@link subGridDomMotion} takes its
+ * threshold as `1 / scale`, so dropping the factor to 1 also tightens the
+ * decline threshold from 0.5 to 1.0 px/frame — no supersampling means a whole
+ * device pixel of quantisation, so more projects correctly fall back to the
+ * latched rasterizer.
+ *
+ * Raising it is still available per-render for deliverables where very slow
+ * type motion is the whole point; see {@link BrowserRenderer.enableElementCapture}
+ * for the smoothness/pixel-count tables.
  */
-export const DEFAULT_ELEMENT_CAPTURE_SCALE = 2;
+export const DEFAULT_ELEMENT_CAPTURE_SCALE = 1;
 
 /**
  * Layer types whose pixels come from a bitmap the compositor resamples, rather
@@ -940,10 +961,17 @@ export default class BrowserRenderer implements ILayerRenderer {
 	 * push. Matching the latched rasterizer there would take ~16x. Supersampling
 	 * is therefore a mitigation, not a cure — {@link mode} `'auto'` is the cure.
 	 *
+	 * Which is why it is **off by default**: it never fully solved the problem
+	 * it was aimed at, and it cost more than element capture saves (see
+	 * {@link DEFAULT_ELEMENT_CAPTURE_SCALE} for the wall-clock table). Raise it
+	 * per-render when a deliverable's whole point is very slow type motion and
+	 * you would rather pay the pixels than fall back.
+	 *
 	 * Idempotent; safe to call before or after the first render.
 	 *
-	 * @param scale supersample factor for the capture host (default 2, clamped
-	 *   to 1-4 and rounded). 1 restores the raw 1:1 capture.
+	 * @param scale supersample factor for the capture host (default 1 — no
+	 *   supersampling; clamped to 1-4 and rounded). Also tightens/loosens the
+	 *   `'auto'` decline threshold, which is `1 / scale` px per frame.
 	 * @param mode `'auto'` (the default) declines element capture for projects
 	 *   that contain DOM motion slower than the paint grid, where the
 	 *   rasterizer's latch is worth more than the speed — see
