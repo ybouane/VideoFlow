@@ -51,6 +51,7 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { fileURLToPath } from 'url';
 import * as esbuild from 'esbuild';
+
 import type { VideoJSON, RenderOptions } from '@videoflow/core';
 import { formatTime, delay } from '@videoflow/core';
 
@@ -315,6 +316,18 @@ async function computeBundleCacheKey(entryPoint: string, entries: NormalizedLaye
  * working without worrying about JS identifier syntax, and let us emit a
  * precise error when a module doesn't export what was promised.
  */
+/**
+ * The single file every `@videoflow/renderer-browser` import in a page bundle
+ * must resolve to. See the `alias` note in the esbuild config below.
+ */
+const RENDERER_BROWSER_ENTRY = (() => {
+	// import.meta.resolve, NOT createRequire().resolve: the package declares an
+	// `exports` map with only an "import" condition, so the CJS resolver throws
+	// `No "exports" main defined`.
+	try { return fileURLToPath(import.meta.resolve('@videoflow/renderer-browser')); }
+	catch { return null; }
+})();
+
 function generateBundleEntry(entryPoint: string, entries: NormalizedLayerTypeEntry[]): string {
 	const lines: string[] = [
 		`import { startRendererPage } from ${pathLiteral(entryPoint)};`,
@@ -388,6 +401,25 @@ async function buildRendererBundle(entries: NormalizedLayerTypeEntry[] = []): Pr
 		minify: true,
 		sourcemap: false,
 		external: ['@videoflow/renderer-server'],
+		// ONE COPY OF THE RENDERER IN THE PAGE.
+		//
+		// A custom layer-type module lives in the CONSUMER's tree, so its
+		// `@videoflow/renderer-browser` resolves through the consumer's
+		// node_modules, while this package's own code resolves through ours.
+		// With linked/hoisted installs those are different specifiers pointing at
+		// the same package, and esbuild does not fold them — the page bundle ends
+		// up with TWO copies.
+		//
+		// That is invisible for stateless imports and fatal for stateful ones. The
+		// effect registry is module-level state: `registerEffect` called from a
+		// consumer module writes to one registry while WebGLEffectCompositor reads
+		// the other, so `getEffect` returns undefined, the compositor blits the
+		// source unchanged, and every custom shader silently paints NOTHING.
+		// Nothing throws. Verified by identity — RuntimeVisualLayer reached via
+		// @videoflow/renderer-dom was not the same object as the one imported
+		// directly — and by a shader returning solid red producing no change while
+		// built-in effects worked.
+		...(RENDERER_BROWSER_ENTRY ? { alias: { '@videoflow/renderer-browser': RENDERER_BROWSER_ENTRY } } : {}),
 		define: {
 			'process.env.mode': '"browser"',
 		},
