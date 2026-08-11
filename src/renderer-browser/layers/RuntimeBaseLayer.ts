@@ -585,19 +585,27 @@ export default class RuntimeBaseLayer {
 
 		if ((typeof n1 === 'number' && typeof n2 === 'number') || easing === 'step') {
 			const outUnit = u2 ?? '';
+			if (easing === 'step') return outUnit ? n1 + outUnit : n1;
+
+			let eased: number;
 			switch (easing) {
-				case 'step':
-					return outUnit ? n1 + outUnit : n1;
 				case 'easeIn':
-					return (n1 + (n2 - n1) * (t * t)) + outUnit;
+					eased = t * t; break;
 				case 'easeOut':
-					return (n1 + (n2 - n1) * (t * (2 - t))) + outUnit;
+					eased = t * (2 - t); break;
 				case 'easeInOut':
-					return (n1 + (n2 - n1) * ((t < 0.5) ? 2 * t * t : -1 + (4 - 2 * t) * t)) + outUnit;
+					eased = (t < 0.5) ? 2 * t * t : -1 + (4 - 2 * t) * t; break;
 				case 'linear':
 				default:
-					return (n1 + (n2 - n1) * t) + outUnit;
+					eased = t; break;
 			}
+			const out = n1 + (n2 - n1) * eased;
+			// Unitless properties must stay *numbers*. Appending an empty unit
+			// would coerce to a string, which CSS tolerates but the WebGL effect
+			// compositor does not: `bool` params take the truthiness of the value
+			// (so "0" reads as true) and `option` params look the value up in a
+			// list of option names (so "1.5" misses and falls back to default).
+			return outUnit ? out + outUnit : out;
 		} else {
 			// Fallback: use Web Animations API for non-numeric interpolation (e.g. colors)
 			if (!this.$element) return v1;
