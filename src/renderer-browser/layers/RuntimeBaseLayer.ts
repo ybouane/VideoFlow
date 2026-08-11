@@ -23,6 +23,7 @@
 
 import type { LayerJSON, LayerEffectJSON, PropertyDefinition } from '@videoflow/core/types';
 import { getTransitionDefinition } from '../transitions.js';
+import { getEffect } from '../effects.js';
 import { cloneWithInlineCanvases } from '../domClone.js';
 
 /** Regex that matches an animated effect-param key (`effects.name.param` or `effects.name[idx].param`). */
@@ -359,7 +360,7 @@ export default class RuntimeBaseLayer {
 			// layer's propertiesDefinition; they're interpolated as bare numeric
 			// values with no unit/CSS mapping, then fed to the effect compositor.
 			if (EFFECT_PARAM_PATH_RE.test(anim.property)) {
-				props[anim.property] = this.interpolateKeyframes(anim.property, sourceTimeSec, kfs);
+				props[anim.property] = this.interpolateEffectParam(anim.property, sourceTimeSec, kfs);
 				continue;
 			}
 
@@ -464,6 +465,42 @@ export default class RuntimeBaseLayer {
 		}
 
 		return resolved;
+	}
+
+	/**
+	 * Interpolate an effect-param dot-path (`effects.<name>[idx].<param>`).
+	 *
+	 * These have no `PropertyDefinition` — the value is handed straight to a
+	 * GLSL uniform rather than to CSS, so there is no unit to carry.
+	 *
+	 * `bool` and `option` params are **discrete**: nothing sits between `true`
+	 * and `false`, or between two option names, so they hold the value of the
+	 * last keyframe at or before `time` instead of being blended. Without this
+	 * they land in the numeric path and interpolate to `NaN` (booleans) or get
+	 * run through the colour path and come back as a computed colour string
+	 * (option names are all-alphabetic, which reads as a CSS colour keyword) —
+	 * either way the compositor falls back to the param's default and the
+	 * keyframes appear to do nothing.
+	 */
+	interpolateEffectParam(
+		property: string,
+		time: number,
+		keyframes: Array<{ time: number; value: any; easing?: string }>
+	): any {
+		const m = EFFECT_PARAM_PATH_RE.exec(property);
+		const paramDef = m ? getEffect(m[1])?.params?.[m[3]] : undefined;
+
+		if (paramDef?.type === 'bool' || paramDef?.type === 'option') {
+			if (keyframes.length === 0) return paramDef.default;
+			let held = keyframes[0].value;
+			for (const kf of keyframes) {
+				if (kf.time > time) break;
+				held = kf.value;
+			}
+			return held;
+		}
+
+		return this.interpolateKeyframes(property, time, keyframes);
 	}
 
 	/**
