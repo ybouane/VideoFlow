@@ -792,6 +792,13 @@ layer.animate(
 );
 ```
 
+> [!WARNING]
+> **The index counts passes of that same effect, not positions in the array.** With `effects: [blur, rgbSplit]` the `rgbSplit` pass is still `effects.rgbSplit[0]` — `[1]` addresses nothing and the keyframes are silently ignored. Only a second `rgbSplit` creates an `[1]`. Disabled entries keep their number, so toggling one off never renumbers the others.
+
+### Discrete params
+
+`bool` and `option` params hold their value between keyframes rather than blending — there is nothing halfway between `true` and `false`, or between two option names. Keyframe them to switch a pass's mode at an exact time. `float`, `vec*` and `color` params interpolate normally.
+
 ---
 Source: https://videoflow.dev/docs/guide/effects
 
