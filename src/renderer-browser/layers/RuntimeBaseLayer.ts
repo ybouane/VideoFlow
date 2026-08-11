@@ -409,12 +409,27 @@ export default class RuntimeBaseLayer {
 		// Clone each entry so we never mutate the compiled JSON. Disabled
 		// entries are dropped here — both renderers consume this list and so
 		// transparently respect `enabled: false`.
-		const resolved: LayerEffectJSON[] = declared
-			.filter(e => e.enabled !== false)
-			.map(e => ({
+		//
+		// `occurrenceSlots[name][k]` is the index in `resolved` of the k-th
+		// entry named `name`, which is how a `[idx]` in a dot-path is addressed.
+		// Ordinals are counted over the *declared* array, disabled entries
+		// included (they take their slot and map to `undefined`), so switching
+		// one effect off never silently re-targets a later same-named effect's
+		// keyframes onto it. This matches how `VideoFlow._getLastValue` counts.
+		const occurrenceSlots: Record<string, Array<number | undefined>> = {};
+		const resolved: LayerEffectJSON[] = [];
+		for (const e of declared) {
+			const slots = (occurrenceSlots[e.effect] ??= []);
+			if (e.enabled === false) {
+				slots.push(undefined);
+				continue;
+			}
+			slots.push(resolved.length);
+			resolved.push({
 				effect: e.effect,
 				params: { ...(e.params ?? {}) },
-			}));
+			});
+		}
 
 		// Append transition-injected effects (sentinel `__effects` array on
 		// props). Transitions add these in `applyTransitions` so the renderer
@@ -424,6 +439,7 @@ export default class RuntimeBaseLayer {
 		if (injected) {
 			for (const e of injected) {
 				if (!e || typeof e.effect !== 'string') continue;
+				(occurrenceSlots[e.effect] ??= []).push(resolved.length);
 				resolved.push({
 					effect: e.effect,
 					params: { ...(e.params ?? {}) },
@@ -433,14 +449,6 @@ export default class RuntimeBaseLayer {
 
 		if (resolved.length === 0) return [];
 		if (!props) return resolved;
-
-		// Index the n-th occurrence of each effect name so [idx] lookups
-		// line up with the original array positions.
-		const occurrenceSlots: Record<string, number[]> = {};
-		for (let i = 0; i < resolved.length; i++) {
-			const name = resolved[i].effect;
-			(occurrenceSlots[name] ??= []).push(i);
-		}
 
 		for (const [key, value] of Object.entries(props)) {
 			const match = EFFECT_PARAM_PATH_RE.exec(key);
