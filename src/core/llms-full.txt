@@ -966,7 +966,6 @@ $.addCaptions(
 | `fontSize` / `fontWeight` / `fontFamily` / `color` | | Same as text layer. |
 | `backgroundColor` / `padding` / `borderRadius` | | Per-line pill. |
 | `position` | `[0.5, 0.85]` | Bottom-centre by default. |
-| `wrap` | `boolean` / `true` | `true` (default) wraps long lines; `false` disables wrapping (explicit `\n` newlines still break lines either way). Measured at the layer's native `fontSize`, before `scale`. Not animatable. |
 | `maxCharsPerLine` *(setting)* | `40` | Line-break hint. |
 | `maxLines` *(setting)* | `2` | — |
 
@@ -1318,7 +1317,6 @@ return $;
 | `textTransform` | `none | capitalize | uppercase | lowercase` | Not animatable. |
 | `textDecoration` | `none | underline | overline | line-through` | Not animatable. |
 | `direction` | `ltr | rtl` / `ltr` | Bidirectional text. Not animatable. |
-| `wrap` | `boolean` / `true` | `true` (default) wraps long lines; `false` disables wrapping (explicit `\n` newlines still break lines either way). Wrap width is measured at the layer's native `fontSize`, before any `scale` transform — change `fontSize` to change where lines break, not `scale`. Not animatable. |
 | `backgroundColor` | `css colour` / `transparent` | Pill background; pairs well with `padding`. |
 | `padding` | `em` / `0` | Single value or `[t,r,b,l]`. |
 | `borderWidth` / `borderColor` / `borderStyle` | `em` / colour / enum | `borderStyle` ∈ `none | solid | dashed | dotted | double | groove | ridge | inset | outset`. |
@@ -1424,12 +1422,23 @@ clip.remove();
 | `speed` *(setting)* | `number` / 1 | Playback speed multiplier. |
 | `volume` | `0–1` / 1 | Animatable. |
 | `mute` | `boolean` | — |
-| `fit` | `cover | contain` / `cover` | How the video sizes to the project canvas. |
+| `fit` | `cover | contain` / `contain` | How the video sizes to the project canvas. |
 | `position` / `anchor` / `scale` / `rotation` | | Animatable. |
 | `opacity` / `filterBlur` / `filterBrightness` | | Animatable. |
 
 > [!WARNING]
 > **Source-media seconds.** Animations on a video layer are keyed in source-media seconds, not timeline seconds. If you `sourceStart: '5s'` and then `animate(from, to, { duration: '3s' })`, the animation runs from source 5s → source 8s.
+
+## Decoding
+
+Frames decode through WebCodecs, and the decoder adapts to how the layer is read. Playing forward — which is every export — decodes each packet at most once. Playing in reverse (`speed` below zero) decodes forward windows and serves them backwards. Scrubbing re-seeks, which is unavoidable.
+
+This matters more than it sounds. A seek re-decodes from the preceding keyframe, so stepping through a clip one frame at a time costs `O(frames × GOP)`: on a 1080p H.264 clip with the 250-frame GOP a stock encode produces, that is 207 ms per frame against 15.6 ms decoding the same frames in order.
+
+Nothing to configure. A source whose codec has no WebCodecs decoder on the current platform falls back to a `<video>` element automatically, so unusual formats still render — just more slowly.
+
+> [!NOTE]
+> **Re-encoding your sources with a denser GOP helps scrubbing, not export.** Export is sequential and already optimal; only random access pays the keyframe-distance cost.
 
 ---
 Source: https://videoflow.dev/docs/guide/layer-video
@@ -1553,12 +1562,38 @@ r.destroy();
 Calling `loadVideo()` reloads everything. For typing-speed edits, use the incremental patch API — it skips decode for unchanged layers:
 
 ```javascript
-r.updateVideo({ duration: 4 });          // top-level patch
-r.addLayer(newLayer);                    // append a layer
-r.removeLayer(layerId);                  // drop one
-r.updateLayer(layerId, { scale: 1.2 });  // patch props on an existing layer
-r.reorderLayers([id3, id1, id2]);        // reorder
+await r.updateVideo({ duration: 4 });        // top-level patch
+await r.addLayer(newLayer);                  // append a layer
+await r.removeLayer(layerId);                // drop one
+await r.reorderLayers([id3, id1, id2]);      // reorder
+
+// Patch an existing layer. Each key is its own channel — `properties` and
+// `animations` REPLACE wholesale, so pass the full post-edit object; only
+// `settings` is shallow-merged.
+await r.updateLayer(layerId, {
+  properties: { ...layer.properties, scale: 1.2 },
+  settings: { startTime: 1.5 },
+});
 ```
+
+Every mutation is queued internally, so they can be fired without awaiting each one, and each concludes by re-rendering the current frame.
+
+## Custom layer types
+
+`DomRenderer` owns its own layer-type registry, so a preview can render layer types the library doesn't ship. Register between construction and the first `loadVideo()`:
+
+```javascript
+import DomRenderer, { RuntimeVisualLayer } from '@videoflow/renderer-dom';
+
+const r = new DomRenderer(host);
+r.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+await r.loadVideo(videoJSON);
+```
+
+Registrations stay attached to that instance and survive reloads. Register the same type on the renderer you export with and preview and export agree. See the [browser renderer guide](/docs/guide/rendering-browser#custom-layer-types) for the full contract.
 
 > [!NOTE]
 > **Use it as a headless player.** Mount it in a hidden host, call `renderFrame(n)` to rasterise thumbnails, and read the canvas contents — no MP4 encode needed.
@@ -1821,8 +1856,10 @@ Object.assign(document.createElement('a'), { href: url, download: 'out.mp4' }).c
 | `onProgress` | — | `(p: number) => void`. `p` is the fraction of frames done (`0..1`). |
 | `worker` | `true` | Set `false` to run on the main thread (debugging only). |
 | `verbose` | `false` | Log frame-level timing to the console. |
-| `bitrate` | auto | Bits per second. Auto scales with resolution. |
-| `codec` | `'avc'` | `avc | vp9 | hevc` where the browser supports it. |
+| `videoQuality` | `'veryHigh'` | `'medium' | 'high' | 'veryHigh'`. Motion graphics band and smear at rates that suit camera footage, so the default is deliberately generous. |
+| `videoBitrate` | — | Explicit bits per second (e.g. `16_000_000`). Overrides `videoQuality`. |
+
+Video is encoded as H.264 (AVC). Audio prefers AAC and falls back to Opus where the platform ships no AAC encoder — notably Linux, including headless Chrome.
 
 ## Progress UI
 
@@ -1851,6 +1888,52 @@ If you're already in a `VideoFlow` instance and don't need to hold the JSON, cal
 ```javascript
 const blob = await $.renderVideo({ onProgress: (p) => console.log(`${Math.round(p * 100)}%`) });
 ```
+
+## Custom layer types
+
+Every renderer instance owns its own layer-type registry, seeded with the built-in types (addText, addImage, addVideo, addAudio, addCaptions, addShape, group). You can add your own without forking the package — register a runtime class plus its property definitions:
+
+```javascript
+import BrowserRenderer, { RuntimeVisualLayer } from '@videoflow/renderer-browser';
+
+class RuntimeCustomLayer extends RuntimeVisualLayer {
+  async generateElement() {
+    if (this.$element) return this.$element;
+    const el = document.createElement('div');
+    el.setAttribute('data-element', 'custom');
+    el.setAttribute('data-id', this.json.id);
+    this.$element = el;
+    return el;
+  }
+}
+
+const renderer = new BrowserRenderer(videoJSON);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+const blob = await renderer.exportVideo();
+```
+
+Any layer whose `type` is `"custom"` now renders through your class, at any depth — groups build their children through the same registry.
+
+**Lifecycle.** Register after construction and before the first render:
+
+| Renderer | Register after | Register before |
+| --- | --- | --- |
+| `BrowserRenderer` | construction | first `renderFrame` / `captureFrame` / `renderAudio` / `exportVideo` |
+| `DomRenderer` | construction | first `loadVideo` |
+| `ServerRenderer` | construction | first `renderVideo` / `renderFrame` / `renderAudio` |
+
+Registering a type that already exists replaces it — including a built-in, which is how you override one for a single renderer. Registries belong to instances, so two renderers on the same page never interfere, and an unknown layer type throws an error naming the type and the renderer rather than silently rendering nothing.
+
+Exported for building layer types: `RuntimeBaseLayer`, `RuntimeVisualLayer`, `RuntimeTextualLayer`, `RuntimeMediaLayer`, plus the `LayerTypeDescriptor` and `RuntimeLayerConstructor` types. `@videoflow/renderer-dom` re-exports them so an editor can build one without adding a dependency.
+
+## Video decoding
+
+Video layers decode through WebCodecs, adapting to how they are read rather than seeking per frame. A `currentTime` seek re-decodes from the preceding keyframe, so stepping through a clip frame by frame costs `O(frames × GOP)` — 207 ms/frame on a 1080p clip with a stock 250-frame GOP, against 15.6 ms decoding the same frames sequentially. Forward playback decodes each packet once; reverse playback (`speed` below zero) decodes forward windows and serves them backwards.
+
+There is nothing to configure. Sources whose codec has no WebCodecs decoder on the current platform fall back to a `<video>` element automatically.
 
 ---
 Source: https://videoflow.dev/docs/guide/rendering-browser
@@ -1905,6 +1988,46 @@ await s3.send(new PutObjectCommand({ Bucket, Key, Body: buffer, ContentType: 'vi
 | `signal` | — | `AbortSignal` for cancellation. |
 | `onProgress` | — | `(p: 0..1) => void`. |
 | `verbose` | `false` | Stream stage logs to the console. |
+| `videoQuality` | `'veryHigh'` | `'medium' | 'high' | 'veryHigh'`. Motion graphics are the worst case for a rate-controlled codec, so the default is deliberately generous. |
+| `videoBitrate` | — | Explicit bits per second (e.g. `16_000_000`). Overrides `videoQuality`. |
+| `elementCapture` | *auto* | Leave unset to let the renderer decide. `false` forces the SVG rasterizer, `true` forces capture on. See [Rendering performance](#rendering-performance). |
+| `elementCaptureScale` | `1` | Supersample factor for element capture, max `4`. Costs scale quadratically. |
+| `layerTypes` | — | External layer types to register — see [Custom layer types](#custom-layer-types). |
+
+## Rendering performance
+
+Two things dominate a render, and both are handled for you.
+
+**Frames are composited with Chromium's "HTML in canvas"** (`drawElementImage`) when the browser supports it, instead of serializing every layer into an SVG `<foreignObject>`. That removes the font re-embedding, canvas re-encoding and XML serialization the SVG path needs. Measured end-to-end on the bundled examples:
+
+| example | SVG rasterizer | element capture |
+| --- | --- | --- |
+| effects showcase | 970 ms/frame | **480 ms/frame** |
+| nested groups | 218 ms/frame | **140 ms/frame** |
+
+It needs **Chrome 149+**, and the renderer drives your system Chrome — so keeping Chrome current is all it takes. Verbose renders say which path was taken, and name the version when it is too old. Set `VIDEOFLOW_CHROME_PATH` to point at a specific binary.
+
+Where a project animates `scale` or `position` more slowly than the browser's paint grid, the renderer automatically falls back to the SVG rasterizer for that project, because its scale latch keeps such motion smooth. You do not normally need to touch any of this.
+
+**Video layers decode through WebCodecs**, adapting to the access pattern rather than seeking per frame. A seek re-decodes from the preceding keyframe, so seeking frame by frame costs `O(frames × GOP)` — on a 1080p clip with a stock 250-frame GOP that was 207 ms per frame, against 15.6 ms decoding sequentially. Sources whose codec has no WebCodecs decoder fall back to the previous `<video>` path automatically.
+
+## Custom layer types
+
+The page runs in a separate Chromium realm, so a runtime layer *class* cannot be handed to it. Register an absolute **module path** instead and the module is bundled into the renderer page:
+
+```javascript
+import { ServerRenderer } from '@videoflow/renderer-server';
+
+const renderer = new ServerRenderer(json);
+renderer.registerLayerType('custom', {
+  modulePath: '/absolute/path/to/custom-layer-type.js',
+  exportName: 'default',        // optional
+});
+await renderer.renderVideo({ outputType: 'file', output: './out.mp4' });
+await renderer.cleanup();
+```
+
+The module must be browser-compatible and export `{ runtime, propertiesDefinition }`. Register after construction and **before** the first render — that is when the headless page and its bundle are built. See the [browser renderer guide](/docs/guide/rendering-browser#custom-layer-types) for how to write the runtime class.
 
 ## Pipelines
 
@@ -2165,6 +2288,8 @@ The builder, layer classes, Time parser, and VideoJSON compiler.
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `AudioLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family — see VisualLayer.category. Audio layers are
+filtered by transitions tagged `layerCategory: 'audio'` or `'all'`.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2185,9 +2310,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2205,6 +2336,9 @@ Properties stored as keyframe arrays are converted into the
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `CaptionsLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family — see VisualLayer.category. Overrides the
+inherited `'visual'` so text-only transitions (`typewriter`,
+`scrambleDecode`, …) match this category.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2225,9 +2359,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2245,6 +2385,9 @@ Properties stored as keyframe arrays are converted into the
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `MediaLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family used to filter UI affordances (e.g. transition pickers,
+property panels). Matches the `layerCategory` field a transition preset
+declares: `'visual' | 'audio' | 'textual' | 'all'`.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2265,9 +2408,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2285,6 +2434,9 @@ Properties stored as keyframe arrays are converted into the
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `ShapeLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family used to filter UI affordances (e.g. transition pickers,
+property panels). Matches the `layerCategory` field a transition preset
+declares: `'visual' | 'audio' | 'textual' | 'all'`.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2305,9 +2457,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2325,6 +2483,9 @@ Properties stored as keyframe arrays are converted into the
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `BaseLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family — see VisualLayer.category. Overrides the
+inherited `'visual'` so text-only transitions (`typewriter`,
+`scrambleDecode`, …) match this category.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2345,9 +2506,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2451,6 +2618,9 @@ The renderer package must be installed separately.
 Each property key maps to either a static value or an array of
 Keyframe objects describing its animation over time.
 - `settings`: `MediaLayerSettings` — Layer settings (timing, enable state, etc.).
+- `category`: `string` — Broad layer family used to filter UI affordances (e.g. transition pickers,
+property panels). Matches the `layerCategory` field a transition preset
+declares: `'visual' | 'audio' | 'textual' | 'all'`.
 - `type`: `string` — Machine-readable layer type tag (overridden by subclasses).
 - `endFrame`
 - `endTime`
@@ -2471,9 +2641,15 @@ Keyframe objects describing its animation over time.
 - `fadeIn(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer in from transparent.
 - `fadeOut(duration: Time, easing?: Easing, wait?: boolean): this` — Fade the layer out to transparent.
 - `hide(): this` — Hide the layer (set `visible` to `false`).
-- `remove(): this` — Remove this layer at the current flow position.
+- `remove(options: RemoveLayerOptions): this` — Remove this layer at the current flow position, or after an optional
+offset from it.
 
-Once removed, calling any further flow method on this layer throws.
+`options.in` schedules the removal at `flow + in` without advancing the
+flow pointer — useful when you want a layer to disappear later while
+keeping subsequent `addX()` calls anchored to *now*. The default
+(`options.in` omitted) is equivalent to `{ in: 0 }`: remove immediately.
+
+After calling `remove`, any further flow method on this layer throws.
 - `set(value: Record<string, any>): this` — Set property values at the current flow position (step keyframe).
 - `show(): this` — Show the layer (set `visible` to `true`).
 - `toJSON(): LayerJSON` — Serialise this layer into the VideoFlow JSON model format.
@@ -2586,7 +2762,7 @@ The flow is a sequential list of these actions that gets compiled into the
 final VideoJSON by the `compile()` method.
 
 ```ts
-Action: { duration: Time; statement: "wait" } | { actions: Action[][]; statement: "parallel" } | { id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "addLayer"; type: string } | { actions: Action[]; id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "group" } | { id: Id; statement: "removeLayer" } | { id: Id; statement: "set"; value: Record<string, any> } | { from: Record<string, any>; id: Id; settings: { duration: Time; easing?: Easing; wait?: boolean }; statement: "animate"; to: Record<string, any> }
+Action: { duration: Time; statement: "wait" } | { actions: Action[][]; statement: "parallel" } | { id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "addLayer"; type: string } | { actions: Action[]; id: Id; options?: AddLayerOptions; properties: Record<string, any>; settings: Record<string, any>; statement: "group" } | { id: Id; in?: Time; statement: "removeLayer" } | { id: Id; statement: "set"; value: Record<string, any> } | { from: Record<string, any>; id: Id; settings: { duration: Time; easing?: Easing; wait?: boolean }; statement: "animate"; to: Record<string, any> }
 ```
 
 ### AddLayerOptions
@@ -2880,6 +3056,9 @@ Encode VideoJSON to an MP4 Blob inside the browser via WebCodecs.
 - `currentFrame`: `number` — Frame being rendered right now (for dedup / cancellation).
 - `layers`: `RuntimeBaseLayer[]` — Runtime layer wrappers.
 - `loadedFonts`: `Record<string, string>` — Cache of loaded Google Fonts — maps font name → stylesheet URL.
+- `elementCaptureDeclinedReason`
+- `elementCaptureSupersample`
+- `usesElementCapture`
 
 #### Methods
 
@@ -2908,34 +3087,154 @@ other caller-owned target sized to the project).
 Used by `RuntimeGroupLayer.renderFrame` to flatten each child onto the
 group's canvas — the same path that `captureFrame` uses for top-level
 layers.
+- `createRuntimeLayer(layerJSON: LayerJSON): RuntimeBaseLayer` — Instantiate the runtime layer registered for `layerJSON.type`, wired to
+this renderer and this project's fps / dimensions. Used for top-level
+layers and — via `ILayerRenderer` — by groups for their descendants.
+
+Throws for a type that isn't registered on this renderer.
 - `destroy(): void` — Tear down the renderer: destroy every runtime layer (releases media
 elements, decoders, audio buffers), remove the hidden `<div data-renderer>`
 from the DOM, drop the shared render canvas, and dispose the rasterizer's
 per-layer surfaces and the WebGL effect compositor's GL context. Call this
 after the last `captureFrame` / `exportVideo` to avoid leaking GL contexts
 across repeated renders.
+- `enableElementCapture(scale: number, mode: "auto" | "force"): Promise<boolean>` — Opt into compositing each frame with a single `drawElementImage()` call
+instead of rasterizing every layer through an SVG `<foreignObject>`.
+
+`drawElementImage` (Chromium's "HTML in canvas", behind
+`--enable-blink-features=CanvasDrawElement`) paints a live element
+straight into a 2D context. Because the browser composites the whole
+project in one pass, the per-frame cost collapses to Blink's own
+incremental layout+paint of whatever actually changed. Measured across
+the example projects at 1080p, composite time per frame:
+
+```
+  basic text     49.8 → 10.8 ms      transitions   76.7 → 32.1 ms
+  image bg      334.1 → 11.8 ms      effects      494.9 → 32.5 ms
+  keyframes      81.5 → 19.7 ms      groups       272.7 →  0.3 ms
+```
+
+with output pixel-identical to the rasterizer path on every one of those
+scenes (the effect-overlay canvases are inside the container, so WebGL
+effects are captured too).
+
+## Requirements, and why this is opt-in
+
+- The API only exists behind a Chromium launch flag, so it cannot be
+  relied on in a normal browser tab. Returns `false` when unavailable
+  and the renderer keeps using the rasterizer.
+- The container **must be on-screen**: `drawElementImage` silently
+  produces a blank frame for an element parked off to the left, which is
+  where this renderer normally hides it. Enabling therefore moves the
+  container to the top-left of the page, where it is visible. That is
+  fine for a headless export; in a live page the caller must accept the
+  project being briefly painted over the document.
+- One layer type is not caught by this path: a layer that changes
+  *canvas pixels* (video) needs one extra lifecycle tick before its
+  paint record catches up, which captureFrameViaElement accounts
+  for. Getting that wrong exports the previous video frame.
+
+## `scale` — why capturing bigger than the frame is not a luxury
+
+`drawElementImage` paints the live DOM, so it inherits Blink's paint-time
+text quantisation: glyph advances land on a QUARTER of a device pixel.
+Under a slow tween — a 3% "life push" over 3-4s moves a headline's edges
+~0.1px/frame — the type therefore holds still for several frames and then
+jumps a quarter pixel, which reads as judder. This is the same defect
+LayerRasterizer's scale/position latch exists to remove, and
+element capture bypasses that latch entirely because there is no per-layer
+raster to blit.
+
+It cannot be fixed in CSS. Measured under `drawElementImage`, on an 84px
+headline under `scale: 1 -> 1.03`, mean frame-to-frame jerk of the
+sub-pixel left ink edge:
+
+```
+  plain                     0.221 px    frozen 65/119 frames
+  will-change: transform    0.221 px    65/119
+  contain: paint            0.221 px    65/119
+  opacity: 0.999            0.221 px    65/119
+  filter: opacity(1)        0.221 px    65/119
+  text-rendering: geometricPrecision
+                            0.222 px    62/119
+  <svg><text>               0.221 px    65/119
+```
+
+Nothing moves it, because the quantum is defined in DEVICE pixels — so
+the one thing that does move it is making a device pixel smaller. Drawing
+the container into a host `scale`x larger and downsampling divides the
+quantum by `scale`:
+
+```
+  1x   jerk 0.208 px   frozen 36/89        4x  jerk 0.004 px   0/89
+  2x   jerk 0.050 px        0/89
+  3x   jerk 0.026 px        0/89
+```
+
+That is a 4x improvement for 4x the capture pixels, and it clears the
+HORIZONTAL axis outright. It does not clear the vertical one: the
+vertical quantum is a WHOLE device pixel, so 2x still leaves half-pixel
+steps, and an html component (a full-frame subtree scaled about the frame
+centre) drifts its off-centre content at only ~0.09 px/frame under a 3%
+push. Matching the latched rasterizer there would take ~16x. Supersampling
+is therefore a mitigation, not a cure — mode `'auto'` is the cure.
+
+Which is why it is **off by default**: it never fully solved the problem
+it was aimed at, and it cost more than element capture saves (see
+DEFAULT_ELEMENT_CAPTURE_SCALE for the wall-clock table). Raise it
+per-render when a deliverable's whole point is very slow type motion and
+you would rather pay the pixels than fall back.
+
+Idempotent; safe to call before or after the first render.
 - `exportVideo(options: RenderOptions): Promise<Blob>` — Export the full video as an MP4 blob using MediaBunny.
 
 When `options.worker` is not `false` (the default), SVG rasterisation and
 MediaBunny encoding are offloaded to a dedicated Web Worker so that the
 main thread stays responsive.  Set `worker: false` to encode entirely on
 the main thread (useful when Workers are unavailable).
-- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Look up the full property definitions for a layer type, or a single property.
-Used by runtime layers to determine CSS mapping and defaults.
+- `getLayerType(type: string): LayerTypeDescriptor | undefined` — The descriptor registered for `type` on this renderer, if any.
+- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Look up the full property definitions for a layer type, or a single
+property. Resolved through this renderer's layer-type registry, so an
+overridden type gets its overriding property definitions too.
 - `getVirtualLayerHost(): Node` — Where group layers should park their hidden child host. For the export
 renderer we use `document.body` directly so the children's CSS resolves
 against the page's layout context (the same context the main `$canvas`
 uses).
+- `listLayerTypes(): string[]` — Every layer type registered on this renderer, built-ins included.
 - `loadFont(fontName: string): Promise<void>` — Load a Google Font by name.
 
 Constructs the exact CSS2 URL for the font using the bundled Google
 Fonts registry (axis ranges, italic support, weight variants) so the
 request always matches what the API expects — preventing 400 errors
 that arise from requesting unsupported axis combinations.
-- `renderAudio(): Promise<AudioBuffer | null>` — Render all audio layers into a single AudioBuffer using OfflineAudioContext.
+- `registerLayerType(type: string, descriptor: LayerTypeDescriptor): void` — Register (or replace) a layer type on **this** renderer.
 
-Each audio/video layer creates a buffer source node with volume and pan
-keyframe automation, connected to the context's destination.
+```ts
+const renderer = new BrowserRenderer(videoJSON);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+await renderer.exportVideo();
+```
+
+Lifecycle: register after construction and **before** the first
+`initLayers()` / `renderFrame()` / `captureFrame()` / `renderAudio()` /
+`exportVideo()` call — those create the runtime layers and close the
+registration window. Registering a type that already exists (including a
+built-in) replaces the previous descriptor rather than throwing, which is
+how you override a built-in type for one renderer instance.
+
+The registry belongs to this instance: other renderers are unaffected.
+- `renderAudio(): Promise<AudioBuffer | null>` — Render all audio layers (including layers nested inside groups) into a
+single AudioBuffer using OfflineAudioContext. Group layers are first
+mixed down to their own intermediate buffer — the group's own
+`volume` / `pan` / `pitch` / `mute` / transitions are then applied on
+the parent timeline, mirroring the visual sub-mix model.
+
+48 kHz is the universal sample rate for video AAC encoding — 44.1 kHz
+fails the WebCodecs `AudioEncoder.isConfigSupported` check on some
+platforms (notably headless Chrome on Linux).
 - `renderFrame(frame: number, force: boolean): Promise<void>` — Render a single frame to the DOM.
 
 Each enabled layer computes its interpolated properties at the given
@@ -3103,6 +3402,22 @@ Live, scrubbable player that paints VideoJSON into a DOM host.
 
 ### DomRenderer
 
+Re-exported from `@videoflow/renderer-browser` so an app can build an
+external layer type against `@videoflow/renderer-dom` alone:
+
+```ts
+import DomRenderer, { RuntimeVisualLayer, type LayerTypeDescriptor } from '@videoflow/renderer-dom';
+
+class RuntimeCustomLayer extends RuntimeVisualLayer { ... }
+
+const renderer = new DomRenderer(host);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+await renderer.loadVideo(videoJSON);
+```
+
 #### Properties
 
 - `currentFrame`: `number` — Current frame rendered.
@@ -3127,6 +3442,19 @@ The new layer is constructed, initialized, and mounted into the existing
 WebGL effect compositor if it declares effects, and `drawImage` the
 result onto `ctx`. Used by `RuntimeGroupLayer.renderFrame` to flatten
 each child onto the group's canvas.
+
+The child's `blendMode` is honoured here via `globalCompositeOperation`
+so children inside a group blend identically in live preview and
+export. Without this, group-children blend modes would silently no-op
+in DomRenderer because the children render on the off-screen
+`virtualRoot` (their CSS `mix-blend-mode` never has a chance to take
+effect) — only the group's own composited canvas is on-screen.
+- `createRuntimeLayer(layerJSON: LayerJSON): RuntimeBaseLayer` — Instantiate the runtime layer registered for `layerJSON.type`, wired to
+this renderer and the active project's fps / dimensions. Used for
+top-level layers and — via `ILayerRenderer` — by groups for their
+descendants.
+
+Throws for a type that isn't registered on this renderer.
 - `destroy(clearShadow: boolean): void` — Tear down the renderer: stop playback (also exits smooth-playback mode
 on every video layer), destroy every runtime layer (releases media
 elements, decoders, and `requestVideoFrameCallback` subscriptions),
@@ -3134,21 +3462,41 @@ clear the per-layer effect canvases, dispose the rasterizer's per-layer
 surfaces and the WebGL effect compositor's GL context, and finally
 empty the shadow DOM. Pending queued mutations registered before
 destroy resolve to no-ops via the `destroyed` guard.
-- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Return the full propertiesDefinition for a layer type.
+- `getLayerType(type: string): LayerTypeDescriptor | undefined` — The descriptor registered for `type` on this renderer, if any.
+- `getPropertyDefinition(layerType: string): Record<string, PropertyDefinition> | undefined` — Return the full propertiesDefinition for a layer type, or a single
+property's definition. Resolved through this renderer's layer-type
+registry, so an overridden type gets its overriding property definitions
+too.
 - `getVirtualLayerHost(): Node` — Where group layers should park their hidden child host. We use the
 shadow root so renderer CSS (which is shadow-scoped) still applies to
 the group's children — without this, descendants would lose their
 `--vw` / `--project-*` context and render at the wrong scale.
+- `listLayerTypes(): string[]` — Every layer type registered on this renderer, built-ins included.
 - `loadFont(fontName: string): Promise<void>` — Load a Google Font and make it available to the document (and shadow DOM).
 - `loadVideo(videoJSON: VideoJSON): Promise<void>` — Load a compiled VideoJSON into the renderer.
 
 Sets up the shadow DOM, creates runtime layers, initialises media, and
 renders frame 0.
+
+Closes the registerLayerType window — synchronously on entry, so
+the cutoff doesn't depend on when the mutation queue gets around to the
+actual load.
 - `play(options: { fpsCallback?: (fps: number) => void }): Promise<void>` — Start real-time playback from the current frame with audio sync.
 
 Renders audio to WAV, creates an `Audio` element, and advances frames
 inside a `requestAnimationFrame` loop while nudging the audio
 `playbackRate` to keep video and audio in sync.
+
+Frame dropping
+--------------
+Targets are computed from wall-clock time (`Date.now() - startTime`)
+and each `renderFrame` call is fired-and-forget — playback never waits
+for a render to finish. If the renderer can't keep up (a single frame
+takes longer than one tick), renderFrame's internal
+`pendingFrame` slot supersedes the in-flight target with the latest
+one, so intermediates are skipped rather than serialized. Wall-clock
+time and audio stay live; the picture catches up to the most recent
+frame the renderer can produce.
 
 Each layer is switched into its smooth-playback path via
 RuntimeBaseLayer.enterSmoothPlayback at the start of the loop
@@ -3156,11 +3504,35 @@ RuntimeBaseLayer.enterSmoothPlayback at the start of the loop
 native `<video>.play()` plus drift correction, eliminating the seek
 cost that otherwise dominates live-preview frame budget. The path is
 reverted on `stop()` / `seek()` so scrubbing stays frame-accurate.
+- `registerLayerType(type: string, descriptor: LayerTypeDescriptor): void` — Register (or replace) a layer type on **this** renderer.
+
+```ts
+const renderer = new DomRenderer(host);
+renderer.registerLayerType('custom', {
+  runtime: RuntimeCustomLayer,
+  propertiesDefinition: CustomLayer.propertiesDefinition,
+});
+await renderer.loadVideo(videoJSON);
+```
+
+Lifecycle: register after construction and **before** the first
+`loadVideo()`. Registrations stay attached to this instance, so every
+later `loadVideo()` / `addLayer()` uses them without re-registering.
+Registering after a video has been loaded throws rather than silently
+rebuilding the live runtime layers (which would drop their loaded media
+and mounted DOM) — construct a new DomRenderer instead.
+
+Registering a type that already exists (including a built-in) replaces
+the previous descriptor rather than throwing. The registry belongs to
+this instance: other renderers are unaffected.
 - `removeLayer(id: string): Promise<void>` — Remove a layer from the video.
 
 Destroys the layer (releasing its media ref) and detaches its DOM
 element. Other layers are untouched.
-- `renderAudio(): Promise<AudioBuffer | null>` — Render the full audio track as an AudioBuffer.
+- `renderAudio(): Promise<AudioBuffer | null>` — Render the full audio track as an AudioBuffer. Recurses through groups
+via the shared mixer — each group renders into its own intermediate
+buffer so the group's own `volume` / `pan` / `pitch` / `mute` /
+transitions apply to the whole sub-mix.
 - `renderFrame(frame: number, force: boolean): Promise<void>` — Render a specific frame to the DOM.
 
 Skips if already at that frame (unless forced), queues if a render is
@@ -3188,7 +3560,7 @@ the `Audio` element, and reverts every layer's smooth-playback hook so
 the next `renderFrame` (typically from `seek()` or `currentTime =`)
 decodes the exact requested timestamp instead of whatever the smooth
 decoder happened to be presenting.
-- `updateLayer(id: string, patch: { animations?: Animation[]; effects?: any[]; properties?: Record<string, any>; settings?: Partial<LayerSettingsJSON>; transitionIn?: any; transitionOut?: any }): Promise<void>` — Apply a property / settings / animations patch to a single layer.
+- `updateLayer(id: string, patch: { animations?: Animation[]; effects?: any[]; properties?: Record<string, any>; settings?: Partial<LayerSettingsJSON>; track?: number | null; transitionIn?: any; transitionOut?: any }): Promise<void>` — Apply a property / settings / animations patch to a single layer.
 
 - `settings` is shallow-merged into `layer.json.settings`.
 - `properties` replaces `layer.json.properties` wholesale so keys removed
@@ -3244,6 +3616,29 @@ Render VideoJSON to an MP4 file or buffer from Node using Playwright + ffmpeg.
 
 - `constructor(videoJSON: VideoJSON): ServerRenderer`
 - `cleanup(): Promise<void>` — Release all resources: browser context, temporary files, and shared browser.
+- `listLayerTypes(): string[]` — Every external layer type registered on this instance.
+- `registerLayerType(type: string, descriptor: ServerLayerTypeModuleDescriptor): void` — Register (or replace) an external layer type for this render.
+
+```ts
+const renderer = new ServerRenderer(videoJSON);
+renderer.registerLayerType('custom', {
+  modulePath: '/absolute/path/to/custom-layer-type.js',
+  exportName: 'default',
+});
+await renderer.renderVideo(options);
+```
+
+`modulePath` must be an **absolute** local filesystem path to a
+browser-compatible module exporting a
+`{ runtime, propertiesDefinition }` descriptor. The module is bundled
+into the renderer page script and registered on the in-page
+`BrowserRenderer` before its first frame — runtime classes are functions
+and cannot be passed through `page.evaluate` or Playwright's structured
+serialization, so bundling is the only way across the realm boundary.
+
+Lifecycle: register after construction and **before** `renderVideo()` /
+`renderFrame()` / `renderAudio()`, i.e. before the headless page is
+opened. Registering afterwards throws.
 - `renderAudio(): Promise<Buffer<ArrayBufferLike> | null>` — Render the full audio track and return it as a WAV Buffer.
 
 Opens the headless page on first call, then renders all audio layers
@@ -3252,7 +3647,27 @@ into a single WAV buffer via the in-page BrowserRenderer.
 
 Opens the headless page on first call, then renders the requested frame
 via the in-page BrowserRenderer.
-- `render(videoJSON: VideoJSON, options: RenderOptions): Promise<string | Buffer<ArrayBufferLike>>` — Render a VideoJSON to a Buffer or file.
+- `renderVideo(options: ServerRenderOptions): Promise<string | Buffer<ArrayBufferLike>>` — Render the loaded project. Picks the encoding pipeline based on
+`options.ffmpeg`; defaults to the in-browser export path.
+
+This is the primary entry point when using external layer types —
+register them on the instance first, then call this:
+
+```ts
+const renderer = new ServerRenderer(videoJSON);
+renderer.registerLayerType('custom', { modulePath: '/abs/path/custom.js' });
+const out = await renderer.renderVideo({ outputType: 'file', output: './out.mp4' });
+await renderer.cleanup();
+```
+
+Callers own cleanup — call cleanup when done (the static
+render helper does this for you).
+- `render(videoJSON: VideoJSON, options: ServerRenderOptions): Promise<string | Buffer<ArrayBufferLike>>` — Render a VideoJSON to a Buffer or file.
+
+Convenience wrapper over the instance API. External layer types can be
+passed as `options.layerTypes` (each entry is forwarded to
+registerLayerType); for anything more involved, construct a
+`ServerRenderer` and drive it directly.
 
 ## Functions
 
