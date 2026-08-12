@@ -454,6 +454,10 @@ export default class RuntimeBaseLayer {
 		for (const [key, value] of Object.entries(props)) {
 			const match = EFFECT_PARAM_PATH_RE.exec(key);
 			if (!match) continue;
+			// An `undefined` animated value carries no information — writing it
+			// over the declared param would erase it and drop the pass back to
+			// the effect's default. Leave the declared value showing instead.
+			if (value === undefined) continue;
 			const [, effectName, idxStr, paramName] = match;
 			const slots = occurrenceSlots[effectName];
 			if (!slots || slots.length === 0) continue;
