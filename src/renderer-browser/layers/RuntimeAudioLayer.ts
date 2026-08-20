@@ -31,7 +31,13 @@ export default class RuntimeAudioLayer extends RuntimeBaseLayer {
 	async initialize(): Promise<void> {
 		if (this.cacheEntry) return; // Idempotent — already initialised.
 		const source = this.json.settings.source;
-		if (!source) return;
+		if (!source) {
+			const hint = this.json.properties?.source
+				? ' A source was found in properties — it belongs in settings (the second argument).'
+				: '';
+			console.warn(`VideoFlow: audio layer "${this.json.id}" has no settings.source — the layer will render nothing.${hint}`);
+			return;
+		}
 
 		this.cacheEntry = await loadedMedia.acquire(source);
 		// Inherit duration from the shared entry if a previous consumer

@@ -66,7 +66,13 @@ export default class RuntimeVideoLayer extends RuntimeMediaLayer {
 	async initialize(): Promise<void> {
 		if (this.cacheEntry) return; // Idempotent — already initialised.
 		const source = this.json.settings.source;
-		if (!source) return;
+		if (!source) {
+			const hint = this.json.properties?.source
+				? ' A source was found in properties — it belongs in settings (the second argument).'
+				: '';
+			console.warn(`VideoFlow: video layer "${this.json.id}" has no settings.source — the layer will render nothing.${hint}`);
+			return;
+		}
 
 		this.cacheEntry = await loadedMedia.acquire(source);
 		// If a previous layer already wrote dimensions/duration into the
