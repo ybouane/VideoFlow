@@ -864,22 +864,36 @@ export default class ServerRenderer {
 	}
 
 	/**
-	 * Render a single frame and return it as a JPEG screenshot Buffer.
+	 * Render a single frame and return it as an encoded image Buffer.
 	 *
 	 * Opens the headless page on first call, then renders the requested frame
 	 * via the in-page BrowserRenderer.
 	 *
+	 * JPEG at quality 95 is the default because the usual caller is assembling
+	 * a video and will re-encode anyway. It is the wrong choice for a caller
+	 * that *measures* the pixels: an exporter recovering a layer's alpha solves
+	 * it from the difference between two renders, and JPEG's ringing turns a
+	 * flat empty region into an alpha of one or two across the whole frame —
+	 * a faint veil that is invisible on screen and ruinous to encode. Those
+	 * callers ask for PNG.
+	 *
 	 * @param frame - The frame number to render.
-	 * @returns A Buffer containing the JPEG screenshot of the rendered frame.
+	 * @param options - `type` picks the encoding; `quality` applies to JPEG.
+	 * @returns A Buffer containing the screenshot of the rendered frame.
 	 */
-	async renderFrame(frame: number): Promise<Buffer> {
+	async renderFrame(
+		frame: number,
+		options: { type?: 'jpeg' | 'png'; quality?: number } = {},
+	): Promise<Buffer> {
 		await this.ensurePage();
 
 		await this.page!.evaluate(async (f: number) => {
 			await window.renderFrame(f);
 		}, frame);
 
-		return await this.page!.screenshot({ type: 'jpeg', quality: 95 });
+		return options.type === 'png'
+			? await this.page!.screenshot({ type: 'png' })
+			: await this.page!.screenshot({ type: 'jpeg', quality: options.quality ?? 95 });
 	}
 
 	/**
